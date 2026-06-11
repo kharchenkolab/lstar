@@ -1,0 +1,6 @@
+CXX_STD = CXX17
+# zlib (bundled with R) lets the core read gzip/zlib-compressed chunks.
+PKG_CPPFLAGS = -I../inst/include -DLSTAR_HAVE_ZLIB
+# std::filesystem is in libstdc++/libc++ on the supported C++17 toolchains (gcc >= 9.1, clang);
+# no -lstdc++fs needed. zlib via -lz (R links it too).
+PKG_LIBS = -lz

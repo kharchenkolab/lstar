@@ -1,0 +1,5 @@
+# Carry the header-only C++ core into the sdist so wheels build from a clean unpack.
+graft core/include
+include python/src/lstar/_accel.cpp
+include README.md LICENSE
+recursive-include python/tests *.py

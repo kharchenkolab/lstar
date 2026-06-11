@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lstar"
+version = "0.0.1"
+description = "L* — a uniform model and Zarr interchange format for single-cell and spatial omics"
+readme = "../README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [{ name = "Peter Kharchenko and the lstar authors" }]
+dependencies = ["numpy", "scipy", "zarr>=2.13"]
+
+[project.optional-dependencies]
+anndata = ["anndata"]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+where = ["src"]

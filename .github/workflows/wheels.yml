@@ -1,0 +1,58 @@
+name: wheels
+
+# Build binary wheels (with the compiled C++ accelerator) for the common platforms plus an sdist,
+# so `pip install lstar` gives users the fast path automatically. Runs on tags and on demand;
+# publishes to PyPI on a GitHub release (needs a PYPI trusted-publisher / token).
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+  release:
+    types: [published]
+
+jobs:
+  wheels:
+    name: wheels on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-13, macos-14, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v2.21
+        # configuration (build matrix, OpenMP setup, test command) lives in pyproject.toml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}
+          path: ./wheelhouse/*.whl
+
+  sdist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pipx run build --sdist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: ./dist/*.tar.gz
+
+  publish:
+    needs: [wheels, sdist]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release'
+    environment: pypi
+    permissions:
+      id-token: write          # PyPI trusted publishing (no API token needed)
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist

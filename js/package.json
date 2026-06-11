@@ -1,0 +1,24 @@
+{
+  "name": "lstar-js",
+  "version": "0.0.1",
+  "description": "Read L* Zarr stores in the browser/Node (zarrita) and run viewer queries, with the libstar compute kernels compiled to WebAssembly — the same C++ core that backs the lstar R and Python packages.",
+  "type": "module",
+  "main": "core/index.ts",
+  "exports": {
+    ".": "./core/index.ts",
+    "./wasm": "./dist/lstar_kernels.mjs",
+    "./node-store": "./core/node-store.ts"
+  },
+  "files": ["core/", "dist/", "wasm/", "build.sh"],
+  "scripts": {
+    "build": "bash build.sh",
+    "test:kernels": "node test/kernels.test.mjs",
+    "test:reader": "node --experimental-strip-types test/reader.test.ts",
+    "test:view": "node --experimental-strip-types test/view.test.ts"
+  },
+  "keywords": ["lstar", "single-cell", "zarr", "zarrita", "webassembly", "wasm", "viewer", "csc", "emscripten"],
+  "license": "MIT",
+  "dependencies": {
+    "zarrita": "^0.7.3"
+  }
+}
