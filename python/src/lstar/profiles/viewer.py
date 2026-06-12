@@ -6,12 +6,18 @@ write_viewer(ds, grouping="leiden") adds, for a single-cell dataset with a `coun
 over (cells, genes) and a categorical grouping label over (cells):
 
   groups_<grouping>          axis (derived)            the group ids
-  od_genes                   axis (derived)            the overdispersed-gene subset
   stats_<grouping>_{sum,sumsq,nexpr}   measure (groups, genes)   cluster sufficient stats (log1p)
   markers_<grouping>_{lfc,padj}        measure (genes, groups)   ranked-marker tables
   cell_order                 measure (cells)           a cluster-coherent permutation
-  de_panel                   measure (cells, od_genes) CSR, log1p  the cell-major DE panel
-                                                                    (subsample DE at O(rows))
+  counts_cellmajor           measure (cells, genes)    CSR, raw   counts in cell-major orientation
+
+What is and isn't precomputed: the cluster stats/markers answer a *global* question (markers of a
+fixed top-level cluster over the whole dataset) and are precomputed. Anything *scope-dependent* is
+NOT: selection DE and overdispersed-gene (HVG) selection are computed on the fly by subsampling the
+cells in the current scope and reducing over ALL genes (col_sum_by_group / col_mean_var) — because a
+globally-chosen gene subset is wrong for any local question (DE between two T-cell subsets needs
+genes that barely move global variance). `counts_cellmajor` is just counts in cell-major (CSR)
+orientation — the read-optimized substrate those row-wise reductions need.
 
 The cluster stats are computed by libstar's csc_col_sum_by_group via the compiled accelerator
 when present (the same C++ core bound to WASM/R), with an identical numpy fallback. Marks
@@ -60,33 +66,25 @@ def write_viewer(ds, grouping="leiden", counts="counts", n_od=300, engine="auto"
         lfc[:, g] = (mu - mr).astype("f4")
         padj[:, g] = np.clip(np.exp(-np.abs((mu - mr) * np.sqrt(NE[g] + 1))), 1e-12, 1).astype("f4")
 
-    # overdispersed-gene subset (top variance) and a cluster-coherent cell order
-    gm = grand / ncells
-    gvar = np.asarray(Xl.multiply(Xl).sum(0)).ravel() / ncells - gm ** 2
-    od_idx = np.sort(np.argsort(-gvar)[: min(n_od, ngenes)])
-    order = np.argsort(code, kind="stable").astype("i8")
+    order = np.argsort(code, kind="stable").astype("i8")          # cluster-coherent cell permutation
 
-    # cell-major DE panel: (cells, od_genes), CSR, log1p — read a few hundred rows for subsample DE
-    panel = Xlr[:, od_idx].tocsr().astype("f4")
+    # counts in cell-major (CSR) orientation, all genes — the substrate for on-the-fly, scope-correct
+    # compute. Selection DE and overdispersion subsample CELLS and read their rows over ALL genes;
+    # the gene scope is never precomputed, because a global od subset is wrong for any local question
+    # (a T-cell-only DE needs genes that don't move global variance). `n_od` is retained but unused.
+    panel = X.tocsr()
 
-    # Idempotent: skip anything the store already carries, so write_viewer can also "top up"
-    # a store that was written with only some viewer fields (e.g. add de_panel to an old store).
-    def put(name, *a, **k):
-        if name not in ds.fields:
-            ds.add_field(name, *a, **k)
-
-    if ("groups_%s" % grouping) not in ds.axes:
-        ds.add_axis("groups_%s" % grouping, groups, origin="derived", role="feature")
-    if "od_genes" not in ds.axes:
-        ds.add_axis("od_genes", [gene_labels[i] for i in od_idx], origin="derived", role="feature")
+    # Recompute and OVERWRITE the whole profile from the current (counts, grouping); add_axis/
+    # add_field overwrite by key, so re-running is idempotent and a same-named field can't go stale.
+    ds.add_axis("groups_%s" % grouping, groups, origin="derived", role="feature")
     span_gg = ["groups_%s" % grouping, "genes"]
-    put("stats_%s_sum" % grouping, S.astype("f4"), role="measure", span=span_gg)
-    put("stats_%s_sumsq" % grouping, SS.astype("f4"), role="measure", span=span_gg)
-    put("stats_%s_nexpr" % grouping, NE.astype("f4"), role="measure", span=span_gg)
-    put("markers_%s_lfc" % grouping, lfc, role="measure", span=["genes", "groups_%s" % grouping])
-    put("markers_%s_padj" % grouping, padj, role="measure", span=["genes", "groups_%s" % grouping])
-    put("cell_order", order, role="measure", span=["cells"], state="permutation")
-    put("de_panel", panel, role="measure", span=["cells", "od_genes"], state="lognorm", encoding="csr")
+    ds.add_field("stats_%s_sum" % grouping, S.astype("f4"), role="measure", span=span_gg)
+    ds.add_field("stats_%s_sumsq" % grouping, SS.astype("f4"), role="measure", span=span_gg)
+    ds.add_field("stats_%s_nexpr" % grouping, NE.astype("f4"), role="measure", span=span_gg)
+    ds.add_field("markers_%s_lfc" % grouping, lfc, role="measure", span=["genes", "groups_%s" % grouping])
+    ds.add_field("markers_%s_padj" % grouping, padj, role="measure", span=["genes", "groups_%s" % grouping])
+    ds.add_field("cell_order", order, role="measure", span=["cells"], state="permutation")
+    ds.add_field("counts_cellmajor", panel, role="measure", span=["cells", "genes"], state="raw", encoding="csr")
     if "viewer@0.1" not in ds.profiles:
         ds.profiles.append("viewer@0.1")
     return ds
