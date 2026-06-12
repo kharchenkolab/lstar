@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
-"""Bounded-memory format conversion: stream an .h5ad into an L* store without loading the matrix.
+"""Bounded-memory format conversion: stream large matrices between an .h5ad and an L* store
+without ever loading them whole -- in *both* directions.
 
 The ordinary conversion (`read_anndata(ad.read_h5ad(path))` then `lstar.write`) holds the whole
-expression matrix in RAM. For a large atlas that can be many gigabytes. `convert_anndata` instead
-reads the source in *backed* mode (its X/layers/.raw stay on disk) and streams them block-by-block
-into the store, so peak memory is bounded by one block -- the conversion runs on a laptop. The
-result is byte-identical to the eager one; it's a memory-vs-speed trade (streaming is a bit slower),
-so it's opt-in.
+expression matrix in RAM. For a large atlas that can be many gigabytes. The streaming path instead
+reads the source matrices straight from disk and writes them block-by-block, so peak memory is
+bounded by one block -- the conversion runs on a laptop. The result is byte-identical to the eager
+one; it's a memory-vs-speed trade, so it's opt-in.
+
+This demo measures peak memory (via tracemalloc) for both:
+  (1) h5ad -> L* store   via `lstar.convert_anndata`   (backed read + streamed write)
+  (2) L* store -> h5ad   via `lstar.convert_to_h5ad`   (lazy read + streamed write)
 
 Usage: python3 examples/stream_convert_demo.py [path/to/file.h5ad]
   With no argument, a synthetic h5ad is generated so the demo runs anywhere. The default real
@@ -70,7 +74,33 @@ def main():
     ev, svv = e.field(mk).values, s.field(mk).values
     same = ev.shape == svv.shape and (sp.csr_matrix(ev) != sp.csr_matrix(svv)).nnz == 0
     print(f"\nmeasure '{mk}': {ev.nnz:,} nonzeros; streamed store identical to eager = {same}")
-    print("  -> a large h5ad converts to L* in bounded memory; the data is unchanged.")
+    print("  -> (1) a large h5ad converts to L* in bounded memory; the data is unchanged.\n")
+
+    # --- (2) the reverse: L* store -> h5ad, eager vs streamed ---
+    from lstar.profiles.anndata import write_anndata
+    eager_h5 = "/tmp/convert_eager.h5ad"
+    stream_h5 = "/tmp/convert_stream.h5ad"
+
+    # eager: materialize the whole store, build an AnnData, write it. Peak includes the full matrix.
+    tracemalloc.start(); t = time.time()
+    write_anndata(lstar.read(stream_store)).write_h5ad(eager_h5)
+    te2 = time.time() - t
+    _, peak_e2 = tracemalloc.get_traced_memory(); tracemalloc.stop()
+    print(f"eager      (load store, then write h5ad): {te2:5.1f}s   peak +{peak_e2/1e6:7.1f} MB")
+
+    # streaming: lazy read + block-by-block write into the h5ad's sparse groups. Peak ~ one block.
+    tracemalloc.start(); t = time.time()
+    lstar.convert_to_h5ad(stream_store, stream_h5, chunk_elems=2_000_000)
+    ts2 = time.time() - t
+    _, peak_s2 = tracemalloc.get_traced_memory(); tracemalloc.stop()
+    print(f"streaming  (convert_to_h5ad):             {ts2:5.1f}s   peak +{peak_s2/1e6:7.1f} MB"
+          f"   ({peak_e2/peak_s2:.0f}x less memory)")
+
+    import anndata as ad2
+    eh, sh = ad2.read_h5ad(eager_h5), ad2.read_h5ad(stream_h5)
+    same2 = (sp.csr_matrix(eh.X) != sp.csr_matrix(sh.X)).nnz == 0
+    print(f"\nh5ad X identical (eager vs streamed) = {same2}")
+    print("  -> (2) a large L* store converts to h5ad in bounded memory; the data is unchanged.")
 
 
 if __name__ == "__main__":

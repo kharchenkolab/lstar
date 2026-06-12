@@ -13,6 +13,8 @@ import numpy as np
 import scipy.sparse as sp
 import zarr
 
+from .lazy import is_stream_source as _is_stream_source
+from .lazy import iter_sized_blocks
 from .model import Dataset, Field
 
 LSTAR = "lstar"
@@ -133,10 +135,6 @@ def _ds(g, name, arr, compressor, chunk_elems):
                      chunks=_chunks_for(arr.shape, chunk_elems))
 
 
-def _is_stream_source(v):
-    return hasattr(v, "blocks") and hasattr(v, "fmt") and hasattr(v, "shape")
-
-
 def _write_sparse_streaming(g, source, meta, compressor, chunk_elems):
     """Write a CSR/CSC field block-by-block from a streaming source (a backed h5ad sparse group, or
     a LazyCSX from another store), so the whole matrix is never resident. `data`/`indices` grow by
@@ -146,7 +144,6 @@ def _write_sparse_streaming(g, source, meta, compressor, chunk_elems):
     fmt = source.fmt                                   # "csr" | "csc"
     n_outer = int(source.n_outer)
     nnz = int(getattr(source, "nnz", -1))
-    indptr_full = np.asarray(source.indptr)            # length n_outer+1, small -> read whole
     data_dtype = np.dtype(getattr(source, "dtype", np.float64))
     idx_dtype = np.dtype(getattr(source, "idtype", np.int32))
     indptr_dtype = np.int32 if 0 <= nnz < 2 ** 31 else np.int64
@@ -155,18 +152,13 @@ def _write_sparse_streaming(g, source, meta, compressor, chunk_elems):
     indices_arr = g.create_dataset("indices", shape=(0,), chunks=(ce,), dtype=idx_dtype, compressor=compressor)
     out_indptr = np.empty(n_outer + 1, dtype=indptr_dtype)
     out_indptr[0] = 0
-    pos, a = 0, 0
-    while a < n_outer:
-        b = a + 1                                      # grow the block until it holds ~ce nonzeros
-        while b < n_outer and (indptr_full[b] - indptr_full[a]) < ce:
-            b += 1
-        sub = source.outer_block(a, b)                 # a small scipy CSR/CSC for outer [a:b)
+    pos = 0
+    for a, b, sub in iter_sized_blocks(source, ce):    # blocks sized to ~ce nonzeros (bounded memory)
         sub = sub.tocsr() if fmt == "csr" else sub.tocsc()
         data_arr.append(np.asarray(sub.data, dtype=data_dtype))
         indices_arr.append(np.asarray(sub.indices, dtype=idx_dtype))
         out_indptr[a + 1:b + 1] = pos + sub.indptr[1:]
         pos += int(sub.nnz)
-        a = b
     g.create_dataset("indptr", data=out_indptr, compressor=compressor,
                      chunks=_chunks_for(out_indptr.shape, chunk_elems))
     meta["encoding"] = fmt

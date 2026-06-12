@@ -10,7 +10,8 @@ import numpy as np
 import scipy.sparse as sp
 
 import lstar
-from lstar.profiles.anndata import read_anndata, convert_anndata, _BackedH5Sparse
+from lstar.profiles.anndata import (read_anndata, write_anndata, convert_anndata,
+                                    write_anndata_streamed, _BackedH5Sparse)
 
 
 def _sparse_eq(a, b):
@@ -66,6 +67,42 @@ def test_streaming_lstar_to_lstar():
     print("streaming L*->L* (lazy read -> streamed recompress) == original")
 
 
+def test_streamed_h5ad_write_equals_eager():
+    # The reverse direction: write an L* dataset to an .h5ad with bounded memory (small parts via
+    # anndata, big sparse measures streamed block-by-block via h5py). Must equal the eager write,
+    # preserving each measure's native orientation (X csr, counts csc) and a .raw over a larger gene
+    # set. Streamed from an on-disk store read lazily -- the actual bounded path.
+    import anndata as ad
+    import pandas as pd
+    d = tempfile.mkdtemp()
+    X = sp.random(140, 60, density=0.12, format="csr", random_state=0); X.data = np.round(X.data * 9 + 1).astype("f4")
+    counts = sp.csc_matrix(sp.random(140, 60, density=0.2, format="csc", random_state=1)); counts.data = np.round(counts.data * 9 + 1).astype("f4")
+    rawX = sp.random(140, 95, density=0.1, format="csr", random_state=2); rawX.data = np.round(rawX.data * 9 + 1).astype("f4")
+    a = ad.AnnData(X=X)
+    a.layers["counts"] = counts
+    a.obsm["X_pca"] = np.random.RandomState(3).randn(140, 5).astype("f4")
+    a.obs["leiden"] = pd.Categorical([f"c{i % 6}" for i in range(140)])
+    a.raw = ad.AnnData(X=rawX, obs=pd.DataFrame(index=a.obs_names),
+                       var=pd.DataFrame(index=[f"g{i}" for i in range(95)]))
+    h5 = os.path.join(d, "src.h5ad"); a.write_h5ad(h5)
+
+    # round-trip the source through an on-disk L* store, then stream that store back out to h5ad
+    store = os.path.join(d, "s.lstar.zarr")
+    convert_anndata(h5, store, chunk_elems=500)
+    eager = write_anndata(lstar.read(store)); eager_h5 = os.path.join(d, "eager.h5ad"); eager.write_h5ad(eager_h5)
+    stream_h5 = os.path.join(d, "stream.h5ad")
+    lstar.convert_to_h5ad(store, stream_h5, chunk_elems=500)
+
+    e, s = ad.read_h5ad(eager_h5), ad.read_h5ad(stream_h5)
+    assert _sparse_eq(e.X, s.X), "X"
+    assert type(s.X).__name__ == "csr_matrix" and type(s.layers["counts"]).__name__ == "csc_matrix"  # orientation kept
+    assert _sparse_eq(e.layers["counts"], s.layers["counts"]), "counts"
+    assert _sparse_eq(e.raw.X, s.raw.X) and s.raw.X.shape == (140, 95), "raw"
+    assert np.allclose(e.obsm["X_pca"], s.obsm["X_pca"])
+    assert (np.asarray(e.obs["leiden"]) == np.asarray(s.obs["leiden"])).all()
+    print("streamed L*->h5ad == eager (X csr / counts csc / raw over larger gene set / pca / leiden)")
+
+
 def test_legacy_h5ad_sparse_recognized():
     # A pre-0.7 h5ad uses h5sparse_format/h5sparse_shape attrs; the streaming source must read it.
     import h5py
@@ -91,4 +128,5 @@ def test_legacy_h5ad_sparse_recognized():
 if __name__ == "__main__":
     test_streaming_h5ad_equals_eager()
     test_streaming_lstar_to_lstar()
+    test_streamed_h5ad_write_equals_eager()
     test_legacy_h5ad_sparse_recognized()

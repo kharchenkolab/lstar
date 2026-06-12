@@ -107,6 +107,78 @@ class LazyCSX:
         return "LazyCSX(%s, shape=%s, nnz=%d)" % (self.fmt, self.shape, self.nnz)
 
 
+# ---- the streaming sparse-source protocol -------------------------------------------------
+# A "streaming sparse source" is any object exposing, for a CSR/CSC matrix it never fully holds:
+#   .fmt   "csr"|"csc"          .shape  (rows, cols)        .n_outer  len of the compressed axis
+#   .indptr  (length n_outer+1, small, resident)            .nnz .dtype .idtype
+#   .outer_block(a, b) -> a scipy CSR/CSC matrix for the outer slice [a:b)
+#   .blocks(block)     -> iterate (a, b, submatrix) over the compressed axis
+# LazyCSX (a store on disk) and _BackedH5Sparse (a backed h5ad) implement it. Any *sink* -- the
+# zarr writer, the h5ad writer -- consumes only this protocol, so backed / lazy / in-memory
+# sources all travel one code path. as_source() wraps an in-memory scipy matrix into it.
+
+def is_stream_source(v):
+    """True if v already implements the streaming sparse-source protocol (LazyCSX, backed h5ad,
+    or a _ScipySource wrapper)."""
+    return all(hasattr(v, a) for a in ("blocks", "outer_block", "fmt", "shape", "n_outer", "indptr"))
+
+
+class _ScipySource:
+    """Wrap an in-memory scipy CSR/CSC matrix in the streaming-source protocol, so a sink has a
+    single code path whether the source is on-disk (LazyCSX / backed h5ad) or already resident.
+    The matrix's native orientation is preserved (no transpose): csc stays csc, csr stays csr."""
+
+    def __init__(self, mat):
+        m = mat if (sp.isspmatrix_csr(mat) or sp.isspmatrix_csc(mat)) else mat.tocsr()
+        self._m = m
+        self.fmt = "csc" if sp.isspmatrix_csc(m) else "csr"
+        self.shape = tuple(int(s) for s in m.shape)
+        self.indptr = np.asarray(m.indptr)
+        self.nnz = int(m.nnz)
+        self.dtype = m.data.dtype
+        self.idtype = m.indices.dtype
+        self.n_outer = self.shape[1] if self.fmt == "csc" else self.shape[0]
+
+    def outer_block(self, a, b):
+        return self._m[:, a:b] if self.fmt == "csc" else self._m[a:b]
+
+    def blocks(self, block=2048):
+        for a in range(0, self.n_outer, block):
+            b = min(a + block, self.n_outer)
+            yield a, b, self.outer_block(a, b)
+
+
+def iter_sized_blocks(source, chunk_elems):
+    """Yield (a, b, submatrix) over a source's compressed axis, growing each block until it holds
+    ~`chunk_elems` nonzeros (read from the small resident `indptr`), so peak memory is bounded by
+    one block regardless of how dense the data is. The one block-sizing policy shared by every
+    streaming sink (the zarr writer and the h5ad writer)."""
+    n_outer = int(source.n_outer)
+    indptr = np.asarray(source.indptr)
+    ce = int(chunk_elems) if chunk_elems else 1_000_000
+    a = 0
+    while a < n_outer:
+        b = a + 1
+        while b < n_outer and (indptr[b] - indptr[a]) < ce:
+            b += 1
+        yield a, b, source.outer_block(a, b)
+        a = b
+
+
+def as_source(v):
+    """Return a streaming sparse source for `v`, or None if v isn't sparse.
+
+    If v already implements the protocol (LazyCSX / backed h5ad) it's returned unchanged; an
+    in-memory scipy sparse matrix is wrapped in `_ScipySource`; anything else (dense, strings)
+    returns None so the caller falls back to its eager path.
+    """
+    if is_stream_source(v):
+        return v
+    if sp.issparse(v):
+        return _ScipySource(v)
+    return None
+
+
 def _block_col_stats(sub, nrows, lognorm):
     """Per-column mean/var/nnz of one CSC block, zero-aware (the same form as libstar's
     `csc_col_mean_var`).

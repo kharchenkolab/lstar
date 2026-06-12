@@ -257,6 +257,29 @@ def _vocab_location(ds, name, f):
     return None
 
 
+def _route_fields(ds):
+    """Group an L* Dataset's fields by their AnnData destination -- the routing shared by the eager
+    (`write_anndata`) and streamed (`write_anndata_streamed`) writers, so the two never disagree on
+    where a field lands. Values are the L* `Field` objects (not yet materialized), keyed by their
+    native sub-name; `X`/`raw` are single fields, the rest are dicts; unplaceable fields go to
+    `dropped`. The destination is the field's recorded `anndata` provenance, else the shared-vocabulary
+    fallback (`_vocab_location`)."""
+    r = {"X": None, "raw": None, "layers": {}, "obs": {}, "var": {},
+         "obsm": {}, "varm": {}, "obsp": {}, "varp": {}, "dropped": []}
+    for name, f in ds.fields.items():
+        loc = (f.provenance or {}).get("anndata") or _vocab_location(ds, name, f)
+        if loc == "X":
+            r["X"] = f
+        elif loc == "raw/X":
+            r["raw"] = f
+        elif loc and "/" in loc and loc.split("/", 1)[0] in r and isinstance(r[loc.split("/", 1)[0]], dict):
+            grp, key = loc.split("/", 1)
+            r[grp][key] = f
+        else:
+            r["dropped"].append(name)
+    return r
+
+
 def write_anndata(ds):
     """Write an L* Dataset back to an AnnData object (lossy where no slot fits)."""
     import anndata as ad
@@ -264,36 +287,17 @@ def write_anndata(ds):
 
     cells = np.asarray(ds.axis("cells").labels, dtype=str)
     genes = np.asarray(ds.axis("genes").labels, dtype=str)
-    X = None
-    raw_field = None
-    layers, obs, var, obsm, varm, obsp, varp = {}, {}, {}, {}, {}, {}, {}
-    dropped = []
-
-    for name, f in ds.fields.items():
-        loc = (f.provenance or {}).get("anndata") or _vocab_location(ds, name, f)
-        if loc is None:
-            dropped.append(name)
-            continue
-        if loc == "X":
-            X = f.values
-        elif loc == "raw/X":
-            raw_field = f
-        elif loc.startswith("layers/"):
-            layers[loc.split("/", 1)[1]] = f.values
-        elif loc.startswith("obs/"):
-            obs[loc.split("/", 1)[1]] = np.asarray(f.values)
-        elif loc.startswith("var/"):
-            var[loc.split("/", 1)[1]] = np.asarray(f.values)
-        elif loc.startswith("obsm/"):
-            obsm[loc.split("/", 1)[1]] = np.asarray(f.values)
-        elif loc.startswith("varm/"):
-            varm[loc.split("/", 1)[1]] = np.asarray(f.values)
-        elif loc.startswith("obsp/"):
-            obsp[loc.split("/", 1)[1]] = f.values
-        elif loc.startswith("varp/"):
-            varp[loc.split("/", 1)[1]] = f.values
-        else:
-            dropped.append(name)
+    r = _route_fields(ds)
+    X = r["X"].values if r["X"] is not None else None
+    raw_field = r["raw"]
+    layers = {k: f.values for k, f in r["layers"].items()}
+    obs = {k: np.asarray(f.values) for k, f in r["obs"].items()}
+    var = {k: np.asarray(f.values) for k, f in r["var"].items()}
+    obsm = {k: np.asarray(f.values) for k, f in r["obsm"].items()}
+    varm = {k: np.asarray(f.values) for k, f in r["varm"].items()}
+    obsp = {k: f.values for k, f in r["obsp"].items()}
+    varp = {k: f.values for k, f in r["varp"].items()}
+    dropped = list(r["dropped"])
 
     obs_df = pd.DataFrame(obs, index=cells) if obs else pd.DataFrame(index=cells)
     var_df = pd.DataFrame(var, index=genes) if var else pd.DataFrame(index=genes)
@@ -338,3 +342,155 @@ def convert_anndata(h5ad_path, store_path, **write_kwargs):
         except Exception:
             pass
     return store_path
+
+
+def _stream_sparse_to_h5(g, source, chunk_elems):
+    """Stream a CSR/CSC source block-by-block into an open h5py group as a *modern* h5ad sparse
+    group (`data`/`indices`/`indptr` + `encoding-type`/`encoding-version`/`shape`). `data`/`indices`
+    are resizable and grown per block; `indptr` (small) is filled incrementally. The matrix is never
+    fully resident, and its native orientation is preserved (no transpose). Mirrors the zarr sparse
+    sink (`zarr_io._write_sparse_streaming`) -- same `iter_sized_blocks` policy, different store."""
+    from ..lazy import iter_sized_blocks
+    fmt = source.fmt
+    n_outer = int(source.n_outer)
+    nnz = int(getattr(source, "nnz", np.asarray(source.indptr)[-1]))
+    data_dtype = np.dtype(getattr(source, "dtype", np.float32))
+    idx_dtype = np.dtype(getattr(source, "idtype", np.int32))
+    ce = int(chunk_elems) if chunk_elems else 1_000_000
+    hchunk = (max(1, min(ce, nnz or 1)),)               # 1-D HDF5 chunk along the nonzero axis
+    d = g.create_dataset("data", shape=(0,), maxshape=(None,), dtype=data_dtype, chunks=hchunk)
+    ix = g.create_dataset("indices", shape=(0,), maxshape=(None,), dtype=idx_dtype, chunks=hchunk)
+    indptr_dtype = np.int32 if 0 <= nnz < 2 ** 31 else np.int64   # anndata's convention (int32)
+    out_indptr = np.empty(n_outer + 1, dtype=indptr_dtype)
+    out_indptr[0] = 0
+    pos = 0
+    for a, b, sub in iter_sized_blocks(source, ce):
+        sub = sub.tocsr() if fmt == "csr" else sub.tocsc()
+        k = int(sub.nnz)
+        d.resize((pos + k,)); d[pos:pos + k] = np.asarray(sub.data, dtype=data_dtype)
+        ix.resize((pos + k,)); ix[pos:pos + k] = np.asarray(sub.indices, dtype=idx_dtype)
+        out_indptr[a + 1:b + 1] = pos + sub.indptr[1:]
+        pos += k
+    g.create_dataset("indptr", data=out_indptr)
+    g.attrs["encoding-type"] = "%s_matrix" % fmt
+    g.attrs["encoding-version"] = "0.1.0"
+    g.attrs["shape"] = np.asarray([int(x) for x in source.shape], dtype="int64")
+
+
+def write_anndata_streamed(ds, path, chunk_elems=None):
+    """Write an L* Dataset to an `.h5ad` with **bounded memory** -- the L*->native counterpart of
+    `convert_anndata`.
+
+    The small parts (obs/var/obsm/varm/obsp/varp/uns) are written through anndata, so their fiddly
+    on-disk encoding (categoricals, dataframes) is reused rather than re-implemented. Then each large
+    sparse measure (`X`, `raw/X`, every `layers/*`) is streamed straight into its h5ad sparse group
+    block-by-block via h5py, so the whole matrix never lands in RAM. A measure that is dense (or
+    otherwise not sparse) falls back to the in-memory skeleton. Peak memory is bounded by one block
+    (~`chunk_elems` nonzeros, default 1e6).
+
+    Sparse cell-cell / gene-gene graphs (`obsp`/`varp`) are streamed too, since on a large atlas a
+    k-NN graph is itself big; only a (rare) dense graph falls back to the in-memory skeleton.
+
+    Typical use is a fully bounded L* store -> h5ad conversion:
+        write_anndata_streamed(lstar.read("atlas.lstar.zarr", lazy=True), "atlas.h5ad")
+    where the lazy read leaves measures (and graphs) as on-disk `LazyCSX` sources that stream
+    through untouched. Returns `path`.
+    """
+    import anndata as ad
+    import h5py
+    import pandas as pd
+
+    from ..lazy import as_source
+
+    cells = np.asarray(ds.axis("cells").labels, dtype=str)
+    genes = np.asarray(ds.axis("genes").labels, dtype=str)
+    r = _route_fields(ds)
+
+    # Partition the big measures into streamable (sparse) and eager (dense/other). `stream_jobs` is a
+    # list of (h5ad group path, source); eager pieces are built into the skeleton AnnData below.
+    stream_jobs = []
+    X_eager = None
+    layers_eager = {}
+    raw_eager = None
+
+    if r["X"] is not None:
+        s = as_source(r["X"].values)
+        if s is not None:
+            stream_jobs.append(("X", s))
+        else:
+            X_eager = np.asarray(r["X"].values)
+    for k, f in r["layers"].items():
+        s = as_source(f.values)
+        if s is not None:
+            stream_jobs.append(("layers/%s" % k, s))
+        else:
+            layers_eager[k] = np.asarray(f.values)
+
+    obs = {k: np.asarray(f.values) for k, f in r["obs"].items()}
+    var = {k: np.asarray(f.values) for k, f in r["var"].items()}
+    obsm = {k: np.asarray(f.values) for k, f in r["obsm"].items()}
+    varm = {k: np.asarray(f.values) for k, f in r["varm"].items()}
+
+    # Graphs (obsp/varp) are sparse and, on a large atlas, big -- so stream the sparse ones too;
+    # only a (rare) dense graph falls back to the in-memory skeleton.
+    obsp, varp = {}, {}
+    for grp, dest in (("obsp", obsp), ("varp", varp)):
+        for k, f in r[grp].items():
+            s = as_source(f.values)
+            if s is not None:
+                stream_jobs.append(("%s/%s" % (grp, k), s))
+            else:
+                dest[k] = np.asarray(f.values)
+
+    obs_df = pd.DataFrame(obs, index=cells) if obs else pd.DataFrame(index=cells)
+    var_df = pd.DataFrame(var, index=genes) if var else pd.DataFrame(index=genes)
+    adata = ad.AnnData(X=X_eager, obs=obs_df, var=var_df,
+                       layers=layers_eager or None, obsm=obsm or None, varm=varm or None,
+                       obsp=obsp or None, varp=varp or None)
+
+    # .raw: stream it too. anndata's writer needs a raw AnnData to lay down `raw/var`; give it a
+    # zero-nonzero placeholder X of the right shape, then overwrite `raw/X` with the streamed data.
+    raw_field = r["raw"]
+    raw_src = as_source(raw_field.values) if raw_field is not None else None
+    if raw_field is not None:
+        rg = np.asarray(ds.axis(raw_field.span[1]).labels, dtype=str)
+        if raw_src is not None:
+            import scipy.sparse as sp
+            placeholder = sp.csr_matrix((len(cells), len(rg)), dtype=raw_src.dtype)
+            adata.raw = ad.AnnData(X=placeholder, obs=pd.DataFrame(index=cells),
+                                   var=pd.DataFrame(index=rg))
+        else:
+            raw_eager = raw_field
+            adata.raw = ad.AnnData(X=np.asarray(raw_field.values),
+                                   obs=pd.DataFrame(index=cells), var=pd.DataFrame(index=rg))
+    if r["dropped"]:
+        adata.uns["lstar/dropped"] = list(r["dropped"])
+
+    adata.write_h5ad(path)                  # lay down the skeleton (small parts + any eager measures)
+
+    if raw_src is not None:
+        stream_jobs.append(("raw/X", raw_src))   # replace the placeholder raw/X below
+
+    # Re-open and stream each big sparse measure straight into its h5ad sparse group.
+    try:
+        with h5py.File(path, "a") as f:
+            for gpath, src in stream_jobs:
+                if gpath in f:
+                    del f[gpath]                  # drop the placeholder/empty group anndata wrote
+                _stream_sparse_to_h5(f.create_group(gpath), src, chunk_elems)
+    finally:
+        for _, src in stream_jobs:                # release any on-disk handles the sources held
+            if hasattr(src, "close"):
+                src.close()
+    return path
+
+
+def convert_to_h5ad(store_path, h5ad_path, chunk_elems=None):
+    """Convert an L* store to an `.h5ad` with **bounded memory** -- the reverse of `convert_anndata`.
+
+    Reads the store lazily (its measures stay on disk as `LazyCSX` sources) and streams them into
+    the h5ad block-by-block, so a multi-gigabyte store converts in the memory of one block. Returns
+    `h5ad_path`.
+    """
+    from ..zarr_io import read as _read
+    return write_anndata_streamed(_read(store_path, lazy=True), h5ad_path, chunk_elems=chunk_elems)
