@@ -43,21 +43,10 @@ def test_subsample_de_rank_matches_numpy():
     assert np.abs(lfc - (mA0 - mB0)).max() < 1e-9
 
 
-def test_write_viewer_cpp_equals_python():
-    # the exporter's cluster stats are identical on either engine (so stores are engine-agnostic).
-    from lstar.profiles.viewer import write_viewer
-
-    def build():
-        rng = np.random.default_rng(3)
-        X = sp.csc_matrix(rng.poisson(0.7, (180, 24)).astype("f4"))
-        ds = lstar.Dataset(kind="sample")
-        ds.add_axis("cells", ["c%d" % i for i in range(180)], role="observation")
-        ds.add_axis("genes", ["g%d" % j for j in range(24)], role="feature")
-        ds.add_field("counts", X, role="measure", span=["cells", "genes"], state="raw")
-        ds.add_field("leiden", ["k%d" % (i % 5) for i in range(180)], role="label", span=["cells"])
-        return ds
-
-    a = write_viewer(build(), "leiden", n_od=12, engine="c++")
-    b = write_viewer(build(), "leiden", n_od=12, engine="python")
-    for f in ["stats_leiden_sum", "stats_leiden_sumsq", "stats_leiden_nexpr"]:
-        assert np.abs(np.asarray(a.field(f).values) - np.asarray(b.field(f).values)).max() < 1e-5
+def test_public_col_sum_by_group_engine_agnostic():
+    # the public kernel gives identical stats on either engine (so downstream prep is engine-agnostic).
+    X, code, K = _toy()
+    a = lstar.col_sum_by_group(X, code, K, lognorm=True, engine="c++")
+    b = lstar.col_sum_by_group(X, code, K, lognorm=True, engine="python")
+    for ca, cb in zip(a, b):
+        assert np.abs(np.asarray(ca) - np.asarray(cb)).max() < 1e-9
