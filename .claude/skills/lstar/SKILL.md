@@ -2,13 +2,15 @@
 name: lstar
 description: >-
   Use when working with the lstar package or the L-star (L*) data model and Zarr interchange format
-  for single-cell / spatial omics. Covers building datasets of axes and fields, reading/writing
-  .lstar.zarr stores, converting between AnnData, Seurat, SingleCellExperiment, Conos and pagoda2
-  (profiles), collections of heterogeneous samples, lazy/streaming reads, the C++ accelerator
-  (libstar), per-gene reductions, format/version recognition, and round-trips across formats and
-  languages (Python, R, C++). Keywords: lstar, L*, L-star, axes, fields, measure, embedding,
-  relation, label, collection, profile, AnnData, Seurat, SingleCellExperiment, Conos, pagoda2,
-  zarr, csc, csr, lazy, streaming, stream_col_stats, libstar, accelerator, single-cell.
+  for single-cell / spatial omics, ESPECIALLY to convert single-cell data between formats (AnnData /
+  h5ad, Seurat, SingleCellExperiment, Conos, pagoda2) and languages (Python, R, C++). Covers
+  converting/exporting/importing between those formats via profiles (read_anndata/write_anndata,
+  read_seurat/write_seurat, read_sce/write_sce, write_conos), building datasets of axes and fields,
+  reading/writing .lstar.zarr stores, collections of heterogeneous samples, lazy/streaming reads, the
+  C++ accelerator (libstar), per-gene reductions, and format/version recognition. Keywords: lstar, L*,
+  L-star, convert, conversion, glue, interchange, h5ad, AnnData, Seurat, SingleCellExperiment, SCE,
+  Conos, pagoda2, profile, export, import, axes, fields, measure, embedding, loading, relation, label,
+  collection, zarr, csc, csr, lazy, streaming, stream_col_stats, libstar, accelerator, single-cell.
 ---
 
 # lstar
@@ -37,6 +39,23 @@ statistics at scale (lazy, streamed, multithreaded); making format conversion ve
 building/packaging the lstar Python/R libraries.
 
 ## Main usage patterns
+
+**Convert between formats (the near-term selling point).** `convert(X → Y) = write_Y(read_X(obj))`,
+with the L★ dataset (or an on-disk `.lstar.zarr` store) as the universal intermediate. Readers/writers:
+`read_anndata`/`write_anndata` (Python), `read_seurat`/`write_seurat`, `read_sce`/`write_sce`,
+`write_conos` (R). The shared vocabulary makes it lossless on the common core (counts, data/X, pca +
+**pca_loadings**, umap, labels, metadata); what a target can't hold goes to `ds.dropped`, not silently.
+```r
+# R, in memory: Seurat -> SingleCellExperiment
+sce <- write_sce(read_seurat(seurat_obj))
+```
+```bash
+# Cross-language: AnnData (Python) -> Seurat (R), bridged by the on-disk store
+python3 -c 'import anndata as ad, lstar; from lstar.profiles.anndata import read_anndata
+lstar.write(read_anndata(ad.read_h5ad("x.h5ad")), "x.lstar.zarr")'
+Rscript  -e 'library(lstar); saveRDS(write_seurat(lstar_read("x.lstar.zarr")), "x.rds")'
+```
+Full guide: `reference/conversions.md` and `docs/conversions.md`.
 
 **Python — build, write, read, validate**
 ```python
@@ -91,15 +110,17 @@ auto s  = lstar::csc_col_mean_var(f->data.as<float>(), ip.data(),
 - **Collection ≠ tensor.** Never flatten a multi-sample dataset into one matrix; model it as a
   collection (see `reference/model.md`).
 - **Memory-lean.** Don't widen stored dtypes; float32 measures stay float32, accumulate moments in
-  float64. (`reference/performance.md`)
+  float64. (`reference/python.md`, `reference/cpp.md`)
 - **Recognize versions gracefully.** Detect Seurat v3/v4/v5, pagoda2 accessor-vs-slot, AnnData
   `.raw`/uns layout; record `<format>@<version>`; route the unrepresentable to `dropped`, never
-  silently lose it. (`reference/profiles.md`)
+  silently lose it. (`reference/conversions.md`, `reference/r.md`)
 - **Fast by default.** Python auto-uses the compiled C++ accelerator when present and falls back to
-  pure Python; results are identical. Don't make users opt in. (`reference/performance.md`)
+  pure Python; results are identical. Don't make users opt in. (`reference/python.md`)
 
 ## Reference files (read the one you need)
 
+- `reference/conversions.md` — **format glue**: the readers/writers, the conversion matrix, what is
+  preserved vs. dropped, version recognition. (The near-term selling point.)
 - `reference/model.md` — axes, fields, roles, encodings, collections, the store layout.
 - `reference/python.md` — full Python API, lazy/streaming, profiles, packaging.
 - `reference/r.md` — full R API, profiles, CRAN packaging.

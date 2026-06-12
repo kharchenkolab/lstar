@@ -87,6 +87,9 @@ recoverable; silent loss is a bug.
 > **Example.** AnnData → L★ → AnnData over a real 40k-cell dataset is a fixed point across repeated
 > cycles: `X`, `obs`, `obsm`, and `obsp` come back identical; `uns` shows up in `ds.dropped`.
 
+This is the practical, near-term reason to use lstar — moving data between AnnData, Seurat, and SCE
+without losing your analysis. The dedicated guide is **[conversions.md](conversions.md)**.
+
 ## 4. Recognize versions gracefully
 
 External formats change shape across releases, and a glue library that assumes one layout breaks the

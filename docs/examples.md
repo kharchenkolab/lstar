@@ -9,6 +9,10 @@ If you haven't read [the model](model.md) yet, the one-line version: a dataset i
 you index by) and **fields** (typed data over axes), and a field's `role` says what it means
 (`measure`, `embedding`, `loading`, `relation`, `label`, …).
 
+Converting between formats (AnnData ↔ Seurat ↔ SCE ↔ Conos) is the most common reason to reach for
+lstar — examples 2 and 6–10 below cover it, and **[conversions.md](conversions.md)** is the dedicated
+guide (the function table, what's preserved vs. recorded as dropped).
+
 Contents:
 
 - [1. Build a dataset by hand, write, read, validate (Python)](#1-build-write-read-validate-python)
@@ -109,7 +113,7 @@ script with a real 40k-cell dataset: [`examples/roundtrip_chain.py`](../examples
 
 ---
 
-## 3. Lazy + streaming (Python)
+## 3. Lazy streaming (Python)
 
 **What this shows.** L★ stores are meant to be read *sparingly*. `read(lazy=True)` opens a store
 without materializing the heavy arrays; a CSC measure is then reduced by streaming column blocks, so
@@ -238,7 +242,7 @@ adapts — it doesn't assume one object layout.
 
 ---
 
-## 7. R: a split Seurat v5 assay *is* a collection
+## 7. R: Seurat v5 split collection
 
 **What this shows.** Seurat v5's integration workflow holds samples *unintegrated* as a split
 `Assay5` — `split(assay, f = sample)` makes per-sample layers (`counts.<sample>`). That is a
@@ -349,7 +353,7 @@ Build: `-Icore/include -std=c++17 -fopenmp` (add `-DLSTAR_HAVE_ZLIB -lz` for gzi
 
 ---
 
-## 12. Browser / Node (WASM)
+## 12. Browser WASM
 
 **What this shows.** The data layer for a web viewer: TypeScript reads the L★ store over HTTP or local
 disk via zarrita.js — fetching only the chunks a view needs — and the libstar **WASM** kernels do the

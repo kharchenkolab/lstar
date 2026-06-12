@@ -1,101 +1,172 @@
 # lstar
 
-A lightweight, fast library implementing **L★** — a uniform model and Zarr interchange format for
-single-cell and spatial omics — with bindings in **Python**, **R**, and **C++**, and bidirectional
-conversion to/from the common formats (AnnData, Seurat, SingleCellExperiment, the pagoda-verse /
-Conos).
+**A lightweight library for moving single-cell and spatial omics data between formats and languages —
+without losing your analysis along the way.**
 
-L★ represents a dataset as a set of **axes** (the entities one indexes by — cells, genes, clusters,
-samples, …) and **fields** (typed data over axes — counts, embeddings, graphs, labels, …). Existing
-formats are expressed as **profiles**: precise, bidirectional mappings into L★. See
-[`misc/Lstar_proposal.md`](misc/Lstar_proposal.md) for the model and
-[`misc/plan1.md`](misc/plan1.md) for the implementation plan.
+Single-cell data lives in a handful of incompatible containers: AnnData (Python), Seurat and
+SingleCellExperiment (R), the pagoda-verse / Conos. Moving a dataset from one to another usually means
+a lossy, one-off converter — and anything off the beaten path (a PCA's gene loadings, a velocity graph,
+a multi-sample integration) tends to fall on the floor. `lstar` is the glue that avoids that: it maps
+each format to one small, shared model (**L★**) and back, so a conversion preserves the *meaning* of
+each piece and **reports** anything a target format can't hold instead of dropping it silently.
 
-> Status: early development. Tri-language (Python/C++/R) read+write of the same store; profiles for
-> AnnData, Seurat (v3/v4/v5), SingleCellExperiment, and Conos; collection model. Not yet released.
-
-## Collections, not just matrices
-
-A central design point: a *collection of heterogeneous samples* is a collection, not one aligned
-`cells × genes` tensor. L★ represents it with a `samples` axis, **per-sample** `cells.<s>`/`genes.<s>`
-axes and measures (samples may differ in cells *and* gene sets), and a **union** `cells` axis for the
-joint analysis layer — joint embedding, clusters, and the integration **graph** as a `relation`. The
-R package ingests both a **Conos** object (`write_conos`) and a split **Seurat v5** assay
-(`split(assay, f = sample)` → a collection) this way. See
-[`examples/conos_collection_demo.R`](examples/conos_collection_demo.R).
-
-## Version recognition
-
-External formats ship many versions with different object layouts, so profiles **detect** the
-version and degrade gracefully rather than assuming one shape: Seurat v3/v4 `Assay` vs v5 `Assay5`
-(and a `GetAssayData` fallback for SeuratObject < 5); pagoda2's removed `$counts` slot vs the
-`getRawCounts()` accessor; AnnData's `.raw` slot (kept on its own gene axis when it diverges). The
-detected `<format>@<version>` is recorded in the store, and anything a profile can't represent is
-recorded in `dropped` rather than silently lost.
-
-## Documentation
-
-- [`docs/principles.md`](docs/principles.md) — the idea and the design philosophy (start here)
-- [`docs/model.md`](docs/model.md) — the model spec (axes, fields, roles, encodings, collections)
-- [`docs/format.md`](docs/format.md) — the Zarr store layout (on-disk spec)
-- [`docs/examples.md`](docs/examples.md) — worked, runnable examples (Python, R, C++, cross-language)
-
-An agent skill (keywords, usage patterns, dense reference) lives in
-[`.claude/skills/lstar/`](.claude/skills/lstar/SKILL.md). The full design proposal is in
-[`misc/Lstar_proposal.md`](misc/Lstar_proposal.md).
-
-## Layout
-
-```
-docs/            principles, model & format specs, worked examples
-core/            libstar — the C++ core (model, chunked+gzip Zarr IO, fast translation)
-python/          the `lstar` Python package (zarr-python + optional C++ accelerator)
-R/               the `lstar` R package (cpp11 → libstar)
-conformance/     shared round-trip / cross-profile / chunked test suite
-examples/        runnable end-to-end demos
-misc/            proposal + plans
-```
-
-## Quickstart (Python)
+It is available in **Python, R, and C++** (sharing one fast C++ core), reads and writes a portable
+[Zarr](https://zarr.dev)-based format, and is built to scale — you can open a million-cell dataset over
+the network and read just the parts you need.
 
 ```python
-import numpy as np, scipy.sparse as sp, lstar
+# Convert an AnnData straight to a Seurat object, keeping the PCA loadings a direct
+# converter would drop — Python writes a portable store, R reads it. (Details below.)
+```
+
+> **Status:** early development, not yet released. Working today: read/write the same store from
+> Python, C++, and R; profiles for AnnData, Seurat (v3/v4/v5), SingleCellExperiment, and Conos; the
+> collection model; lazy/streaming reads; a browser/WebAssembly data layer.
+
+---
+
+## Why lstar?
+
+Three things are hard with today's fixed-schema containers, and L★ is designed around them:
+
+1. **Conversion is lossy and pairwise.** Every container hard-codes a few named slots; what fits the
+   slots converts, and the rest is lost. Routing every format through *one shared model with a shared
+   vocabulary* makes conversion lossless on the common core and **explicit** about the remainder.
+2. **The interesting results have no home.** A gene-regulatory network, a cell–cell communication
+   tensor, RNA-velocity graphs, a fitted model — none of these fit a `cells × genes` slot, so they end
+   up as opaque blobs in `uns`/`misc`. In L★ they are ordinary, typed, queryable *fields*.
+3. **A study is many samples, not one matrix.** Different donors, conditions, even species and gene
+   sets cannot be honestly concatenated into a single matrix. L★ keeps a multi-sample study as a
+   *collection* of heterogeneous parts joined by a graph.
+
+If you only ever need to move data between AnnData, Seurat, and SCE, point 1 is reason enough to use
+lstar. Points 2 and 3 are why the model is shaped the way it is.
+
+## Converting between formats (the common case)
+
+You convert format **X** to format **Y** by reading X into L★ and writing L★ out as Y —
+`write_Y(read_X(...))`. For example, AnnData (Python) → Seurat (R), with the on-disk L★ store acting as
+the bridge between the two languages:
+
+```bash
+# (1) Python: AnnData -> a portable L* store
+python3 -c '
+import anndata as ad, lstar
+from lstar.profiles.anndata import read_anndata
+lstar.write(read_anndata(ad.read_h5ad("pbmc.h5ad")), "pbmc.lstar.zarr")'
+
+# (2) R: the L* store -> a Seurat object (.rds)
+Rscript -e 'library(lstar); saveRDS(write_seurat(lstar_read("pbmc.lstar.zarr")), "pbmc.rds")'
+```
+
+The shared-vocabulary core — raw counts, normalized/scaled expression, PCA (scores **and** gene
+loadings), UMAP/t-SNE, clusterings, cell/gene metadata — survives. Whatever the target can't hold
+(e.g. neighbor graphs through Seurat) is written to its sidecar and listed in the dataset's `dropped`
+manifest, so nothing vanishes unannounced. A runnable, commented version is
+[`examples/convert_h5ad_to_seurat.sh`](examples/convert_h5ad_to_seurat.sh).
+
+See **[docs/conversions.md](docs/conversions.md)** for the full glue guide: every reader/writer, the
+conversion matrix, exactly what is preserved vs. recorded as dropped, and how versions are detected.
+
+## Building a dataset directly
+
+If you want to author or inspect L★ data, the model is just *axes* (the things you index by) and
+*fields* (typed data over them):
+
+```python
+import scipy.sparse as sp, lstar
 
 ds = lstar.Dataset(kind="sample")
 ds.add_axis("cells", [f"cell{i}" for i in range(100)])
 ds.add_axis("genes", [f"g{i}" for i in range(50)])
+# A field declares what it IS (a `measure` over cells × genes) — no fixed "X" slot.
 ds.add_field("counts", sp.random(100, 50, density=0.1, format="csc"),
              role="measure", span=["cells", "genes"], state="raw")
 
 lstar.write(ds, "sample.lstar.zarr")
-ds2 = lstar.read("sample.lstar.zarr")
+ds2 = lstar.read("sample.lstar.zarr")          # also readable from R and C++
 ```
 
-## Lazy & streaming
+A field's `role` (`measure`, `embedding`, `loading`, `relation`, `label`, …) says what kind of object
+it is. A new kind of result is a new field with a role — never a change to the format. See
+[docs/model.md](docs/model.md).
 
-`read(path, lazy=True)` opens a store without materializing the heavy arrays, and a CSC measure
-can be reduced by streaming column blocks — bounded memory, never densified:
+## Two design choices worth knowing
+
+**Collections, not one big matrix.** A multi-sample study is stored as a `samples` axis plus
+*per-sample* `cells.<s>`/`genes.<s>` axes and measures (samples may differ in cells *and* genes), with a
+*union* `cells` axis for the joint analysis (embedding, clusters, and the integration graph as a
+`relation`). The R package ingests a **Conos** object (`write_conos`) and a split **Seurat v5** assay
+this way — see [`examples/conos_collection_demo.R`](examples/conos_collection_demo.R).
+
+**Versions are recognized, not assumed.** Formats change shape across releases, so the readers detect
+the variant and adapt — Seurat v3/v4 `Assay` vs. v5 `Assay5` (with a fallback for SeuratObject < 5),
+pagoda2's `getRawCounts()` accessor vs. the legacy `$counts` slot, AnnData's `.raw` slot. The detected
+`<format>@<version>` is recorded, so a downstream reader knows what produced the data.
+
+## Reading large data efficiently
+
+Single-cell stores get big — a million cells, tens of thousands of genes. lstar is built so you don't
+have to load a whole dataset to use part of it.
+
+- **Open without downloading.** `lstar.read(path, lazy=True)` reads only the small manifest; the heavy
+  arrays stay on disk (or on the server) until you touch them. Opening a 78-million-nonzero matrix this
+  way costs a few megabytes of memory instead of hundreds.
+- **Compute without materializing.** A per-gene statistic (say, finding the most variable genes) is
+  computed by *streaming* the matrix in column blocks, so memory stays bounded and the matrix is never
+  expanded into a dense array.
 
 ```python
-ds = lstar.read("big.lstar.zarr", lazy=True)        # opens without reading the heavy arrays
-mean, var, nnz = lstar.stream_col_stats(             # per-gene stats, bounded memory
-    ds.field("counts").values, lognorm=True,         # on-the-fly log1p, zero-aware variance
-    n_threads=8)                                     # threading controllable from the call
+ds = lstar.read("big.lstar.zarr", lazy=True)     # opens in MBs, not GBs
+# per-gene mean/variance over log-normalized counts, streamed in bounded memory:
+mean, var, nnz = lstar.stream_col_stats(ds.field("counts").values,
+                                        lognorm=True,   # normalize on the fly; the dense matrix is never built
+                                        n_threads=8)    # use as many cores as you like
+top_variable_genes = var.argsort()[::-1][:2000]
+```
 
-# chunk + compress so lazy reads touch only the blocks they need:
+When you write a store, chunking and compression make these reads cheap (a lazy read fetches only the
+chunks it needs):
+
+```python
 import numcodecs
 lstar.write(ds, "big.lstar.zarr", chunk_elems=1_000_000, compressor=numcodecs.GZip(5))
 ```
 
-Measured on real data — Tabula Muris Marrow, 40,220 × 20,138, **77.6M nonzeros, float32** (see
-[`misc/plan1.md`](misc/plan1.md) §12): lazy open **+9 MB vs +779 MB** eager (~87× less); per-gene
-mean/var streamed in **~165 MB**, matching dense `np.var`; the C++ `log1p` reduction **7.6× at 16
-threads** (thread count controllable, results thread-invariant); gzip-5 shrinks a raw-count store
-**4.8×**. Float32 measures stay float32 end to end (no widening copy) while moments accumulate in
-float64 — memory-lean, float64-accurate. AnnData → L★ → AnnData is a **fixed point** (any chain
-length returns to the original; `uns` it can't hold is recorded in `dropped`). The C++ core reads
-multi-chunk + gzip/zlib stores and writes a consolidated `.zmetadata`, so Python / C++ / R all read
-the same chunked, compressed store.
+In practice this is fast and frugal: opening that 40,220 × 20,138 matrix lazily uses ~9 MB instead of
+~780 MB, per-gene statistics stream in bounded memory, and the heavy reductions run on a shared C++
+core (used automatically when available, ~8× faster on 16 threads, identical results in Python, R, and
+the browser). Measurements and the full picture are in [`misc/plan1.md`](misc/plan1.md) §12.
+
+## Languages and components
+
+| | what it is |
+|---|---|
+| **Python** (`python/`) | the `lstar` package on zarr-python, with an optional compiled C++ accelerator |
+| **R** (`R/`) | the `lstar` package; the format profiles (Seurat, SCE, Conos) live here |
+| **C++** (`core/`) | `libstar`, the header-only core: the model, chunked+gzip Zarr IO, and the fast kernels |
+| **Browser/Node** (`js/`) | a TypeScript reader (zarrita) + the kernels compiled to WebAssembly, for viewers |
+
+```
+docs/         principles, the model & format specs, conversions, worked examples
+core/         libstar — the C++ core
+python/  R/   the Python and R packages
+js/           the browser/WASM data layer
+conformance/  the shared round-trip / cross-format / cross-language test suite
+examples/     runnable, commented end-to-end demos
+misc/         the design proposal (Lstar_proposal.md) + plans
+```
+
+## Documentation
+
+- **[docs/principles.md](docs/principles.md)** — the idea and the reasoning. *Start here.*
+- **[docs/conversions.md](docs/conversions.md)** — using lstar as glue between formats.
+- **[docs/model.md](docs/model.md)** — the model: axes, fields, roles, collections.
+- **[docs/format.md](docs/format.md)** — the on-disk Zarr layout.
+- **[docs/examples.md](docs/examples.md)** — worked, commented examples (Python, R, C++, browser).
+
+The full normative specification (the model, the Zarr schema, and the bidirectional profile rule
+catalog for every format) is the proposal, [`misc/Lstar_proposal.md`](misc/Lstar_proposal.md).
 
 ## License
 

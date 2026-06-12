@@ -10,6 +10,9 @@ container.
 
 - [**Principles**](principles.md) — the idea, the design philosophy, the long tail, and why a
   collection is not a tensor. Start here.
+- [**Conversions**](conversions.md) — using lstar as **glue between formats** (AnnData, Seurat, SCE,
+  Conos): the functions, the conversion matrix, what is preserved vs. recorded as dropped. *The
+  near-term reason to use lstar.*
 - [**Model**](model.md) — a precise, worked description of axes, fields, roles, the induction rules,
   and collections, building on the proposal.
 - [**Format**](format.md) — the Zarr store layout (the on-disk spec).
