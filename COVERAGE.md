@@ -17,7 +17,7 @@ corpus) and `conformance/{seurat,sce}_versions.sh` + `real_corpus_r.sh` (R corpu
 > **Shared real CITE-seq fixture** (`python/tests/fixtures/citeseq/*.mtx`, 80 cells × 27 genes + 29
 > proteins, subsampled from real minipbcite, ~27 KB) — drives **both** the MuData and Seurat RNA+ADT
 > multimodal tests on the *same real* data. RNA+ADT is abundant; nothing here is simulated.
-| SingleCellExperiment | **1** (ZeiselBrain)[local] | **4** (counts, +reducedDims, +altExps, +factors/metadata) |
+| SingleCellExperiment | **2** (ZeiselBrain[local], citeseq fixture[committed]) | structures (reducedDims/factors/metadata) on the real base |
 | Conos / pagoda2 | 0 | 2 (mock collection, mock pagoda2) |
 
 ## AnnData (.h5ad)
@@ -77,7 +77,7 @@ corpus) and `conformance/{seurat,sce}_versions.sh` + `real_corpus_r.sh` (R corpu
 |---|---|---|
 | assays (counts/logcounts/multiple) | ✓ | synth + real |
 | reducedDims (+ `rotation` attr → loadings) | ✓ | synth +reducedDims |
-| **altExps** (ADT / spike-ins → feature axes) | ✓ | synth ADT + real ZeiselBrain ERCC/repeat |
+| **altExps** (ADT / spike-ins → feature axes) | ✓ | real citeseq ADT + real ZeiselBrain ERCC/repeat |
 | colData / rowData factors | ✓ | synth + real |
 | metadata (free-form) / colPairs | ◐ metadata recorded; colPairs ✗ | synth |
 

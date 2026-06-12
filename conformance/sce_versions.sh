@@ -8,8 +8,16 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RLIB="$ROOT/.Rlib"
 
 Rscript -e '.libPaths(c("'"$RLIB"'", .libPaths())); suppressMessages({library(SingleCellExperiment); library(SummarizedExperiment); library(S4Vectors); library(lstar)})
-set.seed(1); ng <- 20; nc <- 12
-counts <- matrix(rpois(ng*nc, 2), ng, nc, dimnames = list(paste0("Gene",1:ng), paste0("Cell",1:nc)))
+set.seed(1)
+# REAL CITE-seq counts (the shared fixture, subsampled from minipbcite): real RNA as the base assay,
+# real ADT as the altExp. reducedDims / factors / metadata are constructed *structures* on the real base.
+cdir <- "'"$ROOT"'/python/tests/fixtures/citeseq"
+ccells <- readLines(file.path(cdir, "cells.txt"))
+counts <- as.matrix(Matrix::t(Matrix::readMM(file.path(cdir, "rna.mtx"))))   # genes x cells
+dimnames(counts) <- list(readLines(file.path(cdir, "genes.txt")), ccells)
+adtm <- as.matrix(Matrix::t(Matrix::readMM(file.path(cdir, "adt.mtx"))))
+dimnames(adtm) <- list(readLines(file.path(cdir, "proteins.txt")), ccells)
+ng <- nrow(counts); nc <- ncol(counts)                                       # 27 genes x 80 cells
 rt <- function(tag, sce, checks) {
   ds <- read_sce(sce); sce2 <- write_sce(ds); stopifnot(checks(ds, sce2))
   cat(sprintf("  [R] %-30s OK\n", tag))
@@ -27,13 +35,14 @@ stores <- c(stores, rt("+logcounts +reducedDims", sce_b, function(ds, s2)
   setequal(assayNames(s2), c("counts","logcounts")) && setequal(reducedDimNames(s2), c("PCA","UMAP"))))
 
 sce_c <- sce_b
-altExp(sce_c, "ADT") <- SummarizedExperiment(assays = list(counts =
-  matrix(rpois(5*nc,10), 5, nc, dimnames = list(paste0("ADT",1:5), colnames(counts)))))
-stores <- c(stores, rt("+altExps(ADT)", sce_c, function(ds, s2)   # altExp captured as a 2nd feature space
-  "ADT" %in% names(ds$axes) && identical(ds$axes$ADT$role, "feature") && "ADT" %in% altExpNames(s2)))
+altExp(sce_c, "ADT") <- SummarizedExperiment(assays = list(counts = adtm))   # REAL ADT (29 proteins)
+stores <- c(stores, rt("+altExps(ADT real)", sce_c, function(ds, s2)   # altExp captured as 2nd feature space
+  "ADT" %in% names(ds$axes) && identical(ds$axes$ADT$role, "feature") && "ADT" %in% altExpNames(s2) &&
+  length(ds$axes$ADT$labels) == 29))
 
 sce_d <- sce_b
-colData(sce_d)$cluster <- factor(rep(c("c1","c2"), 6)); rowData(sce_d)$type <- factor(rep(c("g1","g2"), 10))
+colData(sce_d)$cluster <- factor(rep(c("c1","c2"), length.out = nc))
+rowData(sce_d)$type <- factor(rep(c("g1","g2"), length.out = ng))
 metadata(sce_d)$study <- "demo"
 stores <- c(stores, rt("+colData/rowData factors +metadata", sce_d, function(ds, s2)
   identical(ds$axes$cluster$role, "factor") && identical(ds$axes$type$role, "factor") &&
