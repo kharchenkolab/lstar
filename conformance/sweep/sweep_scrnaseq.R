@@ -3,7 +3,7 @@ suppressMessages({library(scRNAseq); library(SingleCellExperiment); library(lsta
 t <- listDatasets(); rep <- file("/tmp/sweep_scrnaseq.tsv","w")
 cat("dataset\tstatus\tfields\taxes\tnote\n", file=rep)
 ok<-0; fail<-0; loaderr<-0
-for (i in seq_len(min(nrow(t), 45))) {
+for (i in seq_len(min(nrow(t), 30))) {
   nm <- t$Call[i]
   r <- tryCatch({ sce <- suppressMessages(eval(parse(text=nm)))
     if (is.list(sce) && !is(sce,"SummarizedExperiment")) sce <- sce[[1]]

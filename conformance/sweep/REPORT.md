@@ -18,10 +18,20 @@ Plus the curated CI corpus (`CORPUS.md`) and the version-variety fixtures.
 
 ## Bugs the sweep found (and fixed)
 
-- **SCE with NULL dimnames** (real `BachMammaryData`: cells keyed by a `Barcode` colData column, no
-  `colnames`) → the cells axis came out empty while the assay had 25806 cells → assay reconstruction
-  crashed on write-back. **Fixed**: synthesize cell labels from `Barcode` (or positional), genes from
-  positional, when dimnames are NULL. (A class of bug no synthetic fixture had — they always set dimnames.)
+Two real `write_sce`/`read_sce` bug classes from the first ~14 real SCEs — **neither curated nor
+synthetic fixtures had them** (they always set dimnames + use plain-vector columns):
+
+1. **NULL dimnames** (`BachMammaryData`, `ErnstSpermatogenesisData`: cells keyed by a `Barcode` colData
+   column, no `colnames`) → empty cells axis vs a 25806-col assay → write-back crash. **Fixed**:
+   synthesize labels from `Barcode`/positional.
+2. **S4-class col/rowData columns** (`BuettnerESCData`, `BunisHSPCData`, `DarmanisBrainData`: S4Vectors
+   `Rle` run-length columns + nested `DataFrame`/`GRanges` columns) → blind `as.character()` →
+   "no method for coercing this S4 class to a vector." **Fixed**: unpack `Rle`; record uncoercible
+   nested columns as dropped (e.g. `colData/metrics (DFrame)`).
+
+After both fixes, the first 12 SCEs are **10 PASS / 0 profile-FAIL / 2 load-skip**. The bare loop stops
+~#13 (one dataset segfaults R hard), so the full sweep runs each dataset in its **own subprocess**
+(`sweep_scrnaseq_driver.sh`, timeout-guarded) to isolate crashes/hangs and get through all 61.
 
 ## AnnData detail
 
