@@ -82,7 +82,12 @@ write_sce <- function(ds) {
 #' @seealso [write_sce()]
 #' @export
 read_sce <- function(sce) {
+  # Real SCEs often have NULL dimnames (cells keyed by a `Barcode` colData column, not colnames) --
+  # synthesize stable labels so axes aren't empty (which crashes assay reconstruction on write-back).
   cells <- colnames(sce); genes <- rownames(sce)
+  if (is.null(cells)) cells <- if ("Barcode" %in% colnames(SummarizedExperiment::colData(sce)))
+    as.character(SummarizedExperiment::colData(sce)$Barcode) else paste0("cell", seq_len(ncol(sce)))
+  if (is.null(genes)) genes <- paste0("gene", seq_len(nrow(sce)))
   scev <- tryCatch(as.character(utils::packageVersion("SingleCellExperiment")),
                    error = function(e) "?")
   ds <- list(kind = "sample", spec_version = "0.1",

@@ -6,7 +6,15 @@ row. Legend: ✓ covered · ◐ partial (works but a sub-case is recorded-not-ty
 fixture (the library's own constructors, deterministic, CI-able). See `python/tests/CORPUS.md` (Python
 corpus) and `conformance/{seurat,sce}_versions.sh` + `real_corpus_r.sh` (R corpus).
 
-## Example counts (current)
+## Beyond the curated examples: the sweep
+
+The curated lists below are the *committed/CI* corpus. The real breadth comes from
+**`conformance/sweep/`** — harnesses that run the profiles against **tens–hundreds** of real datasets
+from the bulk repositories (Bioconductor `scRNAseq` ≈ 61 SCEs · SeuratData ≈ 24 · scanpy.datasets · local
+`Conos`/atlas objects) and report pass/fail. That sweep already caught a real bug no synthetic fixture
+had (SCE with NULL dimnames). See `conformance/sweep/REPORT.md`.
+
+## Example counts (curated CI corpus)
 
 | corpus | real examples | synthetic fixtures |
 |---|---|---|
@@ -80,6 +88,8 @@ corpus) and `conformance/{seurat,sce}_versions.sh` + `real_corpus_r.sh` (R corpu
 | **altExps** (ADT / spike-ins → feature axes) | ✓ | real citeseq ADT + real ZeiselBrain ERCC/repeat |
 | colData / rowData factors | ✓ | synth + real |
 | metadata (free-form) / colPairs | ◐ metadata recorded; colPairs ✗ | synth |
+| **NULL dimnames** (cells by `Barcode` colData, not colnames) | ✓ | real BachMammaryData (sweep-caught) |
+| breadth sweep (Bioconductor scRNAseq) | ◐ running | ~45 real SCEs via `conformance/sweep/` |
 
 ## Conos / pagoda2 / cross-cutting
 
