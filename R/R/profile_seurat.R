@@ -9,10 +9,15 @@
 # The detected versions are recorded in ds$profiles ("seurat@0.1", "SeuratObject@<v>", "assay@<v>").
 
 .seurat_versions <- function(so, assay) {
-  sov <- tryCatch(as.character(utils::packageVersion("SeuratObject")), error = function(e) "?")
-  acl <- tryCatch(class(so[[assay]])[1], error = function(e) "Assay")
-  av <- if (identical(acl, "Assay5")) "v5" else if (identical(acl, "Assay")) "v3" else acl
-  c("seurat@0.1", paste0("SeuratObject@", sov), paste0("assay@", av))
+  pov <- tryCatch(as.character(utils::packageVersion("SeuratObject")), error = function(e) "?")
+  # the OBJECT's serialized version (a v3/v4 object loaded under Seurat 5 still reports its own version),
+  # plus EVERY assay's class -- a multimodal object mixes classes (RNA Assay5 + ADT Assay5, or a v3
+  # Assay + an SCTAssay). This is the per-object/per-assay version tracking the corpus relies on.
+  ov  <- tryCatch(as.character(SeuratObject::Version(so)), error = function(e) pov)
+  assays <- tryCatch(SeuratObject::Assays(so), error = function(e) assay)
+  cls <- vapply(assays, function(a) tryCatch(class(so[[a]])[1], error = function(e) "Assay"), character(1))
+  c("seurat@0.1", paste0("SeuratObject@", pov), paste0("object@", ov),
+    paste0("assay@", assays, ":", cls))
 }
 
 # A version-agnostic view of an assay's layers: $names, $get(layer)->matrix, $cells(layer).

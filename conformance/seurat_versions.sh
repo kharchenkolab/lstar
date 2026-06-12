@@ -24,10 +24,12 @@ stores <- c()
 
 options(Seurat.object.assay.version = "v3")
 stores <- c(stores, rt("v3 Assay", withpca(CreateSeuratObject(m)), function(ds, so2)
-  inherits(so2[["RNA"]], "Assay") && identical(ds$kind, "sample") && "pca" %in% Reductions(so2)))
+  inherits(so2[["RNA"]], "Assay") && identical(ds$kind, "sample") && "pca" %in% Reductions(so2) &&
+  any(grepl("assay@RNA:Assay$", ds$profiles))))         # version tracked: v3 Assay class recorded
 options(Seurat.object.assay.version = "v5")
 stores <- c(stores, rt("v5 Assay5", withpca(CreateSeuratObject(m)), function(ds, so2)
-  inherits(so2[["RNA"]], "Assay5") && "pca" %in% Reductions(so2)))
+  inherits(so2[["RNA"]], "Assay5") && "pca" %in% Reductions(so2) &&
+  any(grepl("assay@RNA:Assay5", ds$profiles))))         # version tracked: v5 Assay5 class recorded
 
 so5 <- CreateSeuratObject(m); so5$samp <- rep(c("s1","s2"), each = nc/2)
 so5[["RNA"]] <- split(so5[["RNA"]], f = so5$samp)

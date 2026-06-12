@@ -33,6 +33,27 @@ could not (see "Bugs caught" below).
 - AnnData allows the **same column name in `obs` and `var`** (e.g. `n_counts`); L* disambiguates the
   second (`n_counts.genes`) so neither is lost, with provenance preserving the native location.
 
+## Version tracking (R objects)
+
+"A Seurat object" is several structurally-different classes; the profile records the version of **every
+object it reads** in `ds$profiles` and the corpus tests log it as they go:
+- `object@<v>` — the object's serialized SeuratObject version (a v3/v4 object loaded under Seurat 5 still
+  reports its own; `UpdateSeuratObject` does **not** promote `Assay`→`Assay5`).
+- `assay@<name>:<class>` — **per assay** (multimodal mixes classes), e.g. `assay@RNA:Assay5`,
+  `assay@ADT:Assay`, `assay@SCT:SCTAssay`. The assay *class* (not the object version) is the real
+  version indicator (`Assay5` ⊄ `Assay`; `SCTAssay`/`ChromatinAssay` ⊂ `Assay` — branch SCT/Chromatin
+  *before* the generic `Assay`).
+
+| object | version recorded | covers |
+|---|---|---|
+| constructed v3 | `assay@RNA:Assay` | v3/v4 Assay path |
+| constructed v5 | `assay@RNA:Assay5` | v5 layered path |
+| v5 split | `assay@RNA:Assay5` (split layers) | integration / collection |
+| SCT | `assay@SCT:SCTAssay` | SCTransform residuals |
+| multimodal | `assay@RNA:Assay5 assay@ADT:Assay5` | per-modality feature spaces |
+| real pbmc3k.final | `object@5.4.0 assay@RNA:Assay` | published v4 (updated) |
+| real cbmc | `assay@RNA:Assay assay@ADT:Assay` | published CITE-seq |
+
 ## Bugs caught by real data (that fabricated tests missed)
 
 1. `copy.deepcopy` on `uns` exploded on the `neighbors` `OverloadedDict` (cyclic back-reference to the

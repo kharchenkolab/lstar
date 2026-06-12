@@ -14,8 +14,9 @@ if (!have("SeuratData") && !have("scRNAseq")) { cat("  [skip] real corpus: Seura
 suppressMessages({library(Seurat); library(SeuratObject); library(lstar)})
 n <- 0
 chk <- function(tag, ds, so2_or_sce2) { stopifnot(length(ds$fields) > 0); n <<- n + 1
-  cat(sprintf("  [R] %-22s read %d fld/%d ax (%s) | write-back OK | dropped: %s\n",
-      tag, length(ds$fields), length(ds$axes), ds$kind, paste(ds$dropped, collapse="; "))) }
+  vers <- grep("^(object@|assay@|SingleCellExperiment@)", ds$profiles, value = TRUE)  # track versions
+  cat(sprintf("  [R] %-20s {%s} %d fld/%d ax (%s) | dropped: %s\n",
+      tag, paste(vers, collapse=" "), length(ds$fields), length(ds$axes), ds$kind, paste(ds$dropped, collapse="; "))) }
 
 if (have("SeuratData")) {
   suppressMessages(library(SeuratData)); inst <- tryCatch(InstalledData()$Dataset, error = function(e) character(0))
