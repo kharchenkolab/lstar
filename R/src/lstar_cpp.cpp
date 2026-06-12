@@ -15,13 +15,13 @@ writable::doubles nd_doubles(const lstar::NdArray& a) {
   int64_t n = a.nelem();
   writable::doubles out(n);
   const std::string& dt = a.dtype;
-  if (dt == "<f8") { auto p = a.as<double>();   for (int64_t i = 0; i < n; ++i) out[i] = p[i]; }
-  else if (dt == "<f4") { auto p = a.as<float>();    for (int64_t i = 0; i < n; ++i) out[i] = p[i]; }
-  else if (dt == "<i4") { auto p = a.as<int32_t>();  for (int64_t i = 0; i < n; ++i) out[i] = p[i]; }
-  else if (dt == "<i8") { auto p = a.as<int64_t>();  for (int64_t i = 0; i < n; ++i) out[i] = (double)p[i]; }
-  else if (dt == "|u1" || dt == "<u1") { auto p = a.as<uint8_t>(); for (int64_t i = 0; i < n; ++i) out[i] = p[i]; }
-  else if (dt == "<u4") { auto p = a.as<uint32_t>(); for (int64_t i = 0; i < n; ++i) out[i] = p[i]; }
-  else if (dt == "|b1" || dt == "<b1") { auto p = a.as<uint8_t>(); for (int64_t i = 0; i < n; ++i) out[i] = p[i] ? 1.0 : 0.0; }
+  if (dt == "<f8") { auto p = a.as<double>();   for (R_xlen_t i = 0; i < (R_xlen_t)n; ++i) out[i] = p[i]; }
+  else if (dt == "<f4") { auto p = a.as<float>();    for (R_xlen_t i = 0; i < (R_xlen_t)n; ++i) out[i] = p[i]; }
+  else if (dt == "<i4") { auto p = a.as<int32_t>();  for (R_xlen_t i = 0; i < (R_xlen_t)n; ++i) out[i] = p[i]; }
+  else if (dt == "<i8") { auto p = a.as<int64_t>();  for (R_xlen_t i = 0; i < (R_xlen_t)n; ++i) out[i] = (double)p[i]; }
+  else if (dt == "|u1" || dt == "<u1") { auto p = a.as<uint8_t>(); for (R_xlen_t i = 0; i < (R_xlen_t)n; ++i) out[i] = p[i]; }
+  else if (dt == "<u4") { auto p = a.as<uint32_t>(); for (R_xlen_t i = 0; i < (R_xlen_t)n; ++i) out[i] = p[i]; }
+  else if (dt == "|b1" || dt == "<b1") { auto p = a.as<uint8_t>(); for (R_xlen_t i = 0; i < (R_xlen_t)n; ++i) out[i] = p[i] ? 1.0 : 0.0; }
   else throw std::runtime_error("nd_doubles: unsupported dtype " + dt);
   return out;
 }
@@ -30,9 +30,9 @@ writable::integers nd_integers(const lstar::NdArray& a) {
   int64_t n = a.nelem();
   writable::integers out(n);
   const std::string& dt = a.dtype;
-  if (dt == "<i4") { auto p = a.as<int32_t>(); for (int64_t i = 0; i < n; ++i) out[i] = p[i]; }
-  else if (dt == "<i8") { auto p = a.as<int64_t>(); for (int64_t i = 0; i < n; ++i) out[i] = (int)p[i]; }
-  else if (dt == "<u4") { auto p = a.as<uint32_t>(); for (int64_t i = 0; i < n; ++i) out[i] = (int)p[i]; }
+  if (dt == "<i4") { auto p = a.as<int32_t>(); for (R_xlen_t i = 0; i < (R_xlen_t)n; ++i) out[i] = p[i]; }
+  else if (dt == "<i8") { auto p = a.as<int64_t>(); for (R_xlen_t i = 0; i < (R_xlen_t)n; ++i) out[i] = (int)p[i]; }
+  else if (dt == "<u4") { auto p = a.as<uint32_t>(); for (R_xlen_t i = 0; i < (R_xlen_t)n; ++i) out[i] = (int)p[i]; }
   else throw std::runtime_error("nd_integers: unsupported dtype " + dt);
   return out;
 }
