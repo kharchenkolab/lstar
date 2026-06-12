@@ -34,6 +34,12 @@ static val to_i32(const std::vector<int64_t>& v) {
     std::vector<int32_t> t(v.begin(), v.end());
     return val(typed_memory_view(t.size(), t.data())).call<val>("slice");
 }
+static std::vector<int> to_int(const val& a) {
+    std::vector<double> d = convertJSArrayToNumberVector<double>(a);
+    std::vector<int> out(d.size());
+    for (size_t i = 0; i < d.size(); ++i) out[i] = static_cast<int>(d[i]);
+    return out;
+}
 
 // Zero-aware per-column mean/variance of a CSC measure (optionally over log1p values).
 // data: Float32Array|Float64Array (nnz); indptr: Int32Array|Int32 (ncols+1). -> {mean,var,nnz}.
@@ -63,10 +69,38 @@ static val cscToCsr(val data_js, val indices_js, val indptr_js, int nrows, int n
     return out;
 }
 
-static std::string version() { return "lstar-wasm 0.0.1"; }
+// Per-group sufficient stats over a CSC measure (cells x genes). group: Int32Array (length nrows),
+// cell -> group in [0,ngroups) or <0 to skip. -> {sum,sumsq,n_expr} flat (ngroups x ncols), ngenes.
+static val colSumByGroup(val data_js, val indptr_js, val indices_js, int nrows, int ncols, val group_js, int ngroups, bool lognorm) {
+    std::vector<double> data = convertJSArrayToNumberVector<double>(data_js);
+    std::vector<int64_t> indptr = to_i64(indptr_js), indices = to_i64(indices_js);
+    std::vector<int> grp = to_int(group_js);
+    auto s = lstar::csc_col_sum_by_group(data.data(), indptr.data(), indices.data(), nrows, ncols, grp.data(), ngroups, lognorm, 1);
+    val out = val::object();
+    out.set("sum", to_f64(s.sum)); out.set("sumsq", to_f64(s.sumsq)); out.set("n_expr", to_f64(s.n_expr));
+    out.set("ngroups", ngroups); out.set("ngenes", (double)s.ngenes);
+    return out;
+}
+
+// Subsample DE ranker over a CSR submatrix (sampled cells x genes). membership: Int32Array
+// (length nrows), 0=A, 1=B, <0=skip. -> {meanA,meanB,lfc, nA,nB}. Caller ranks by |lfc|.
+static val subsampleDeRank(val data_js, val indptr_js, val indices_js, int nrows, int ngenes, val membership_js, bool lognorm) {
+    std::vector<double> data = convertJSArrayToNumberVector<double>(data_js);
+    std::vector<int64_t> indptr = to_i64(indptr_js), indices = to_i64(indices_js);
+    std::vector<int> mem = to_int(membership_js);
+    auto r = lstar::subsample_de_rank(data.data(), indptr.data(), indices.data(), nrows, ngenes, mem.data(), lognorm);
+    val out = val::object();
+    out.set("meanA", to_f64(r.meanA)); out.set("meanB", to_f64(r.meanB)); out.set("lfc", to_f64(r.lfc));
+    out.set("nA", (double)r.nA); out.set("nB", (double)r.nB);
+    return out;
+}
+
+static std::string version() { return "lstar-wasm 0.0.2"; }
 
 EMSCRIPTEN_BINDINGS(lstar_wasm) {
     function("colMeanVar", &colMeanVar);
     function("cscToCsr", &cscToCsr);
+    function("colSumByGroup", &colSumByGroup);
+    function("subsampleDeRank", &subsampleDeRank);
     function("version", &version);
 }
