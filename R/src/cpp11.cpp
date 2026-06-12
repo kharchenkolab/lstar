@@ -6,6 +6,20 @@
 #include <R_ext/Visibility.h>
 
 // lstar_cpp.cpp
+list lstar_cpp_col_sum_by_group(doubles data, integers indptr, integers indices, int nrows, int ncols, integers group, int ngroups, bool lognorm);
+extern "C" SEXP _lstar_lstar_cpp_col_sum_by_group(SEXP data, SEXP indptr, SEXP indices, SEXP nrows, SEXP ncols, SEXP group, SEXP ngroups, SEXP lognorm) {
+  BEGIN_CPP11
+    return cpp11::as_sexp(lstar_cpp_col_sum_by_group(cpp11::as_cpp<cpp11::decay_t<doubles>>(data), cpp11::as_cpp<cpp11::decay_t<integers>>(indptr), cpp11::as_cpp<cpp11::decay_t<integers>>(indices), cpp11::as_cpp<cpp11::decay_t<int>>(nrows), cpp11::as_cpp<cpp11::decay_t<int>>(ncols), cpp11::as_cpp<cpp11::decay_t<integers>>(group), cpp11::as_cpp<cpp11::decay_t<int>>(ngroups), cpp11::as_cpp<cpp11::decay_t<bool>>(lognorm)));
+  END_CPP11
+}
+// lstar_cpp.cpp
+list lstar_cpp_subsample_de_rank(doubles data, integers indptr, integers indices, int nrows, int ngenes, integers membership, bool lognorm);
+extern "C" SEXP _lstar_lstar_cpp_subsample_de_rank(SEXP data, SEXP indptr, SEXP indices, SEXP nrows, SEXP ngenes, SEXP membership, SEXP lognorm) {
+  BEGIN_CPP11
+    return cpp11::as_sexp(lstar_cpp_subsample_de_rank(cpp11::as_cpp<cpp11::decay_t<doubles>>(data), cpp11::as_cpp<cpp11::decay_t<integers>>(indptr), cpp11::as_cpp<cpp11::decay_t<integers>>(indices), cpp11::as_cpp<cpp11::decay_t<int>>(nrows), cpp11::as_cpp<cpp11::decay_t<int>>(ngenes), cpp11::as_cpp<cpp11::decay_t<integers>>(membership), cpp11::as_cpp<cpp11::decay_t<bool>>(lognorm)));
+  END_CPP11
+}
+// lstar_cpp.cpp
 list lstar_cpp_read(std::string path);
 extern "C" SEXP _lstar_lstar_cpp_read(SEXP path) {
   BEGIN_CPP11
@@ -23,8 +37,10 @@ extern "C" SEXP _lstar_lstar_cpp_write(SEXP ds, SEXP path) {
 
 extern "C" {
 static const R_CallMethodDef CallEntries[] = {
-    {"_lstar_lstar_cpp_read",  (DL_FUNC) &_lstar_lstar_cpp_read,  1},
-    {"_lstar_lstar_cpp_write", (DL_FUNC) &_lstar_lstar_cpp_write, 2},
+    {"_lstar_lstar_cpp_col_sum_by_group",  (DL_FUNC) &_lstar_lstar_cpp_col_sum_by_group,  8},
+    {"_lstar_lstar_cpp_read",              (DL_FUNC) &_lstar_lstar_cpp_read,              1},
+    {"_lstar_lstar_cpp_subsample_de_rank", (DL_FUNC) &_lstar_lstar_cpp_subsample_de_rank, 7},
+    {"_lstar_lstar_cpp_write",             (DL_FUNC) &_lstar_lstar_cpp_write,             2},
     {NULL, NULL, 0}
 };
 }

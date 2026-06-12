@@ -65,7 +65,41 @@ lstar::NdArray nd_from_doubles(const doubles& v, std::vector<int64_t> shape, con
   return a;
 }
 
+static writable::doubles vec_to_dbl(const std::vector<double>& v) {
+  writable::doubles o((R_xlen_t)v.size());
+  for (R_xlen_t i = 0; i < (R_xlen_t)v.size(); ++i) o[i] = v[(size_t)i];
+  return o;
+}
+
 }  // namespace
+
+// Per-group sufficient stats over a CSC measure (cells x genes). `group`: per-cell group in
+// [0,ngroups) or <0 to skip. Returns sum/sumsq/n_expr flat (ngroups x ngenes). The same libstar
+// kernel the Python and WASM bindings call ("one kernel, every runtime").
+[[cpp11::register]]
+list lstar_cpp_col_sum_by_group(doubles data, integers indptr, integers indices,
+                                int nrows, int ncols, integers group, int ngroups, bool lognorm) {
+  std::vector<double> dv((size_t)data.size()); for (R_xlen_t i = 0; i < data.size(); ++i) dv[(size_t)i] = data[i];
+  std::vector<int64_t> ip((size_t)indptr.size()); for (R_xlen_t i = 0; i < indptr.size(); ++i) ip[(size_t)i] = indptr[i];
+  std::vector<int64_t> ix((size_t)indices.size()); for (R_xlen_t i = 0; i < indices.size(); ++i) ix[(size_t)i] = indices[i];
+  std::vector<int> grp((size_t)group.size()); for (R_xlen_t i = 0; i < group.size(); ++i) grp[(size_t)i] = group[i];
+  auto s = lstar::csc_col_sum_by_group(dv.data(), ip.data(), ix.data(), nrows, ncols, grp.data(), ngroups, lognorm, 0);
+  return writable::list({"sum"_nm = vec_to_dbl(s.sum), "sumsq"_nm = vec_to_dbl(s.sumsq),
+                         "n_expr"_nm = vec_to_dbl(s.n_expr), "ngroups"_nm = ngroups, "ngenes"_nm = (int)s.ngenes});
+}
+
+// Subsample DE ranker over a CSR submatrix (sampled cells x genes). membership: 0=A, 1=B, <0=skip.
+[[cpp11::register]]
+list lstar_cpp_subsample_de_rank(doubles data, integers indptr, integers indices,
+                                 int nrows, int ngenes, integers membership, bool lognorm) {
+  std::vector<double> dv((size_t)data.size()); for (R_xlen_t i = 0; i < data.size(); ++i) dv[(size_t)i] = data[i];
+  std::vector<int64_t> ip((size_t)indptr.size()); for (R_xlen_t i = 0; i < indptr.size(); ++i) ip[(size_t)i] = indptr[i];
+  std::vector<int64_t> ix((size_t)indices.size()); for (R_xlen_t i = 0; i < indices.size(); ++i) ix[(size_t)i] = indices[i];
+  std::vector<int> mem((size_t)membership.size()); for (R_xlen_t i = 0; i < membership.size(); ++i) mem[(size_t)i] = membership[i];
+  auto r = lstar::subsample_de_rank(dv.data(), ip.data(), ix.data(), nrows, ngenes, mem.data(), lognorm);
+  return writable::list({"meanA"_nm = vec_to_dbl(r.meanA), "meanB"_nm = vec_to_dbl(r.meanB),
+                         "lfc"_nm = vec_to_dbl(r.lfc), "nA"_nm = (int)r.nA, "nB"_nm = (int)r.nB});
+}
 
 [[cpp11::register]]
 list lstar_cpp_read(std::string path) {

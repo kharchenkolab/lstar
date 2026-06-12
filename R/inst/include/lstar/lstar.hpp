@@ -582,4 +582,69 @@ inline ColStats csc_col_mean_var(const T* data, const int64_t* indptr,
     return s;
 }
 
+// Per-group sufficient statistics over a CSC measure (cells x genes, gene-major): for each gene
+// column, accumulate sum / sumsq / n_expr per cell-group. `group_of_cell` (length nrows) maps each
+// cell to a group in [0,ngroups) (or <0 to skip). With `lognorm`, nonzeros are log1p'd on the fly.
+// Returns flat (ngroups x ncols) arrays. This is the exporter workhorse for the viewer profile's
+// cluster stats + grouped heatmaps + cluster markers — computed straight off the raw store, no
+// dense matrix. Parallel over genes (columns): each column writes distinct (g*ncols+j) slots, so
+// there is no cross-thread race. Accumulates in double; templated on the stored dtype (memory-lean).
+struct GroupStats { std::vector<double> sum, sumsq, n_expr; int64_t ngroups = 0, ngenes = 0; };
+template <class T>
+inline GroupStats csc_col_sum_by_group(const T* data, const int64_t* indptr, const int64_t* indices,
+                                       int64_t /*nrows*/, int64_t ncols, const int* group_of_cell,
+                                       int ngroups, bool lognorm = false, int n_threads = 0) {
+    GroupStats s; s.ngroups = ngroups; s.ngenes = ncols;
+    const size_t sz = (size_t)ngroups * (size_t)ncols;
+    s.sum.assign(sz, 0.0); s.sumsq.assign(sz, 0.0); s.n_expr.assign(sz, 0.0);
+#ifdef _OPENMP
+    if (n_threads > 0) omp_set_num_threads(n_threads);
+    #pragma omp parallel for schedule(static) if (n_threads != 1)
+#endif
+    for (int64_t j = 0; j < ncols; ++j) {
+        for (int64_t k = indptr[j]; k < indptr[j + 1]; ++k) {
+            int g = group_of_cell[indices[k]];
+            if (g < 0 || g >= ngroups) continue;
+            double v = static_cast<double>(data[k]);
+            if (lognorm) v = std::log1p(v);
+            size_t idx = (size_t)g * (size_t)ncols + (size_t)j;
+            s.sum[idx] += v; s.sumsq[idx] += v * v; s.n_expr[idx] += 1.0;
+        }
+    }
+    return s;
+}
+
+// Subsample differential-expression ranker over a CSR submatrix (sampled cells x genes, cell-major):
+// `membership` (length nrows) labels each row 0 (group A), 1 (group B), or <0 (skip). `indices` are
+// gene ids, `indptr` is length nrows+1. Returns per-gene log1p group means + log-fold-change
+// (lfc = meanA - meanB); the caller ranks by |lfc|. This is the constant-cost selection-DE kernel:
+// fed a few hundred rows of the cell-major DE panel it gives ranking-grade results without a full
+// matrix pass. (AUC/Wilcoxon is a later refinement; fold-change ranks the dominant signal cheaply.)
+struct DERank { std::vector<double> meanA, meanB, lfc; int64_t nA = 0, nB = 0; };
+template <class T>
+inline DERank subsample_de_rank(const T* data, const int64_t* indptr, const int64_t* indices,
+                                int64_t nrows, int64_t ngenes, const int* membership, bool lognorm = true) {
+    DERank r;
+    std::vector<double> sumA((size_t)ngenes, 0.0), sumB((size_t)ngenes, 0.0);
+    int64_t nA = 0, nB = 0;
+    for (int64_t row = 0; row < nrows; ++row) {
+        int m = membership[row];
+        if (m < 0) continue;
+        if (m == 0) ++nA; else ++nB;
+        for (int64_t k = indptr[row]; k < indptr[row + 1]; ++k) {
+            double v = static_cast<double>(data[k]);
+            if (lognorm) v = std::log1p(v);
+            (m == 0 ? sumA : sumB)[(size_t)indices[k]] += v;
+        }
+    }
+    r.nA = nA; r.nB = nB;
+    r.meanA.resize((size_t)ngenes); r.meanB.resize((size_t)ngenes); r.lfc.resize((size_t)ngenes);
+    const double invA = 1.0 / (double)std::max<int64_t>(nA, 1), invB = 1.0 / (double)std::max<int64_t>(nB, 1);
+    for (int64_t g = 0; g < ngenes; ++g) {
+        double ma = sumA[(size_t)g] * invA, mb = sumB[(size_t)g] * invB;
+        r.meanA[(size_t)g] = ma; r.meanB[(size_t)g] = mb; r.lfc[(size_t)g] = ma - mb;
+    }
+    return r;
+}
+
 }  // namespace lstar
