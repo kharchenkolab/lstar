@@ -67,9 +67,12 @@ lstar::NdArray nd_from_doubles(const doubles& v, std::vector<int64_t> shape, con
   return a;
 }
 
-// Pick a compact on-disk dtype for an R numeric (always f64) data vector. Integer-valued data
-// (e.g. raw counts) becomes i4 — or i8 if out of int32 range — so it isn't stored as 8-byte floats;
-// otherwise keep f8 (R has no float32, so narrowing to f4 would lose source precision, not de-widen).
+// Pick a compact on-disk dtype for a raw-counts data vector. Used ONLY for fields declared
+// state=="raw": integer-valued counts become i4 (or i8 if out of int32 range) instead of 8-byte
+// floats. We gate on the declared semantics, not on the values, so a genuinely floating layer
+// (lognorm/scaled, or a float measure that merely happens to be integer-valued) is never narrowed
+// — that keeps dtype predictable across round-trips through outside formats (AnnData/Seurat/SCE).
+// A raw layer that is itself non-integer (e.g. corrected counts) also stays f8.
 static std::string pick_data_dtype(const doubles& v) {
   bool all_int = true;
   double mn = 0.0, mx = 0.0;
@@ -202,7 +205,8 @@ void lstar_cpp_write(list ds, std::string path) {
       integers shp = f["shape"];
       for (R_xlen_t j = 0; j < shp.size(); ++j) fl.shape.push_back((int64_t)shp[j]);
       doubles dat = f["data"], ind = f["indices"], ptr = f["indptr"];
-      fl.data    = nd_from_doubles(dat, {(int64_t)dat.size()}, pick_data_dtype(dat));
+      const std::string ddt = (fl.state == "raw") ? pick_data_dtype(dat) : std::string("<f8");
+      fl.data    = nd_from_doubles(dat, {(int64_t)dat.size()}, ddt);
       fl.indices = nd_from_doubles(ind, {(int64_t)ind.size()}, "<i4");
       fl.indptr  = nd_from_doubles(ptr, {(int64_t)ptr.size()}, "<i4");
     } else if (fl.encoding == "utf8") {
@@ -212,7 +216,7 @@ void lstar_cpp_write(list ds, std::string path) {
       std::vector<int64_t> sh;
       for (R_xlen_t j = 0; j < shp.size(); ++j) sh.push_back((int64_t)shp[j]);
       doubles dn = f["dense"];
-      fl.dense = nd_from_doubles(dn, sh, pick_data_dtype(dn));
+      fl.dense = nd_from_doubles(dn, sh, "<f8");          // dense stays predictable f8 (round-trip-safe)
     }
     out.fields.push_back(std::move(fl));
   }
