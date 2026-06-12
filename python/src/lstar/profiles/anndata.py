@@ -271,10 +271,11 @@ def read_anndata(adata, kind="sample"):
     # uns: preserved *verbatim* via lossless passthrough (params, colors, dendrograms, DE tables, ...)
     # rather than recorded name-only -- the `aux/` subtree round-trips it and a reader can later promote
     # recognized structures out of the tail. lstar-internal markers (e.g. lstar/state) are excluded.
-    import copy
-    # deep-copy so promotion/typing (which pop from nested dicts like uns['pca']) never mutate the
-    # caller's AnnData; uns is small relative to the matrices, so the copy is cheap.
-    uns = copy.deepcopy({k: v for k, v in adata.uns.items() if not str(k).startswith("lstar/")})
+    # A mutable copy so promotion/typing (which pop from nested dicts like uns['pca']) never touch the
+    # caller's AnnData. NOT copy.deepcopy: anndata's `uns['neighbors']` is an `OverloadedDict` that
+    # back-references the AnnData/obsp, so deepcopy explodes (cyclic + giant sparse). `_safe_uns_copy`
+    # copies the dict/list *spine* and references array/scalar leaves -- enough to pop safely.
+    uns = {k: _safe_uns_copy(v) for k, v in adata.uns.items() if not str(k).startswith("lstar/")}
     if uns:
         ds.aux["anndata.uns"] = uns
     _read_rank_genes_groups(adata, ds)              # type one-vs-rest DE; leave pairwise in passthrough
@@ -284,6 +285,17 @@ def read_anndata(adata, kind="sample"):
 
 # Subtypes of fields that are regenerated into `uns` on write (so they aren't routed as ordinary fields).
 _TYPED_UNS_SUBTYPES = {"de", "color", "pca_var"}
+
+
+def _safe_uns_copy(v, _depth=0):
+    """A mutation-safe copy of an `uns` value that copies the dict/list *spine* and references
+    array/scalar leaves. Unlike `copy.deepcopy` it never follows anndata's `OverloadedDict` internal
+    back-references (to the AnnData / obsp), so it doesn't explode on real `uns['neighbors']`."""
+    if _depth < 32 and isinstance(v, dict):
+        return {k: _safe_uns_copy(val, _depth + 1) for k, val in v.items()}
+    if _depth < 32 and isinstance(v, (list, tuple)):
+        return [_safe_uns_copy(x, _depth + 1) for x in v]
+    return v
 
 
 def _read_uns_promotions(adata, ds):
