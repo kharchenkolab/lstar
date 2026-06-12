@@ -19,6 +19,7 @@ ds.add_field("n_counts", np.array([10, 0, 7, 0, 3], dtype=np.int64), role="measu
              mask=np.array([0, 1, 0, 1, 0], dtype=np.uint8))               # positions 1,3 missing
 ds.add_field("donor", np.array(["d1", "", "d2", "", "d1"], dtype=str), role="label", span=["cells"],
              mask=np.array([0, 1, 0, 1, 0], dtype=np.uint8))
+ds.add_field("size", np.array([1.0, 2.0, 3.0, 4.0, 5.0]), role="measure", span=["cells"])  # NOT nullable
 assert not lstar.validate(ds)
 lstar.write(ds, sys.argv[1])
 print("  [py] wrote masked integer + masked string")
@@ -42,6 +43,7 @@ assert n.mask is not None and list(n.mask) == [0, 1, 0, 1, 0]
 assert list(np.asarray(n.values)[[0, 2, 4]]) == [10, 7, 3]                 # values (numerically) intact
 assert d.mask is not None and list(d.mask) == [0, 1, 0, 1, 0]
 assert list(np.asarray(d.values)[[0, 2, 4]]) == ["d1", "d2", "d1"]
+assert ds.field("size").mask is None                                       # unmasked field stays unmasked
 assert not lstar.validate(ds)
 print("  [py] read R-written masks back: integer + string validity masks byte-identical")
 PY

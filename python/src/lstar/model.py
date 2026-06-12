@@ -102,6 +102,7 @@ class Dataset:
         self.axes = {}        # name -> Axis
         self.fields = {}      # name -> Field
         self.models = {}      # name -> (later milestones)
+        self.aux = {}         # namespace -> verbatim passthrough object (uns/@misc; see lstar.aux)
         self.profiles = []    # which profiles wrote this dataset
         self.dropped = []     # native locations a profile could not represent (loss is recorded)
 

@@ -76,19 +76,21 @@ def run():
     assert ds.field("leiden").role == "label"
     assert ds.field("connectivities").role == "relation"
 
-    # loss is recorded, not silent: the uns extra is dropped at read time and noted
-    assert "uns/something" in ds.dropped
+    # uns is preserved verbatim (lossless passthrough), not dropped name-only
+    assert ds.aux["anndata.uns"]["something"]["note"] == "not in the shared vocabulary"
 
-    # (1) profile-only round trip
-    check(a, write_anndata(ds))
+    # (1) profile-only round trip (uns reproduced on write-back)
+    a1 = write_anndata(ds); check(a, a1)
+    assert a1.uns["something"]["note"] == "not in the shared vocabulary"
 
     # (2) full pipeline through the zarr store
     p = os.path.join(tempfile.mkdtemp(), "a.lstar.zarr")
     write(ds, p)
     ds2 = read(p)
-    assert "uns/something" in ds2.dropped  # the loss record survives serialization
+    assert ds2.aux["anndata.uns"]["something"]["note"] == "not in the shared vocabulary"  # survives the store
     a3 = write_anndata(ds2)
     check(a, a3)
+    assert a3.uns["something"]["note"] == "not in the shared vocabulary"  # reproduced after serialization
 
     # (3) variable-length round trip: AnnData -> L* -> AnnData, repeated, is a fixed point, so a
     # conversion chain of any length returns to the original native format unchanged.

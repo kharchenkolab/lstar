@@ -20,7 +20,7 @@ R CMD INSTALL --preclean --no-multiarch --library="$RLIB" R >/tmp/lstar_rinstall
   && pass "R package install" || { echo "  FAIL R install"; tail -15 /tmp/lstar_rinstall.log; exit 1; }
 
 echo "== Python tests =="
-for t in test_roundtrip test_anndata_profile test_crossimpl test_validate test_versions test_lazy test_stream_write test_categorical test_induce test_nullable; do
+for t in test_roundtrip test_anndata_profile test_crossimpl test_validate test_versions test_lazy test_stream_write test_categorical test_induce test_nullable test_aux; do
   if PYTHONPATH=python/src python3 python/tests/$t.py >/tmp/lstar_$t.log 2>&1; then pass "$t"
   else echo "  FAIL  $t"; tail -15 /tmp/lstar_$t.log; exit 1; fi
 done
@@ -36,6 +36,10 @@ bash conformance/induce.sh >/tmp/lstar_ind.log 2>&1 \
 echo "== nullable conformance (validity mask: nullable Int/bool/string round-trip across Py/C++/R) =="
 bash conformance/nullable.sh >/tmp/lstar_null.log 2>&1 \
   && pass "nullable validity masks round-trip Py<->C++<->R" || { echo "  FAIL nullable"; tail -15 /tmp/lstar_null.log; exit 1; }
+
+echo "== aux passthrough conformance (uns/@misc subtree round-trips verbatim across Py/C++/R) =="
+bash conformance/aux.sh >/tmp/lstar_aux.log 2>&1 \
+  && pass "lossless passthrough subtree round-trips Py<->C++<->R" || { echo "  FAIL aux"; tail -15 /tmp/lstar_aux.log; exit 1; }
 
 echo "== cross-format conformance (R: Seurat + SCE) =="
 bash conformance/cross_format.sh >/tmp/lstar_cf.log 2>&1 \

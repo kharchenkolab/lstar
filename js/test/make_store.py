@@ -36,6 +36,11 @@ def main():
     ds.add_field("leiden", leiden, role="label", span=["cells"])
     ds.add_field("n_umi", n_umi, role="measure", span=["cells"])
     ds.add_field("qc", qc, role="measure", span=["cells"], mask=qc_mask)   # nullable: 1 == missing
+    ds.aux["anndata.uns"] = {                         # lossless passthrough: params + colors + nested
+        "log1p": {"base": None},
+        "pca": {"variance_ratio": np.array([0.6, 0.3, 0.1])},
+        "leiden_colors": np.array(["#aa0000", "#00bb00", "#0000cc"]),
+    }
     lstar.write(ds, STORE)                            # Zarr v2, single-chunk, consolidated metadata
 
     # Expected values for the TS tests.
@@ -62,6 +67,8 @@ def main():
         "leiden": leiden.tolist(),
         "n_umi": n_umi.tolist(),
         "qc": {"values": qc.tolist(), "mask": qc_mask.tolist()},
+        "aux_ns": list(ds.aux),
+        "uns": {"variance_ratio": [0.6, 0.3, 0.1], "colors": ["#aa0000", "#00bb00", "#0000cc"]},
         "gene_col": {"index": gcol, "rows": col.row.tolist(), "vals": col.data.tolist()},
         "colstats_lognorm": {"mean": mean.tolist(), "var": var.tolist(), "nnz": nnz.tolist()},
         "counts_sum": float(X.sum()),

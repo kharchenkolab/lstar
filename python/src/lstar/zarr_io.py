@@ -9,6 +9,8 @@ Cross-language notes (so the C++ core can read these stores):
   - `compressor=None` by default writes uncompressed chunks (no codec dependency in C++);
   - targets Zarr v2 here (Python 3.8); written to be v3-ready.
 """
+import json
+
 import numpy as np
 import scipy.sparse as sp
 import zarr
@@ -61,9 +63,28 @@ def write(ds, path, compressor=None, chunk_elems=None, stream=False):
             meta["nullable"] = True
         g.attrs[LSTAR] = meta
 
+    aux = getattr(ds, "aux", None) or {}
+    if aux:                                            # verbatim passthrough (uns/@misc) -> aux/<ns>
+        from .aux import to_store as _aux_to_store
+        auxg = root.create_group("aux")
+        for ns, obj in aux.items():
+            g = auxg.create_group(ns)
+            tree, leaves = _aux_to_store(obj)
+            manifest = []
+            for a in leaves:
+                if a["kind"] == "utf8":
+                    _write_strings(g, a["id"], np.asarray(a["data"], dtype=str), compressor, chunk_elems)
+                else:
+                    _ds(g, a["id"], np.asarray(a["data"]), compressor, chunk_elems)
+                manifest.append({"id": a["id"], "kind": a["kind"]})
+            # tree is stored as an opaque JSON *string*: zarr sorts attribute object keys, which would
+            # scramble the passthrough's dict order; a string is preserved verbatim (and lets the
+            # C++/R readers round-trip it without parsing JSON).
+            g.attrs[LSTAR] = {"kind": "aux", "tree": json.dumps(tree), "arrays": manifest}
+
     root.attrs[LSTAR] = {"spec_version": ds.spec_version or SPEC_VERSION, "kind": ds.kind,
                          "profiles": list(ds.profiles), "dropped": list(ds.dropped),
-                         "axes": list(ds.axes), "fields": list(ds.fields)}
+                         "axes": list(ds.axes), "fields": list(ds.fields), "aux": list(aux)}
     zarr.consolidate_metadata(path)
     return path
 
@@ -112,6 +133,17 @@ def read(path, lazy=False):
             directed=m.get("directed"), weighted=m.get("weighted"),
             subtype=m.get("subtype"), uncertainty=m.get("uncertainty"),
             mask=mask, provenance=m.get("provenance", {}))
+
+    for ns in rmeta.get("aux", []):                    # verbatim passthrough -> reconstruct the object
+        from .aux import from_store as _aux_from_store
+        g = root["aux"][ns]
+        am = dict(g.attrs[LSTAR])
+        leaves = []
+        for a in am.get("arrays", []):
+            data = _read_strings(g, a["id"]) if a["kind"] == "utf8" else np.asarray(g[a["id"]])
+            leaves.append({"id": a["id"], "kind": a["kind"], "data": data})
+        tree = am.get("tree")
+        ds.aux[ns] = _aux_from_store(json.loads(tree) if isinstance(tree, str) else tree, leaves)
     return ds
 
 

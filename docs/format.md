@@ -30,6 +30,11 @@ store.lstar.zarr/
 │   └── <field>/
 │       ├── .zattrs             {"lstar": {kind:"field", role, span, state, encoding, shape, …}}
 │       └── <value arrays>      depend on the encoding (below)
+├── aux/                        lossless passthrough of a format's untyped long-tail
+│   ├── .zgroup
+│   └── <namespace>/            e.g. "anndata.uns"
+│       ├── .zattrs             {"lstar": {kind:"aux", tree:"<JSON string>", arrays:[{id, kind}]}}
+│       └── <id>               the array leaves the tree references (dense, or utf8 bytes+offsets)
 └── models/                     fitted transforms (apply contract + weights)   [spec; not yet emitted]
 ```
 
@@ -53,6 +58,20 @@ equal — placement and reading are deterministic lookups, never shape inference
 `profiles` lets a reader interpret idiosyncrasies and know which conformance suite applied. `dropped`
 is the loss manifest — **what a writer could not represent is recorded, never silently lost** (see the
 worked conversion in the proposal §4.3).
+
+## Lossless passthrough (`aux/`)
+
+A format's untyped long-tail — AnnData `uns`, Seurat `@misc`/`@commands` (params, color palettes,
+dendrograms, DE tables) — is preserved **verbatim** under `aux/<namespace>/` rather than recorded
+name-only in `dropped`. Each namespace is a *self-describing* subtree: a JSON `tree` (stored as an
+opaque **string** so the store's key order survives zarr's key-sorting) whose array leaves are
+references into a flat `arrays` manifest; the manifest's `dense`/`utf8` leaves are ordinary L* arrays.
+Leaf grammar: a JSON scalar, `{"$obj":…}`, `{"$list":…}`, `{"$array":id}`, `{"$strings":id}`,
+`{"$record":…}` (a numpy structured array, e.g. `rank_genes_groups`), or `{"$dropped":…}` for a
+genuinely unrepresentable leaf (recorded, never silent). The C++ and R cores **round-trip the subtree
+without interpreting it** (they carry the `tree` string + the array leaves); only the originating
+profile walks the tree to rebuild the live object. This keeps the tail *inspectable*, so a recognized
+structure can be promoted to a typed field later.
 
 ## Field value arrays, by encoding
 

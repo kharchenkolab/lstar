@@ -128,12 +128,28 @@ struct Field {
     bool has_mask = false;
 };
 
+// Lossless passthrough (AnnData `uns`, Seurat `@misc`). The core round-trips it *verbatim* and never
+// interprets it: `attrs` is the group's whole `lstar` attribute dict (kind + `tree` JSON string + the
+// `arrays` manifest), preserved as-is; `leaves` are the dense/utf8 arrays the manifest names. Only the
+// originating profile (Python) walks the tree to rebuild the live object.
+struct AuxLeaf {
+    std::string id, kind;             // kind: "dense" | "utf8"
+    NdArray dense;
+    std::vector<std::string> strings;
+};
+struct Aux {
+    std::string ns;                   // namespace, e.g. "anndata.uns"
+    json attrs;                       // the group's lstar attrs (tree string + arrays manifest), verbatim
+    std::vector<AuxLeaf> leaves;
+};
+
 struct Dataset {
     std::string kind = "sample";
     std::string spec_version = "0.1";
     std::vector<std::string> profiles, dropped;
     std::vector<Axis> axes;
     std::vector<Field> fields;
+    std::vector<Aux> aux;
 
     Axis* axis(const std::string& n) {
         for (auto& a : axes) if (a.name == n) return &a;
@@ -558,11 +574,33 @@ inline Dataset read(const fs::path& root) {
         } else {  // dense
             f.dense = read_array(g / "values");
         }
-        if (m.value("nullable", false) && fs::exists(g / "mask")) {   // optional validity mask
+        if (m.contains("nullable") && !m["nullable"].is_null() && m["nullable"].get<bool>()
+            && fs::exists(g / "mask")) {                               // optional validity mask
             f.mask = read_array(g / "mask");
             f.has_mask = true;
         }
         ds.fields.push_back(std::move(f));
+    }
+
+    if (rmeta.contains("aux") && !rmeta["aux"].is_null()) {            // verbatim passthrough subtree
+        for (auto& an : rmeta["aux"]) {
+            std::string ns = an.get<std::string>();
+            fs::path g = root / "aux" / ns;
+            Aux ax;
+            ax.ns = ns;
+            ax.attrs = read_json(g / ".zattrs")["lstar"];
+            if (ax.attrs.contains("arrays") && !ax.attrs["arrays"].is_null()) {
+                for (auto& a : ax.attrs["arrays"]) {
+                    AuxLeaf leaf;
+                    leaf.id = a["id"].get<std::string>();
+                    leaf.kind = a["kind"].get<std::string>();
+                    if (leaf.kind == "utf8") leaf.strings = read_strings(g, leaf.id);
+                    else leaf.dense = read_array(g / leaf.id);
+                    ax.leaves.push_back(std::move(leaf));
+                }
+            }
+            ds.aux.push_back(std::move(ax));
+        }
     }
     return ds;
 }
@@ -582,6 +620,9 @@ inline void write(const Dataset& ds, const fs::path& root,
     rl["dropped"] = ds.dropped;
     rl["axes"] = axnames;
     rl["fields"] = fnames;
+    std::vector<std::string> auxnames;
+    for (auto& a : ds.aux) auxnames.push_back(a.ns);
+    rl["aux"] = auxnames;
     write_group(root, json{{"lstar", rl}});
     write_group(root / "axes", json::object());
     write_group(root / "fields", json::object());
@@ -634,6 +675,18 @@ inline void write(const Dataset& ds, const fs::path& root,
             write_array(g / "values", f.dense, chunk_elems, compressor);
         }
         if (f.has_mask) write_array(g / "mask", f.mask, chunk_elems, compressor);
+    }
+
+    if (!ds.aux.empty()) {                                            // verbatim passthrough subtree
+        write_group(root / "aux", json::object());
+        for (auto& ax : ds.aux) {
+            fs::path g = root / "aux" / ax.ns;
+            write_group(g, json{{"lstar", ax.attrs}});
+            for (auto& leaf : ax.leaves) {
+                if (leaf.kind == "utf8") write_strings(g, leaf.id, leaf.strings, chunk_elems, compressor);
+                else write_array(g / leaf.id, leaf.dense, chunk_elems, compressor);
+            }
+        }
     }
     consolidate_metadata(root);
 }

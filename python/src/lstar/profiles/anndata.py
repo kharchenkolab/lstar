@@ -268,8 +268,12 @@ def read_anndata(adata, kind="sample"):
                      subtype=_guess_subtype(k), weighted=True,
                      provenance={"anndata": "varp/%s" % k})
 
-    # uns is not imported in M2; record the loss (never silent)
-    ds.dropped = ["uns/%s" % k for k in adata.uns.keys() if not str(k).startswith("lstar/")]
+    # uns: preserved *verbatim* via lossless passthrough (params, colors, dendrograms, DE tables, ...)
+    # rather than recorded name-only -- the `aux/` subtree round-trips it and a reader can later promote
+    # recognized structures out of the tail. lstar-internal markers (e.g. lstar/state) are excluded.
+    uns = {k: v for k, v in adata.uns.items() if not str(k).startswith("lstar/")}
+    if uns:
+        ds.aux["anndata.uns"] = uns
     return ds
 
 
@@ -319,6 +323,16 @@ def _route_fields(ds):
     return r
 
 
+def _restore_uns(adata, ds):
+    """Reproduce the passthrough `uns` captured by `read_anndata` (lossless round-trip of params, color
+    palettes, dendrograms, DE tables, ...). Typed fields already placed elsewhere win; uns only fills
+    keys not otherwise set."""
+    uns = (getattr(ds, "aux", None) or {}).get("anndata.uns")
+    if uns:
+        for k, v in uns.items():
+            adata.uns[k] = v
+
+
 def write_anndata(ds):
     """Write an L* Dataset back to an AnnData object (lossy where no slot fits)."""
     import anndata as ad
@@ -347,6 +361,7 @@ def write_anndata(ds):
         rg = np.asarray(ds.axis(raw_field.span[1]).labels, dtype=str)
         raw_var = pd.DataFrame(index=rg)
         adata.raw = ad.AnnData(X=raw_field.values, obs=pd.DataFrame(index=cells), var=raw_var)
+    _restore_uns(adata, ds)                         # reproduce the passthrough uns (params/colors/...)
     if dropped:
         adata.uns["lstar/dropped"] = list(dropped)
     return adata
@@ -502,6 +517,7 @@ def write_anndata_streamed(ds, path, chunk_elems=None):
             raw_eager = raw_field
             adata.raw = ad.AnnData(X=np.asarray(raw_field.values),
                                    obs=pd.DataFrame(index=cells), var=pd.DataFrame(index=rg))
+    _restore_uns(adata, ds)                 # reproduce the passthrough uns
     if r["dropped"]:
         adata.uns["lstar/dropped"] = list(r["dropped"])
 

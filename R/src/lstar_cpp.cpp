@@ -46,6 +46,14 @@ writable::strings to_strings(const std::vector<std::string>& v) {
   return out;
 }
 
+// Aux (passthrough) dense leaves round-trip as raw bytes + dtype + shape, so *any* dtype is preserved
+// exactly across the R boundary (no f8 widening), the same way the store holds them.
+writable::raws nd_to_raws(const lstar::NdArray& a) {
+  writable::raws out(a.bytes.size());
+  for (size_t i = 0; i < a.bytes.size(); ++i) out[i] = (Rbyte)a.bytes[i];
+  return out;
+}
+
 writable::integers to_ints(const std::vector<int64_t>& v) {
   writable::integers out(v.size());
   for (size_t i = 0; i < v.size(); ++i) out[i] = (int)v[i];
@@ -228,10 +236,33 @@ list lstar_cpp_read(std::string path) {
   }
   fields.attr("names") = fnames;
 
+  // Aux passthrough: attrs (tree string + manifest) carried as a JSON string; each leaf as raw bytes
+  // (dense) or a character vector (utf8). The R layer round-trips it verbatim, never interpreting it.
+  writable::list aux(ds.aux.size());
+  writable::strings auxnames(ds.aux.size());
+  for (size_t k = 0; k < ds.aux.size(); ++k) {
+    const auto& a = ds.aux[k];
+    writable::list leaves(a.leaves.size());
+    writable::strings lnames(a.leaves.size());
+    for (size_t j = 0; j < a.leaves.size(); ++j) {
+      const auto& lf = a.leaves[j];
+      if (lf.kind == "utf8")
+        leaves[j] = writable::list({"kind"_nm = lf.kind, "strings"_nm = to_strings(lf.strings)});
+      else
+        leaves[j] = writable::list({"kind"_nm = lf.kind, "dtype"_nm = lf.dense.dtype,
+                                    "shape"_nm = to_ints(lf.dense.shape), "bytes"_nm = nd_to_raws(lf.dense)});
+      lnames[j] = lf.id;
+    }
+    leaves.attr("names") = lnames;
+    aux[k] = writable::list({"attrs"_nm = a.attrs.dump(), "leaves"_nm = leaves});
+    auxnames[k] = a.ns;
+  }
+  aux.attr("names") = auxnames;
+
   return writable::list({"kind"_nm = ds.kind, "spec_version"_nm = ds.spec_version,
                          "profiles"_nm = to_strings(ds.profiles),
                          "dropped"_nm = to_strings(ds.dropped),
-                         "axes"_nm = axes, "fields"_nm = fields});
+                         "axes"_nm = axes, "fields"_nm = fields, "aux"_nm = aux});
 }
 
 // Write: R list -> libstar Dataset -> Zarr store. The R layer disassembles Matrix objects
@@ -317,6 +348,42 @@ void lstar_cpp_write(list ds, std::string path, int chunk_elems = 0,
       }
     }
     out.fields.push_back(std::move(fl));
+  }
+
+  {                                                       // aux passthrough (optional; older lists omit it)
+    strings dn = ds.names();
+    bool has_aux = false;
+    for (R_xlen_t j = 0; j < dn.size(); ++j) if (std::string(dn[j]) == "aux") { has_aux = true; break; }
+    if (has_aux) {
+      list aux = ds["aux"];
+      strings auxnames = aux.names();
+      for (R_xlen_t i = 0; i < aux.size(); ++i) {
+        list a = aux[i];
+        lstar::Aux ax;
+        ax.ns = auxnames[i];
+        ax.attrs = lstar::json::parse(as_cpp<std::string>(a["attrs"]));
+        list leaves = a["leaves"];
+        strings lnames = leaves.names();
+        for (R_xlen_t j = 0; j < leaves.size(); ++j) {
+          list lf = leaves[j];
+          lstar::AuxLeaf leaf;
+          leaf.id = lnames[j];
+          leaf.kind = as_cpp<std::string>(lf["kind"]);
+          if (leaf.kind == "utf8") {
+            leaf.strings = as_cpp<std::vector<std::string>>(lf["strings"]);
+          } else {
+            leaf.dense.dtype = as_cpp<std::string>(lf["dtype"]);
+            integers sh = lf["shape"];
+            for (R_xlen_t s = 0; s < sh.size(); ++s) leaf.dense.shape.push_back((int64_t)sh[s]);
+            raws bv = lf["bytes"];
+            leaf.dense.bytes.resize((size_t)bv.size());
+            for (R_xlen_t b = 0; b < bv.size(); ++b) leaf.dense.bytes[b] = (uint8_t)bv[b];
+          }
+          ax.leaves.push_back(std::move(leaf));
+        }
+        out.aux.push_back(std::move(ax));
+      }
+    }
   }
   lstar::write(out, path, (int64_t)chunk_elems, compressor);
 }

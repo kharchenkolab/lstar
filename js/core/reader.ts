@@ -47,6 +47,7 @@ export class LstarDataset {
   specVersion = "0.1";
   profiles: string[] = [];
   dropped: string[] = [];
+  auxNames: string[] = [];   // namespaces of the lossless passthrough subtree (uns/@misc)
   axes = new Map<string, AxisMeta>();
   fields = new Map<string, FieldMeta>();
 
@@ -70,6 +71,7 @@ export class LstarDataset {
     this.specVersion = m.spec_version ?? "0.1";
     this.profiles = m.profiles ?? [];
     this.dropped = m.dropped ?? [];
+    this.auxNames = m.aux ?? [];
     for (const name of m.axes as string[]) {
       const ax = await zarr.open(this.root.resolve("axes/" + name), { kind: "group" });
       const offs = await this._open("axes/" + name + "/labels_offsets");
@@ -109,6 +111,39 @@ export class LstarDataset {
     const bytes = (await this._get("fields/" + name + "/values")).data as Uint8Array;
     const offs = (await this._get("fields/" + name + "/values_offsets")).data as any;
     return decodeStrings(bytes, offs);
+  }
+
+  /**
+   * A lossless-passthrough namespace (e.g. "anndata.uns"), reconstructed into a plain JS object: the
+   * stored JSON `tree` with its array-leaf references resolved (a numpy structured array becomes a
+   * `{field: array}` object). Read-only — for inspection / promoting a recognized structure to a field.
+   */
+  async aux(ns: string): Promise<any> {
+    const g = await zarr.open(this.root.resolve("aux/" + ns), { kind: "group" });
+    const lm = (g.attrs as any).lstar ?? {};
+    const tree = typeof lm.tree === "string" ? JSON.parse(lm.tree) : lm.tree;
+    const byId: Record<string, any> = {};
+    for (const a of (lm.arrays ?? []) as Array<{ id: string; kind: string }>) {
+      if (a.kind === "utf8") {
+        const bytes = (await this._get("aux/" + ns + "/" + a.id)).data as Uint8Array;
+        const offs = (await this._get("aux/" + ns + "/" + a.id + "_offsets")).data as any;
+        byId[a.id] = decodeStrings(bytes, offs);
+      } else {
+        byId[a.id] = (await this._get("aux/" + ns + "/" + a.id)).data;
+      }
+    }
+    const build = (node: any): any => {
+      if (node === null || typeof node !== "object") return node;
+      if ("$obj" in node) { const o: any = {}; for (const k in node.$obj) o[k] = build(node.$obj[k]); return o; }
+      if ("$list" in node) return (node.$list as any[]).map(build);
+      if ("$array" in node) return byId[node.$array];
+      if ("$strings" in node) return byId[node.$strings];
+      if ("$record" in node) { const o: any = {}; for (const k in node.$record.fields) o[k] = build(node.$record.fields[k]); return o; }
+      if ("$bytes" in node) return node.$bytes;
+      if ("$dropped" in node) return null;
+      return node;
+    };
+    return build(tree);
   }
 
   /** A nullable field's validity mask (`1 == missing`), or null when the field carries no nulls. */

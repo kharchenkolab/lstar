@@ -129,7 +129,7 @@ lstar_write <- function(ds, path, chunk_elems = NULL, compression = c("none", "g
   payload <- list(kind = ds$kind %||% "sample", spec_version = ds$spec_version %||% "0.1",
                   profiles = as.character(ds$profiles %||% character(0)),
                   dropped = as.character(ds$dropped %||% character(0)),
-                  axes = axes, fields = fields)
+                  axes = axes, fields = fields, aux = ds$aux %||% list())  # passthrough, round-tripped verbatim
   lstar_cpp_write(payload, path.expand(path),
                   as.integer(if (is.null(chunk_elems)) 0L else chunk_elems),
                   if (compression == "none") "" else compression, as.integer(level))

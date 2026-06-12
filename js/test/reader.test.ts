@@ -51,6 +51,13 @@ check("fieldMeta(qc) nullable", ds.fields.get("qc")!.nullable === true);
 check("fieldMask(qc)", qcMask !== null && eq(Array.from(qcMask!), expected.qc.mask));
 check("fieldMask(n_umi) absent", (await ds.fieldMask("n_umi")) === null);
 
+// lossless passthrough: the aux subtree reconstructs the uns object (nested dicts + arrays + colors)
+check("auxNames", eq(ds.auxNames, expected.aux_ns));
+const uns = await ds.aux("anndata.uns");
+check("aux nested null", uns.log1p.base === null);
+check("aux variance_ratio", approx(uns.pca.variance_ratio, expected.uns.variance_ratio));
+check("aux colors", eq(uns.leiden_colors, expected.uns.colors));
+
 // the hot path: one CSC gene-column, fetched as a slice
 const gc = expected.gene_col;
 const { rows, vals } = await ds.cscColumn("counts", gc.index);
