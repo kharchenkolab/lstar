@@ -39,6 +39,43 @@ def de_bundle(ds, factor):
     return out
 
 
+def pseudobulk(ds, factor, field="counts", lognorm=False, add=True):
+    """Per-group **pseudobulk** over `(factor, genes)`: each group's mean expression and fraction of
+    cells expressing, from a measure (`field`, cells x genes) grouped by the per-cell factor label. The
+    symmetric companion to a DE bundle -- ordinary `pb.<factor>.<stat>` measures over the same factor
+    axis. With `add=True` the fields are added to `ds`; returns the `{stat: array}` dict either way.
+    """
+    import scipy.sparse as sp
+
+    from .model import as_categorical
+
+    cat = as_categorical(ds.field(factor).values)
+    codes = np.asarray(cat.codes)
+    groups = np.asarray(cat.categories, dtype=str)
+    M = ds.field(field).values
+    M = M.tocsr() if sp.issparse(M) else sp.csr_matrix(M)
+    gene_axis = ds.field(field).span[1]
+    K, ng = len(groups), M.shape[1]
+    mean = np.zeros((K, ng)); frac = np.zeros((K, ng))
+    for k in range(K):
+        rows = np.nonzero(codes == k)[0]
+        if not len(rows):
+            continue
+        sub = M[rows]
+        vals = sub.copy()
+        if lognorm:
+            vals.data = np.log1p(vals.data)
+        mean[k] = np.asarray(vals.sum(axis=0)).ravel() / len(rows)       # mean (log1p) expression
+        frac[k] = np.asarray((sub > 0).sum(axis=0)).ravel() / len(rows)  # fraction expressing
+    out = {"mean": mean, "frac": frac}
+    if add:
+        for stat, arr in out.items():
+            ds.add_field("pb.%s.%s" % (factor, stat), arr, role="measure", span=[factor, gene_axis],
+                         subtype="pseudobulk", state=("lognorm" if lognorm else None),
+                         provenance={"pb_factor": factor, "pb_stat": stat, "from": field})
+    return out
+
+
 def markers(ds, factor, top=None, sort_by="score", descending=True):
     """A tidy long-form marker table for `factor`: one row per (group, gene) with whichever of
     `score`/`lfc`/`pval`/`padj` the bundle carries. `top` keeps the top-N genes per group (by

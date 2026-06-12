@@ -86,6 +86,33 @@ def test_markers_tidy_view():
     print("markers(): tidy (group, gene, score, lfc, pval, padj) with top-N per group")
 
 
+def test_pseudobulk_bundle():
+    import warnings; warnings.filterwarnings("ignore")
+    import scipy.sparse as sp
+    ds = lstar.Dataset(kind="sample")
+    rng = np.random.default_rng(1); n, g = 60, 12
+    ds.add_axis("cells", [f"c{i}" for i in range(n)])
+    ds.add_axis("genes", [f"g{j}" for j in range(g)])
+    X = sp.csr_matrix(rng.poisson(0.5, size=(n, g)).astype("float64"))
+    ds.add_field("counts", X, role="measure", span=["cells", "genes"], state="raw")
+    codes = np.array([i % 3 for i in range(n)])
+    ds.add_field("leiden", lstar.Categorical(codes, np.array(["0", "1", "2"])), span=["cells"])
+
+    pb = lstar.pseudobulk(ds, "leiden", field="counts", lognorm=False)
+    assert ds.field("pb.leiden.mean").span == ["leiden", "genes"]
+    assert ds.field("pb.leiden.mean").subtype == "pseudobulk"
+    # group-0 mean matches a manual reduction
+    rows0 = np.nonzero(codes == 0)[0]
+    ref = np.asarray(X[rows0].mean(axis=0)).ravel()
+    assert np.allclose(pb["mean"][0], ref)
+    assert np.all((pb["frac"] >= 0) & (pb["frac"] <= 1))
+    assert not lstar.validate(ds)
+
+    p = _store(); lstar.write(ds, p)                                   # round-trips as ordinary measures
+    assert np.allclose(np.asarray(lstar.read(p).field("pb.leiden.frac").values), pb["frac"])
+    print("pseudobulk(): (factor,genes) mean + frac, matches manual reduction, round-trips")
+
+
 def test_pairwise_de_stays_passthrough():
     import warnings; warnings.filterwarnings("ignore")
     a = _adata_with_de(reference="0")                                  # reference group -> NOT one-vs-rest
@@ -104,4 +131,5 @@ def test_pairwise_de_stays_passthrough():
 if __name__ == "__main__":
     test_de_bundle_roundtrip()
     test_markers_tidy_view()
+    test_pseudobulk_bundle()
     test_pairwise_de_stays_passthrough()
