@@ -41,10 +41,11 @@ if (!is.null(sct)) stores <- c(stores, rt("SCTAssay", sct, function(ds, so2) len
 
 adt <- matrix(rpois(8*nc, 10), 8, nc, dimnames = list(paste0("ADT",1:8), colnames(m)))
 mm <- CreateSeuratObject(m); mm[["ADT"]] <- CreateAssay5Object(counts = adt)
-ds_mm <- read_seurat(mm)
-stopifnot("assay/ADT" %in% ds_mm$dropped)              # the second assay is recorded, not silently lost
-write_seurat(ds_mm)
-cat("  [R] multimodal RNA+ADT     OK (ADT assay recorded in dropped)\n")
+stores <- c(stores, rt("multimodal RNA+ADT", mm, function(ds, so2)   # ADT captured as a 2nd feature space
+  "ADT" %in% names(ds$axes) && identical(ds$axes$ADT$role, "feature") &&
+  identical(as.character(ds$fields[["ADT.counts"]]$span), c("cells","ADT")) &&
+  setequal(Assays(so2), c("RNA","ADT")) &&
+  isTRUE(all.equal(as.matrix(LayerData(so2[["ADT"]],"counts")), adt, check.attributes = FALSE))))
 cat(paste(stores, collapse="\n"), "\n", file = "/tmp/sv_stores.txt")
 ' 2>&1 | grep -E "^  \[R\]"
 

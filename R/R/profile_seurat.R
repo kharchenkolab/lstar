@@ -160,6 +160,26 @@ write_seurat <- function(ds) {
     SeuratObject::Idents(so) <- stats::setNames(iv, cells)
   }
 
+  # Multimodal: rebuild every non-`genes` feature axis as its own assay (ADT, ATAC, ...) from its
+  # measures `<axis>.<layer>` over (cells, <axis>).
+  for (fax in names(ds$axes)) {
+    ax <- ds$axes[[fax]]
+    if (!identical(ax$role, "feature") || fax == "genes") next
+    fm <- Filter(function(nm) { f <- ds$fields[[nm]]; sp <- as.character(f$span)
+      identical(f$role, "measure") && length(sp) == 2 && sp[1] == "cells" && sp[2] == fax }, names(ds$fields))
+    if (!length(fm)) next
+    feats <- as.character(ax$labels)
+    fxc <- function(nm) { mm <- Matrix::t(as(ds$fields[[nm]]$values, "CsparseMatrix")); dimnames(mm) <- list(feats, cells); mm }
+    states <- vapply(fm, function(nm) ds$fields[[nm]]$state %||% "", character(1))
+    primary <- fm[match("raw", states)]; if (is.na(primary)) primary <- fm[1]
+    aobj <- SeuratObject::CreateAssay5Object(counts = fxc(primary))
+    for (nm in setdiff(fm, primary)) {
+      lyr <- sub(paste0("^", fax, "\\."), "", nm)               # "ADT.data" -> "data"
+      SeuratObject::LayerData(aobj, layer = lyr) <- fxc(nm)
+    }
+    so[[fax]] <- aobj
+  }
+
   if (!is.null(split_by) && inherits(so[["RNA"]], "Assay5")) {   # re-split a v5 integration object
     so[["RNA"]] <- split(so[["RNA"]], f = unname(split_by[cells]))
   }
@@ -185,10 +205,7 @@ read_seurat <- function(so, assay = SeuratObject::DefaultAssay(so)) {
              dropped = character(0), axes = list(), fields = list())
   ds$axes$cells <- list(labels = cells, origin = "observed", role = "observation")
   ds$axes$genes <- list(labels = genes, origin = "observed", role = "feature")
-  # non-default assays (e.g. an ADT/protein assay in CITE-seq) are a *second feature space* (Tier-3
-  # multimodal, not yet typed) -- record the loss rather than silently reading only the default assay.
   others <- setdiff(tryCatch(SeuratObject::Assays(so), error = function(e) assay), assay)
-  if (length(others)) ds$dropped <- c(ds$dropped, paste0("assay/", others))
   lac <- .seurat_layer_access(so, assay)
 
   add <- function(nm, values, role, span, state = "") {
@@ -232,6 +249,27 @@ read_seurat <- function(so, assay = SeuratObject::DefaultAssay(so)) {
     } else {                                                    # a joined (aligned) layer
       add(name_of(L), Matrix::t(m), "measure", c("cells", "genes"), state = state_of(L))
     }
+  }
+
+  # Multimodal: every *other* assay is its own feature space over the shared `cells` axis (CITE-seq
+  # RNA+ADT, 10x multiome RNA+ATAC). Capture it as a feature axis named after the assay + measures
+  # `<assay>.<layer>` over (cells, <assay>), rather than dropping it. (A Signac ChromatinAssay's genomic
+  # ranges/fragments aren't typed yet -> recorded.)
+  for (a in others) {
+    feats <- rownames(so[[a]])
+    if (a %in% names(ds$axes)) { ds$dropped <- c(ds$dropped, paste0("assay/", a, " (axis-name clash)")); next }
+    ds$axes[[a]] <- list(labels = feats, origin = "observed", role = "feature")
+    laca <- .seurat_layer_access(so, a)
+    for (L in laca$names) {
+      m <- laca$get(L)
+      if (nrow(m) != length(feats)) {                           # subset layer -> partial coverage
+        ds$dropped <- c(ds$dropped, sprintf("assay/%s layer/%s (%d of %d features)", a, L, nrow(m), length(feats)))
+        next
+      }
+      add(paste0(a, ".", L), Matrix::t(m), "measure", c("cells", a), state = state_of(L))
+    }
+    if (inherits(so[[a]], "ChromatinAssay"))
+      ds$dropped <- c(ds$dropped, paste0("assay/", a, "/ranges+fragments (Signac, not typed)"))
   }
 
   md <- so[[]]

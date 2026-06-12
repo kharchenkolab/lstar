@@ -25,19 +25,21 @@ if (have("SeuratData")) {
     stopifnot(any(grepl("^loadings/pca", ds$dropped)))      # HVG-subset loadings recorded, not a crash
     chk("pbmc3k.final (v4)", ds, so2)
   }
-  if ("cbmc" %in% inst) {                        # real CITE-seq: RNA + ADT
+  if ("cbmc" %in% inst) {                        # real CITE-seq: RNA + ADT (multimodal)
     suppressWarnings(suppressMessages(data("cbmc"))); so <- UpdateSeuratObject(cbmc)
     ds <- read_seurat(so); so2 <- write_seurat(ds)
-    stopifnot("assay/ADT" %in% ds$dropped)                   # second assay recorded
+    stopifnot("ADT" %in% names(ds$axes), identical(ds$axes$ADT$role, "feature"),  # ADT captured as a
+              setequal(Assays(so2), c("RNA","ADT")))                              # 2nd feature space
     chk("cbmc (CITE-seq)", ds, so2)
   }
 }
 if (have("scRNAseq")) {
   suppressMessages({library(scRNAseq); library(SingleCellExperiment)})
   sce <- tryCatch(suppressMessages(ZeiselBrainData()), error = function(e) NULL)
-  if (!is.null(sce)) {                           # real SCE with ERCC/repeat spike-in altExps
+  if (!is.null(sce)) {                           # real SCE with ERCC/repeat spike-in altExps (multimodal)
     ds <- read_sce(sce); sce2 <- write_sce(ds)
-    stopifnot(any(grepl("^altExp/", ds$dropped)))
+    stopifnot("ERCC" %in% names(ds$axes), identical(ds$axes$ERCC$role, "feature"),  # altExps captured as
+              "ERCC" %in% SingleCellExperiment::altExpNames(sce2))                   # feature spaces
     chk("ZeiselBrain (SCE)", ds, sce2)
   }
 }

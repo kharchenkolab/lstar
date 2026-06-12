@@ -51,11 +51,28 @@ write_sce <- function(ds) {
     }
   }
 
-  SingleCellExperiment::SingleCellExperiment(
+  sce <- SingleCellExperiment::SingleCellExperiment(
     assays = assays,
     colData = if (length(cd)) S4Vectors::DataFrame(cd, row.names = cells) else S4Vectors::DataFrame(row.names = cells),
     rowData = if (length(rd)) S4Vectors::DataFrame(rd, row.names = genes) else S4Vectors::DataFrame(row.names = genes),
     reducedDims = reduced)
+
+  # multimodal: rebuild each non-`genes` feature axis as an altExp (the SCE analogue of a Seurat assay)
+  for (fax in names(ds$axes)) {
+    ax <- ds$axes[[fax]]
+    if (!identical(ax$role, "feature") || fax == "genes") next
+    feats <- as.character(ax$labels); aas <- list()
+    for (nm in names(ds$fields)) {
+      f <- ds$fields[[nm]]; sp <- as.character(f$span)
+      if (identical(f$role, "measure") && length(sp) == 2 && sp[1] == "cells" && sp[2] == fax) {
+        mat <- Matrix::t(as(f$values, "CsparseMatrix")); dimnames(mat) <- list(feats, cells)
+        aas[[sub(paste0("^", fax, "\\."), "", nm)]] <- mat
+      }
+    }
+    if (length(aas)) SingleCellExperiment::altExp(sce, fax) <-
+      SummarizedExperiment::SummarizedExperiment(assays = aas)
+  }
+  sce
 }
 
 #' Read a SingleCellExperiment into an L* dataset.
@@ -111,11 +128,18 @@ read_sce <- function(sce) {
     rot <- attr(emb, "rotation")
     if (!is.null(rot)) add(paste0(coord, "_loadings"), unname(as.matrix(rot)), "loading", c("genes", coord))
   }
-  # altExps (a second feature space: ADT/spike-ins -- Tier-3 multimodal, not yet typed) and `metadata`
-  # (free-form study-level list) are recorded as losses rather than silently dropped.
-  ae <- tryCatch(SingleCellExperiment::altExpNames(sce), error = function(e) character(0))
-  if (length(ae)) ds$dropped <- c(ds$dropped, paste0("altExp/", ae))
-  md <- names(S4Vectors::metadata(sce))
+  # altExps are a *second feature space* (ADT / spike-ins) over the same cells -- the SCE analogue of a
+  # Seurat assay. Capture each as a feature axis named after the altExp + measures `<altExp>.<assay>`.
+  for (ae in tryCatch(SingleCellExperiment::altExpNames(sce), error = function(e) character(0))) {
+    asce <- SingleCellExperiment::altExp(sce, ae)
+    feats <- rownames(asce); if (is.null(feats)) feats <- paste0(ae, seq_len(nrow(asce)))
+    if (ae %in% names(ds$axes)) { ds$dropped <- c(ds$dropped, paste0("altExp/", ae, " (axis-name clash)")); next }
+    ds$axes[[ae]] <- list(labels = as.character(feats), origin = "observed", role = "feature")
+    for (an in SummarizedExperiment::assayNames(asce))
+      add(paste0(ae, ".", an), Matrix::t(as(SummarizedExperiment::assay(asce, an), "CsparseMatrix")),
+          "measure", c("cells", ae), state = state_of(an))
+  }
+  md <- names(S4Vectors::metadata(sce))                    # free-form study-level list: not typed -> record
   if (length(md)) ds$dropped <- c(ds$dropped, paste0("metadata/", md))
   class(ds) <- "lstar_dataset"
   ds

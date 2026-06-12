@@ -29,7 +29,8 @@ stores <- c(stores, rt("+logcounts +reducedDims", sce_b, function(ds, s2)
 sce_c <- sce_b
 altExp(sce_c, "ADT") <- SummarizedExperiment(assays = list(counts =
   matrix(rpois(5*nc,10), 5, nc, dimnames = list(paste0("ADT",1:5), colnames(counts)))))
-stores <- c(stores, rt("+altExps(ADT)", sce_c, function(ds, s2) "altExp/ADT" %in% ds$dropped))
+stores <- c(stores, rt("+altExps(ADT)", sce_c, function(ds, s2)   # altExp captured as a 2nd feature space
+  "ADT" %in% names(ds$axes) && identical(ds$axes$ADT$role, "feature") && "ADT" %in% altExpNames(s2)))
 
 sce_d <- sce_b
 colData(sce_d)$cluster <- factor(rep(c("c1","c2"), 6)); rowData(sce_d)$type <- factor(rep(c("g1","g2"), 10))
