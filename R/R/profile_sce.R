@@ -110,20 +110,23 @@ read_sce <- function(sce) {
   for (a in SummarizedExperiment::assayNames(sce)) {
     add(name_of(a), Matrix::t(SummarizedExperiment::assay(sce, a)), "measure", c("cells", "genes"), state = state_of(a))
   }
+  # Real col/rowData columns aren't always plain vectors: S4Vectors `Rle` (run-length) needs unpacking,
+  # and a nested `DataFrame`/`GRanges`/list column can't be coerced at all -> record it, don't crash.
+  sce_col <- function(col, v, span, n) {
+    if (methods::is(v, "Rle")) v <- tryCatch(as.vector(v), error = function(e) v)
+    if (is.numeric(v) && length(v) == n) add(col, as.numeric(v), "measure", span)
+    else if (is.factor(v) && length(v) == n) add_factor(col, v, span)
+    else {
+      vv <- tryCatch(if (is.atomic(v)) as.character(v) else NULL, error = function(e) NULL)
+      if (!is.null(vv) && length(vv) == n) add(col, vv, "label", span)
+      else ds$dropped <<- c(ds$dropped, sprintf("%sData/%s (%s)",
+                                                if (span == "cells") "col" else "row", col, class(v)[1]))
+    }
+  }
   cdt <- SummarizedExperiment::colData(sce)
-  for (col in colnames(cdt)) {
-    v <- cdt[[col]]
-    if (is.numeric(v)) add(col, as.numeric(v), "measure", "cells")
-    else if (is.factor(v)) add_factor(col, v, "cells")
-    else add(col, as.character(v), "label", "cells")
-  }
+  for (col in colnames(cdt)) sce_col(col, cdt[[col]], "cells", length(cells))
   rdt <- SummarizedExperiment::rowData(sce)
-  for (col in colnames(rdt)) {
-    v <- rdt[[col]]
-    if (is.numeric(v)) add(col, as.numeric(v), "measure", "genes")
-    else if (is.factor(v)) add_factor(col, v, "genes")
-    else add(col, as.character(v), "label", "genes")
-  }
+  for (col in colnames(rdt)) sce_col(col, rdt[[col]], "genes", length(genes))
   for (rn in SingleCellExperiment::reducedDimNames(sce)) {
     emb <- SingleCellExperiment::reducedDim(sce, rn)
     coord <- tolower(rn)
