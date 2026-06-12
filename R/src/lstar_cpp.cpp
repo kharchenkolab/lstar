@@ -135,6 +135,16 @@ list lstar_cpp_stream_col_stats(std::string path, std::string field, int block,
                          "nnz"_nm = to_ints(s.nnz)});
 }
 
+// Read a contiguous gene (column) range [g_lo, g_hi) of a CSC measure as CSC arrays, touching only
+// the overlapping chunks. The general bounded block-read primitive (R assembles the dgCMatrix).
+[[cpp11::register]]
+list lstar_cpp_read_csc_block(std::string path, std::string field, int g_lo, int g_hi) {
+  lstar::CscBlock b = lstar::read_csc_block(path + "/fields/" + field, (int64_t)g_lo, (int64_t)g_hi);
+  return writable::list({"data"_nm = nd_doubles(b.data), "indices"_nm = nd_integers(b.indices),
+                         "indptr"_nm = to_ints(b.indptr), "nrows"_nm = (int)b.nrows,
+                         "ncols"_nm = (int)b.ncols});
+}
+
 [[cpp11::register]]
 list lstar_cpp_read(std::string path) {
   lstar::Dataset ds = lstar::read(path);

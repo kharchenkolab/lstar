@@ -12,6 +12,10 @@ lstar_cpp_stream_col_stats <- function(path, field, block, n_threads, lognorm) {
   .Call(`_lstar_lstar_cpp_stream_col_stats`, path, field, block, n_threads, lognorm)
 }
 
+lstar_cpp_read_csc_block <- function(path, field, g_lo, g_hi) {
+  .Call(`_lstar_lstar_cpp_read_csc_block`, path, field, g_lo, g_hi)
+}
+
 lstar_cpp_read <- function(path) {
   .Call(`_lstar_lstar_cpp_read`, path)
 }

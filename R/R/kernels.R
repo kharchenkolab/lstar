@@ -42,3 +42,37 @@ col_sum_by_group <- function(m, code, ngroups, lognorm = TRUE) {
 stream_col_stats <- function(path, field, block = 4096L, n_threads = 1L, lognorm = FALSE) {
   lstar_cpp_stream_col_stats(path, field, as.integer(block), as.integer(n_threads), isTRUE(lognorm))
 }
+
+#' Read a contiguous gene (column) range of a CSC measure from an L* store, bounded-memory.
+#'
+#' Reads genes `[g_lo, g_hi)` (0-based, half-open) of a CSC measure as a `dgCMatrix` (cells x genes),
+#' decoding only the store chunks that overlap the range. The general block-read primitive a consumer
+#' drives to build out-of-core reductions over an L* store without implementing them in lstar.
+#' @export
+lstar_read_block <- function(path, field, g_lo, g_hi, cell_names = NULL, gene_names = NULL) {
+  b <- lstar_cpp_read_csc_block(path, field, as.integer(g_lo), as.integer(g_hi))
+  m <- new("dgCMatrix", i = as.integer(b$indices), p = as.integer(b$indptr),
+           x = as.numeric(b$data), Dim = as.integer(c(b$nrows, b$ncols)))
+  if (!is.null(cell_names)) rownames(m) <- cell_names
+  if (!is.null(gene_names)) colnames(m) <- gene_names[(g_lo + 1L):g_hi]
+  m
+}
+
+#' Read an arbitrary set of gene columns of a CSC measure (run-coalesced), returning cells x genes.
+#'
+#' Maps gene names/indices to columns, reads each maximal contiguous run via `lstar_read_block`, and
+#' assembles the requested columns in order. Scattered genes touch more chunks (a real random-access
+#' cost of a chunked CSC store) -- contiguous subsets are cheapest.
+#' @export
+lstar_read_genes <- function(path, field, genes, all_genes, cell_names = NULL) {
+  idx <- if (is.character(genes)) match(genes, all_genes) else as.integer(genes)
+  if (anyNA(idx)) stop("some requested genes are not in the store")
+  ord <- order(idx); sidx <- idx[ord] - 1L                 # 0-based, sorted
+  runs <- split(sidx, cumsum(c(TRUE, diff(sidx) != 1)))     # maximal contiguous runs
+  blocks <- lapply(runs, function(r) lstar_read_block(path, field, r[1], r[length(r)] + 1L))
+  m <- do.call(cbind, blocks)                               # cells x (sorted genes)
+  m <- m[, order(ord), drop = FALSE]                        # restore requested order
+  if (!is.null(cell_names)) rownames(m) <- cell_names
+  colnames(m) <- if (is.character(genes)) genes else all_genes[genes]
+  m
+}

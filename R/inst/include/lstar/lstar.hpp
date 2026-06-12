@@ -632,6 +632,37 @@ inline ColStats col_mean_var_dispatch(const NdArray& data, const int64_t* indptr
     throw std::runtime_error("col_mean_var: unsupported data dtype " + dt);
 }
 
+// Read a contiguous gene (column) range [g_lo, g_hi) of a CSC measure field as its own CSC arrays,
+// touching only the `data`/`indices` chunks that overlap the range (via read_array_range). This is
+// the general bounded block-read primitive a consumer drives to build out-of-core ops over an L*
+// store *without* each reduction having to live in libstar -- e.g. pagoda2 reads gene blocks and
+// applies its own view kernels. `data`/`indices` keep their stored dtype; `indptr` is rebased local.
+struct CscBlock {
+    NdArray data, indices;            // the block's nonzeros (stored dtype preserved)
+    std::vector<int64_t> indptr;      // length (g_hi-g_lo+1), local (starts at 0)
+    int64_t nrows = 0, ncols = 0;     // nrows = #cells; ncols = g_hi-g_lo (genes in the block)
+};
+inline CscBlock read_csc_block(const fs::path& field_group, int64_t g_lo, int64_t g_hi) {
+    json m = read_json(field_group / ".zattrs")["lstar"];
+    if (opt_str(m, "encoding") != "csc")
+        throw std::runtime_error("read_csc_block: field is not CSC (gene-major)");
+    auto shape = m["shape"].get<std::vector<int64_t>>();
+    const int64_t nrows = shape[0], ngenes = shape[1];
+    g_lo = std::max<int64_t>(0, g_lo);
+    g_hi = std::min<int64_t>(ngenes, g_hi);
+    if (g_hi < g_lo) g_hi = g_lo;
+    std::vector<int64_t> ip = as_i64(read_array(field_group / "indptr"));   // whole (small)
+    const int64_t lo = ip[g_lo], hi = ip[g_hi];
+    CscBlock b;
+    b.nrows = nrows;
+    b.ncols = g_hi - g_lo;
+    b.data = read_array_range(field_group / "data", lo, hi);                // only overlapping chunks
+    b.indices = read_array_range(field_group / "indices", lo, hi);
+    b.indptr.resize((size_t)(b.ncols + 1));
+    for (int64_t j = 0; j <= b.ncols; ++j) b.indptr[(size_t)j] = ip[g_lo + j] - lo;
+    return b;
+}
+
 // Zero-aware per-column mean/variance of a CSC measure read straight from a store *block-by-block*,
 // so the whole matrix never lands in memory -- the C++/R counterpart of Python's `stream_col_stats`.
 // `field_group` is the field's directory (…/fields/<name>). `indptr` (small) is read whole; for each

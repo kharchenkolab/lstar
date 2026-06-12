@@ -27,6 +27,13 @@ extern "C" SEXP _lstar_lstar_cpp_stream_col_stats(SEXP path, SEXP field, SEXP bl
   END_CPP11
 }
 // lstar_cpp.cpp
+list lstar_cpp_read_csc_block(std::string path, std::string field, int g_lo, int g_hi);
+extern "C" SEXP _lstar_lstar_cpp_read_csc_block(SEXP path, SEXP field, SEXP g_lo, SEXP g_hi) {
+  BEGIN_CPP11
+    return cpp11::as_sexp(lstar_cpp_read_csc_block(cpp11::as_cpp<cpp11::decay_t<std::string>>(path), cpp11::as_cpp<cpp11::decay_t<std::string>>(field), cpp11::as_cpp<cpp11::decay_t<int>>(g_lo), cpp11::as_cpp<cpp11::decay_t<int>>(g_hi)));
+  END_CPP11
+}
+// lstar_cpp.cpp
 list lstar_cpp_read(std::string path);
 extern "C" SEXP _lstar_lstar_cpp_read(SEXP path) {
   BEGIN_CPP11
@@ -46,6 +53,7 @@ extern "C" {
 static const R_CallMethodDef CallEntries[] = {
     {"_lstar_lstar_cpp_col_sum_by_group",  (DL_FUNC) &_lstar_lstar_cpp_col_sum_by_group,  8},
     {"_lstar_lstar_cpp_read",              (DL_FUNC) &_lstar_lstar_cpp_read,              1},
+    {"_lstar_lstar_cpp_read_csc_block",    (DL_FUNC) &_lstar_lstar_cpp_read_csc_block,    4},
     {"_lstar_lstar_cpp_stream_col_stats",  (DL_FUNC) &_lstar_lstar_cpp_stream_col_stats,  5},
     {"_lstar_lstar_cpp_subsample_de_rank", (DL_FUNC) &_lstar_lstar_cpp_subsample_de_rank, 7},
     {"_lstar_lstar_cpp_write",             (DL_FUNC) &_lstar_lstar_cpp_write,             2},
