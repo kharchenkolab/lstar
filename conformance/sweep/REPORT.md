@@ -9,7 +9,7 @@ This is a living report — re-run the harnesses to refresh.
 | corpus | source | swept | PASS | profile-FAIL | load-skip |
 |---|---|---|---|---|---|
 | AnnData | scanpy.datasets + local atlases | 7 | 6 | 0 | 1 (moignard15: needs `openpyxl`) |
-| SCE | Bioconductor `scRNAseq` | ~45 (running) | — | — | (some need ensembldb / >80k cells) |
+| SCE | Bioconductor `scRNAseq` | **61** | **56** | **0** (after 3 fixes) | 4 load-dep + 1 segfault (dataset, not profile) |
 | Conos | local `.rds` (real research objects) | 2 | 2 | 0 | (acon.rds 8.7 GB skipped) |
 | Seurat | SeuratData / real_corpus | 2 (pbmc3k.final, cbmc) via `real_corpus_r.sh` | 2 | 0 | — |
 | MuData | minipbcite + citeseq fixture | 2 | 2 | 0 | — |
@@ -29,9 +29,14 @@ synthetic fixtures had them** (they always set dimnames + use plain-vector colum
    "no method for coercing this S4 class to a vector." **Fixed**: unpack `Rle`; record uncoercible
    nested columns as dropped (e.g. `colData/metrics (DFrame)`).
 
-After both fixes, the first 12 SCEs are **10 PASS / 0 profile-FAIL / 2 load-skip**. The bare loop stops
-~#13 (one dataset segfaults R hard), so the full sweep runs each dataset in its **own subprocess**
-(`sweep_scrnaseq_driver.sh`, timeout-guarded) to isolate crashes/hangs and get through all 61.
+3. **SCE-only accessors on a plain `SummarizedExperiment`** (`ReprocessedFluidigmData` is a SE, not an
+   SCE) → `reducedDimNames`/`altExpNames` "unable to find an inherited method." **Fixed**: guard with
+   `is(sce, "SingleCellExperiment")` + tryCatch (degrade gracefully — assays/colData/rowData only).
+
+**Final across all 61** (subprocess-isolated via `sweep_scrnaseq_driver.sh`): **56 PASS / 0 profile-FAIL
+/ 4 load-dep-skip / 1 dataset-segfault**. So after 3 sweep-caught fixes the SCE profile handles 56 of 61
+real Bioconductor datasets; the 5 non-passes are not profile bugs (missing loader packages or a dataset
+that crashes R). The bare loop stopped at ~#13 (a hard segfault); the subprocess driver isolates it.
 
 ## AnnData detail
 

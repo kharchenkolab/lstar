@@ -127,7 +127,11 @@ read_sce <- function(sce) {
   for (col in colnames(cdt)) sce_col(col, cdt[[col]], "cells", length(cells))
   rdt <- SummarizedExperiment::rowData(sce)
   for (col in colnames(rdt)) sce_col(col, rdt[[col]], "genes", length(genes))
-  for (rn in SingleCellExperiment::reducedDimNames(sce)) {
+  # reducedDims/altExps are SingleCellExperiment-only; a plain SummarizedExperiment (or an old/odd SCE
+  # subclass, e.g. ReprocessedFluidigmData) lacks the method -> guard, don't crash.
+  rdn <- if (methods::is(sce, "SingleCellExperiment"))
+    tryCatch(SingleCellExperiment::reducedDimNames(sce), error = function(e) character(0)) else character(0)
+  for (rn in rdn) {
     emb <- SingleCellExperiment::reducedDim(sce, rn)
     coord <- tolower(rn)
     labs <- if (!is.null(colnames(emb))) colnames(emb) else paste0(coord, seq_len(ncol(emb)))
