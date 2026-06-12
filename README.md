@@ -1,4 +1,4 @@
-# lstar
+# L★
 
 **A general model for single-cell and spatial omics data — built from *axes* and *fields* — and the
 lightweight glue that moves data losslessly between AnnData, Seurat, SingleCellExperiment, and
