@@ -104,6 +104,32 @@ survived) is [`examples/convert_h5ad_to_seurat.sh`](../examples/convert_h5ad_to_
 longer chain that goes AnnData → Seurat → SCE → … → AnnData and verifies the core survives the whole
 trip is [`examples/roundtrip_xlang.sh`](../examples/roundtrip_xlang.sh).
 
+## Low-memory conversion (streaming)
+
+The conversions above load the source matrix into memory. For a large atlas that can be many
+gigabytes, so lstar offers a **bounded-memory** path for converting an `.h5ad` *into an L\* store*:
+read the source in backed mode (its matrices stay on disk) and stream them block-by-block.
+
+```python
+import lstar
+lstar.convert_anndata("atlas.h5ad", "atlas.lstar.zarr")   # peak memory ~ one block, not the matrix
+#   equivalently, explicit form:
+#   import anndata as ad
+#   from lstar.profiles.anndata import read_anndata
+#   lstar.write(read_anndata(ad.read_h5ad("atlas.h5ad", backed="r")), "atlas.lstar.zarr", stream=True)
+```
+
+On a real 40,220 × 20,138 dataset (77.6M nonzeros) this converts in **~110 MB** of peak memory
+instead of **~1.3 GB** eager (≈12× less) — at the cost of being a little slower (it's a memory/speed
+trade, so it's opt-in). The resulting store is byte-identical to the eager one. The same streaming
+applies to **L\* → L\*** recompression/re-chunking: `lstar.write(lstar.read(src, lazy=True), dst,
+stream=True)` rewrites a store without ever holding it whole.
+
+Boundary: this bounds the **write** side. Converting all the way into an *in-memory* object — a
+Seurat `dgCMatrix` in an `.rds`, an in-memory AnnData `X` — still needs the matrix in RAM at the
+destination, unless that format is targeted as a *disk-backed* representation (AnnData `backed`,
+Seurat v5 **BPCells**, SCE `HDF5Array`). That end-to-end bounded path is planned.
+
 ## What is preserved, and what is not
 
 A conversion preserves a field when **both** formats have a place for the same object. The set that all

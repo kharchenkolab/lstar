@@ -62,6 +62,7 @@ class LazyCSX:
         self.indptr = np.asarray(indptr_z[...])
         self.shape = tuple(int(s) for s in shape)
         self.dtype = data_z.dtype
+        self.idtype = indices_z.dtype       # so it can also be a streaming-WRITE source (zarr_io)
         self.nnz = int(self.indptr[-1])
         self.n_outer = self.shape[1] if fmt == "csc" else self.shape[0]
 

@@ -112,6 +112,8 @@ class Dataset:
     @staticmethod
     def _infer_encoding(values):
         import scipy.sparse as sp
+        if _is_stream_source(values):       # a chunked sparse source (LazyCSX / backed h5ad)
+            return values.fmt
         if sp.issparse(values):
             return values.getformat()
         return "dense"
@@ -121,8 +123,14 @@ class Dataset:
             self.kind, list(self.axes), list(self.fields))
 
 
+def _is_stream_source(v):
+    """A streaming sparse source: yields scipy blocks without materializing the whole matrix.
+    Used so `add_field` can hold a backed/lazy source and `write` can stream it (low-memory writes)."""
+    return hasattr(v, "blocks") and hasattr(v, "fmt") and hasattr(v, "shape")
+
+
 def _shape(values):
     import scipy.sparse as sp
-    if sp.issparse(values):
+    if sp.issparse(values) or _is_stream_source(values):
         return tuple(values.shape)
     return tuple(np.asarray(values).shape)

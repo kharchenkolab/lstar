@@ -19,7 +19,7 @@ LSTAR = "lstar"
 SPEC_VERSION = "0.1"
 
 
-def write(ds, path, compressor=None, chunk_elems=None):
+def write(ds, path, compressor=None, chunk_elems=None, stream=False):
     """Serialize an L* Dataset to a Zarr store at `path`.
 
     compressor=None (default) writes uncompressed chunks; pass a numcodecs codec (e.g.
@@ -27,7 +27,15 @@ def write(ds, path, compressor=None, chunk_elems=None):
     (the portable default); set it (e.g. 1_000_000) to chunk large arrays along their first
     axis, which is what makes lazy streaming read only the touched blocks. Both chunked and
     gzip-compressed stores are readable by the C++ core.
+
+    stream=True writes with bounded memory: any sparse field whose values are a streaming source
+    (a backed AnnData, or a `LazyCSX` from `read(..., lazy=True)`) is copied block-by-block instead
+    of being materialized, so a large `h5ad`->L* or L*->L* conversion never holds the whole matrix.
+    (Such sources are streamed even without `stream=True`; the flag also chunks the rest of the
+    store, since streaming output is inherently chunked.)
     """
+    if stream and chunk_elems is None:
+        chunk_elems = 1_000_000
     root = zarr.open_group(path, mode="w")
     axg = root.create_group("axes")
     flg = root.create_group("fields")
@@ -125,9 +133,51 @@ def _ds(g, name, arr, compressor, chunk_elems):
                      chunks=_chunks_for(arr.shape, chunk_elems))
 
 
+def _is_stream_source(v):
+    return hasattr(v, "blocks") and hasattr(v, "fmt") and hasattr(v, "shape")
+
+
+def _write_sparse_streaming(g, source, meta, compressor, chunk_elems):
+    """Write a CSR/CSC field block-by-block from a streaming source (a backed h5ad sparse group, or
+    a LazyCSX from another store), so the whole matrix is never resident. `data`/`indices` grow by
+    `append`; `indptr` (small) is filled incrementally. Outer blocks are sized to ~chunk_elems
+    nonzeros each (using the source's small full `indptr`), so peak memory is bounded regardless of
+    how dense the data is. Streaming implies a chunked output (the final size isn't known up front)."""
+    fmt = source.fmt                                   # "csr" | "csc"
+    n_outer = int(source.n_outer)
+    nnz = int(getattr(source, "nnz", -1))
+    indptr_full = np.asarray(source.indptr)            # length n_outer+1, small -> read whole
+    data_dtype = np.dtype(getattr(source, "dtype", np.float64))
+    idx_dtype = np.dtype(getattr(source, "idtype", np.int32))
+    indptr_dtype = np.int32 if 0 <= nnz < 2 ** 31 else np.int64
+    ce = int(chunk_elems) if chunk_elems else 1_000_000
+    data_arr = g.create_dataset("data", shape=(0,), chunks=(ce,), dtype=data_dtype, compressor=compressor)
+    indices_arr = g.create_dataset("indices", shape=(0,), chunks=(ce,), dtype=idx_dtype, compressor=compressor)
+    out_indptr = np.empty(n_outer + 1, dtype=indptr_dtype)
+    out_indptr[0] = 0
+    pos, a = 0, 0
+    while a < n_outer:
+        b = a + 1                                      # grow the block until it holds ~ce nonzeros
+        while b < n_outer and (indptr_full[b] - indptr_full[a]) < ce:
+            b += 1
+        sub = source.outer_block(a, b)                 # a small scipy CSR/CSC for outer [a:b)
+        sub = sub.tocsr() if fmt == "csr" else sub.tocsc()
+        data_arr.append(np.asarray(sub.data, dtype=data_dtype))
+        indices_arr.append(np.asarray(sub.indices, dtype=idx_dtype))
+        out_indptr[a + 1:b + 1] = pos + sub.indptr[1:]
+        pos += int(sub.nnz)
+        a = b
+    g.create_dataset("indptr", data=out_indptr, compressor=compressor,
+                     chunks=_chunks_for(out_indptr.shape, chunk_elems))
+    meta["encoding"] = fmt
+    meta["shape"] = [int(x) for x in source.shape]
+
+
 def _write_values(g, fl, meta, compressor, chunk_elems=None):
     enc = fl.encoding
-    if enc in ("csr", "csc"):
+    if _is_stream_source(fl.values):                   # backed/lazy sparse -> stream block-by-block
+        _write_sparse_streaming(g, fl.values, meta, compressor, chunk_elems)
+    elif enc in ("csr", "csc"):
         m = fl.values.tocsr() if enc == "csr" else fl.values.tocsc()
         _ds(g, "data", m.data, compressor, chunk_elems)
         _ds(g, "indices", m.indices, compressor, chunk_elems)

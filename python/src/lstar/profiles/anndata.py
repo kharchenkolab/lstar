@@ -80,8 +80,84 @@ def _pair_coord_axis(ds, varm_key, ncol):
     return target
 
 
+def _sparse_attrs(g):
+    """(fmt, shape) for an h5ad sparse group across format versions, or None if it isn't sparse.
+
+    Recognizes the modern `encoding-type`/`shape` attributes (anndata >= 0.7) AND the legacy
+    `h5sparse_format`/`h5sparse_shape` attributes (older h5ad) -- the same graceful version handling
+    the in-memory profile uses, applied to the on-disk layout."""
+    a = getattr(g, "attrs", {})
+    et = str(a.get("encoding-type", ""))
+    if "csr" in et or "csc" in et:
+        return ("csc" if "csc" in et else "csr"), tuple(int(x) for x in a["shape"])
+    if "h5sparse_format" in a:
+        hf = str(a["h5sparse_format"])
+        return ("csc" if "csc" in hf else "csr"), tuple(int(x) for x in a["h5sparse_shape"])
+    return None
+
+
+class _BackedH5Sparse:
+    """A streaming sparse source over an on-disk h5ad sparse group (`data`/`indices`/`indptr`).
+    Yields scipy blocks straight from disk so `lstar.write(..., stream=True)` can copy a large
+    matrix into an L* store without ever materializing it. Holds an open h5py handle; call `.close()`
+    when done (or let it be garbage-collected)."""
+
+    def __init__(self, filename, key):
+        import h5py
+        self._f = h5py.File(filename, "r")
+        g = self._f[key]
+        self.fmt, self.shape = _sparse_attrs(g)               # handles modern + legacy attrs
+        self._data, self._indices = g["data"], g["indices"]
+        self.indptr = g["indptr"][:]                          # the compressed-axis pointer; small
+        self.nnz = int(self._data.shape[0])
+        self.dtype = self._data.dtype
+        self.idtype = self._indices.dtype
+        self.n_outer = self.shape[0] if self.fmt == "csr" else self.shape[1]
+        self._inner = self.shape[1] if self.fmt == "csr" else self.shape[0]
+
+    def outer_block(self, a, b):
+        """Outer slice [a:b) as a small scipy CSR/CSC matrix (reads only that block from disk)."""
+        import scipy.sparse as sp
+        lo, hi = int(self.indptr[a]), int(self.indptr[b])
+        iptr = (self.indptr[a:b + 1] - self.indptr[a]).astype(np.int64)
+        cls = sp.csr_matrix if self.fmt == "csr" else sp.csc_matrix
+        shape = (b - a, self._inner) if self.fmt == "csr" else (self._inner, b - a)
+        return cls((self._data[lo:hi], self._indices[lo:hi], iptr), shape=shape)
+
+    def blocks(self, block=4096):
+        for a in range(0, self.n_outer, block):
+            b = min(a + block, self.n_outer)
+            yield a, b, self.outer_block(a, b)
+
+    def close(self):
+        try:
+            self._f.close()
+        except Exception:
+            pass
+
+
+def _backed_sparse(filename, *keys):
+    """Return a `_BackedH5Sparse` for the first of `keys` that is a sparse group, else None.
+
+    `keys` lets callers try location variants across h5ad versions (e.g. raw at `raw/X` vs `raw.X`)."""
+    if not filename:
+        return None
+    try:
+        import h5py
+        with h5py.File(filename, "r") as f:
+            hit = next((k for k in keys if k in f and _sparse_attrs(f[k]) is not None), None)
+        return _BackedH5Sparse(filename, hit) if hit else None
+    except Exception:
+        return None
+
+
 def read_anndata(adata, kind="sample"):
-    """Read a live AnnData object into an L* Dataset."""
+    """Read a live AnnData object into an L* Dataset.
+
+    If `adata` was opened in backed mode (`anndata.read_h5ad(path, backed="r")`), the large sparse
+    matrices (`X`, `layers`, `.raw`) are held as on-disk streaming sources rather than read into
+    memory, so a subsequent `lstar.write(..., stream=True)` performs a bounded-memory conversion.
+    """
     ds = Dataset(kind=kind)
     ds.profiles = [PROFILE, _anndata_version()]
     cells = np.asarray(adata.obs_names.to_numpy(), dtype=str)
@@ -89,12 +165,17 @@ def read_anndata(adata, kind="sample"):
     ds.add_axis("cells", cells, origin=OBSERVED, role="observation")
     ds.add_axis("genes", genes, origin=OBSERVED, role="feature")
 
+    # In backed mode the heavy matrices stay on disk: wrap them as streaming sources keyed by their
+    # h5ad location, so `write(stream=True)` copies them block-by-block. `fn` is None when not backed.
+    fn = getattr(adata, "filename", None) if getattr(adata, "isbacked", False) else None
+
     if adata.X is not None:
         try:
             state = adata.uns.get("lstar/state")
         except Exception:
             state = None
-        ds.add_field("X", adata.X, role="measure", span=["cells", "genes"],
+        x = _backed_sparse(fn, "X") or adata.X      # backed -> streaming source; else the in-memory X
+        ds.add_field("X", x, role="measure", span=["cells", "genes"],
                      state=state, provenance={"anndata": "X"})
 
     # .raw: older pipelines stash pre-HVG raw counts here, frequently over a *larger* gene set.
@@ -108,11 +189,13 @@ def read_anndata(adata, kind="sample"):
         else:
             gax = "genes_raw"
             ds.add_axis(gax, raw_genes, origin=OBSERVED, role="feature")
-        ds.add_field("raw", raw.X, role="measure", span=["cells", gax],
+        rawx = _backed_sparse(fn, "raw/X", "raw.X") or raw.X    # modern vs legacy raw location
+        ds.add_field("raw", rawx, role="measure", span=["cells", gax],
                      state="raw", provenance={"anndata": "raw/X"})
 
     for k in list(adata.layers.keys()):
-        ds.add_field(k, adata.layers[k], role="measure", span=["cells", "genes"],
+        lk = _backed_sparse(fn, "layers/%s" % k) or adata.layers[k]
+        ds.add_field(k, lk, role="measure", span=["cells", "genes"],
                      state=_guess_state(k), provenance={"anndata": "layers/%s" % k})
 
     for col in adata.obs.columns:
@@ -224,3 +307,34 @@ def write_anndata(ds):
     if dropped:
         adata.uns["lstar/dropped"] = list(dropped)
     return adata
+
+
+def convert_anndata(h5ad_path, store_path, **write_kwargs):
+    """Convert an `.h5ad` to an L* store with **bounded memory**.
+
+    Reads the source in backed mode (its `X`/layers/`.raw` stay on disk) and streams them block-by-
+    block into the store, so even a multi-million-cell matrix never lands in RAM. The small parts
+    (`obs`/`var`/`obsm`/graphs) are read normally. `write_kwargs` are forwarded to `lstar.write`
+    (e.g. `compressor=numcodecs.GZip(5)`, `chunk_elems=...`); `stream=True` is set by default.
+
+    Returns `store_path`. For the in-memory (fast, unbounded) path, use `read_anndata` +
+    `lstar.write` on a non-backed AnnData instead.
+    """
+    import anndata as ad
+
+    from ..zarr_io import write as _write
+
+    adata = ad.read_h5ad(h5ad_path, backed="r")
+    ds = read_anndata(adata)
+    write_kwargs.setdefault("stream", True)
+    try:
+        _write(ds, store_path, **write_kwargs)
+    finally:
+        for f in ds.fields.values():            # close the on-disk handles the streaming sources hold
+            if hasattr(f.values, "close"):
+                f.values.close()
+        try:
+            adata.file.close()
+        except Exception:
+            pass
+    return store_path
