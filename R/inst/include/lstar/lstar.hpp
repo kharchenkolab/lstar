@@ -213,6 +213,44 @@ inline std::vector<uint8_t> decode_chunk(const json& compressor, std::vector<uin
     throw std::runtime_error("unsupported compressor id: " + id);
 }
 
+// Deflate to a gzip- (windowBits 15+16) or zlib- (15) wrapped stream -- the encode counterpart of
+// inflate_stream, so the C++/R writer can emit the numcodecs "gzip"/"zlib" chunk codecs the reader
+// (and zarr-python) already understand.
+inline std::vector<uint8_t> deflate_stream(const uint8_t* src, size_t n, int level, bool gzip) {
+#ifdef LSTAR_HAVE_ZLIB
+    z_stream zs;
+    std::memset(&zs, 0, sizeof(zs));
+    if (deflateInit2(&zs, level, Z_DEFLATED, gzip ? (15 + 16) : 15, 8, Z_DEFAULT_STRATEGY) != Z_OK)
+        throw std::runtime_error("deflateInit2 failed");
+    zs.next_in = const_cast<Bytef*>(src);
+    zs.avail_in = static_cast<uInt>(n);
+    std::vector<uint8_t> out;
+    out.reserve(n / 2 + 64);
+    std::vector<uint8_t> buf(1 << 20);
+    int ret;
+    do {
+        zs.next_out = buf.data();
+        zs.avail_out = static_cast<uInt>(buf.size());
+        ret = deflate(&zs, Z_FINISH);
+        out.insert(out.end(), buf.data(), buf.data() + (buf.size() - zs.avail_out));
+    } while (ret != Z_STREAM_END);
+    deflateEnd(&zs);
+    return out;
+#else
+    (void)src; (void)n; (void)level; (void)gzip;
+    throw std::runtime_error("compression needs zlib; build libstar with LSTAR_HAVE_ZLIB");
+#endif
+}
+
+inline std::vector<uint8_t> encode_chunk(const json& compressor, std::vector<uint8_t> raw) {
+    if (compressor.is_null()) return raw;
+    std::string id = compressor.value("id", std::string());
+    int level = compressor.value("level", 5);
+    if (id == "gzip") return deflate_stream(raw.data(), raw.size(), level, true);
+    if (id == "zlib") return deflate_stream(raw.data(), raw.size(), level, false);
+    throw std::runtime_error("unsupported compressor id for write: " + id);
+}
+
 // ------------------------------------------------------------ array IO ------
 
 // Read a (possibly chunked, possibly compressed) zarr v2 array into a contiguous C-order buffer.
@@ -323,20 +361,62 @@ inline NdArray read_array_range(const fs::path& dir, int64_t lo, int64_t hi) {
     return a;
 }
 
-inline void write_array(const fs::path& dir, const NdArray& a) {
+// Chunk shape splitting the first axis so each chunk holds ~chunk_elems elements (0 -> single chunk,
+// the portable default). Mirrors the Python writer's `_chunks_for`.
+inline std::vector<int64_t> chunk_shape_for(const std::vector<int64_t>& shape, int64_t chunk_elems) {
+    if (chunk_elems <= 0 || shape.empty() || shape[0] == 0) return shape;
+    int64_t inner = 1;
+    for (size_t i = 1; i < shape.size(); ++i) inner *= shape[i];
+    int64_t rows = std::max<int64_t>(1, chunk_elems / std::max<int64_t>(1, inner));
+    if (rows >= shape[0]) return shape;
+    std::vector<int64_t> cs = shape;
+    cs[0] = rows;
+    return cs;
+}
+
+// Write a zarr v2 array, optionally chunked (along the first axis) and/or compressed. chunk_elems<=0
+// and compressor=null reproduce the original single-chunk uncompressed output exactly (so existing
+// stores are byte-identical). Because only the first (outermost, slowest) axis is chunked, each chunk
+// is a contiguous byte range of the C-order buffer -- no scatter; edge chunks are full-size,
+// fill-padded per the v2 spec.
+inline void write_array(const fs::path& dir, const NdArray& a,
+                        int64_t chunk_elems = 0, const json& compressor = json(nullptr)) {
     fs::create_directories(dir);
+    std::vector<int64_t> chunks = chunk_shape_for(a.shape, chunk_elems);
     json za;
     za["zarr_format"] = 2;
     za["shape"] = a.shape;
-    za["chunks"] = a.shape;
+    za["chunks"] = chunks;
     za["dtype"] = a.dtype;
-    za["compressor"] = nullptr;
+    za["compressor"] = compressor;
     za["fill_value"] = 0;
     za["order"] = "C";
     za["filters"] = nullptr;
     write_text(dir / ".zarray", za.dump());
     write_text(dir / ".zattrs", json::object().dump());
-    write_bytes(dir / zero_chunk_key(a.shape.size()), a.bytes.data(), a.bytes.size());
+
+    const size_t ndim = a.shape.size();
+    const size_t dsz = dtype_size(a.dtype);
+    if (ndim == 0) {                                          // scalar -> single chunk "0"
+        write_bytes(dir / "0", a.bytes.data(), a.bytes.size());
+        return;
+    }
+    int64_t inner = 1;
+    for (size_t i = 1; i < ndim; ++i) inner *= a.shape[i];
+    const int64_t crows = chunks[0];
+    const int64_t nchunks0 = (a.shape[0] + crows - 1) / crows;
+    const size_t chunk_bytes = static_cast<size_t>(crows) * static_cast<size_t>(inner) * dsz;
+    for (int64_t ci = 0; ci < nchunks0; ++ci) {
+        const int64_t r0 = ci * crows;
+        const int64_t rows = std::min<int64_t>(crows, a.shape[0] - r0);
+        std::vector<uint8_t> chunk(chunk_bytes, 0);          // full-size, fill_value 0 padded
+        std::memcpy(chunk.data(), a.bytes.data() + static_cast<size_t>(r0) * inner * dsz,
+                    static_cast<size_t>(rows) * inner * dsz);
+        std::vector<uint8_t> enc = encode_chunk(compressor, std::move(chunk));
+        std::string key = std::to_string(ci);
+        for (size_t i = 1; i < ndim; ++i) key += ".0";       // only the first axis is chunked
+        write_bytes(dir / key, enc.data(), enc.size());
+    }
 }
 
 // ---------------------------------------------------------- string codec ----
@@ -354,7 +434,8 @@ inline std::vector<std::string> read_strings(const fs::path& gdir, const std::st
 }
 
 inline void write_strings(const fs::path& gdir, const std::string& name,
-                          const std::vector<std::string>& strs) {
+                          const std::vector<std::string>& strs,
+                          int64_t chunk_elems = 0, const json& compressor = json(nullptr)) {
     std::vector<int64_t> off(strs.size() + 1, 0);
     std::string buf;
     for (size_t i = 0; i < strs.size(); ++i) {
@@ -370,8 +451,8 @@ inline void write_strings(const fs::path& gdir, const std::string& name,
     offsets.shape = {static_cast<int64_t>(off.size())};
     offsets.bytes.resize(off.size() * 8);
     std::memcpy(offsets.bytes.data(), off.data(), off.size() * 8);
-    write_array(gdir / name, data);
-    write_array(gdir / (name + "_offsets"), offsets);
+    write_array(gdir / name, data, chunk_elems, compressor);
+    write_array(gdir / (name + "_offsets"), offsets, chunk_elems, compressor);
 }
 
 // ------------------------------------------------------------ group IO ------
@@ -461,7 +542,8 @@ inline Dataset read(const fs::path& root) {
     return ds;
 }
 
-inline void write(const Dataset& ds, const fs::path& root) {
+inline void write(const Dataset& ds, const fs::path& root,
+                  int64_t chunk_elems = 0, const json& compressor = json(nullptr)) {
     if (fs::exists(root)) fs::remove_all(root);
 
     std::vector<std::string> axnames, fnames;
@@ -488,7 +570,7 @@ inline void write(const Dataset& ds, const fs::path& root) {
         al["role"] = a.role.empty() ? json(nullptr) : json(a.role);
         al["provenance"] = a.provenance;
         write_group(g, json{{"lstar", al}});
-        write_strings(g, "labels", a.labels);
+        write_strings(g, "labels", a.labels, chunk_elems, compressor);
     }
 
     for (auto& f : ds.fields) {
@@ -509,13 +591,13 @@ inline void write(const Dataset& ds, const fs::path& root) {
         if (f.encoding == "utf8") fl["shape"] = std::vector<int64_t>{(int64_t)f.strings.size()};
         write_group(g, json{{"lstar", fl}});
         if (f.encoding == "csr" || f.encoding == "csc") {
-            write_array(g / "data", f.data);
-            write_array(g / "indices", f.indices);
-            write_array(g / "indptr", f.indptr);
+            write_array(g / "data", f.data, chunk_elems, compressor);
+            write_array(g / "indices", f.indices, chunk_elems, compressor);
+            write_array(g / "indptr", f.indptr, chunk_elems, compressor);
         } else if (f.encoding == "utf8") {
-            write_strings(g, "values", f.strings);
+            write_strings(g, "values", f.strings, chunk_elems, compressor);
         } else {
-            write_array(g / "values", f.dense);
+            write_array(g / "values", f.dense, chunk_elems, compressor);
         }
     }
     consolidate_metadata(root);

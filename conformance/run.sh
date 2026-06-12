@@ -45,6 +45,10 @@ echo "== block-reader conformance (lstar_read_block / read_genes == full read) =
 bash conformance/read_block.sh >/tmp/lstar_rb.log 2>&1 \
   && pass "block reader (contiguous + scattered) matches full read" || { echo "  FAIL read_block"; tail -15 /tmp/lstar_rb.log; exit 1; }
 
+echo "== R writer chunking/compression (R-written chunked+gzip == default; cross-impl) =="
+bash conformance/r_write_chunked.sh >/tmp/lstar_rwc.log 2>&1 \
+  && pass "R writer emits chunked+gzip stores readable by Py/C++" || { echo "  FAIL r_write_chunked"; tail -15 /tmp/lstar_rwc.log; exit 1; }
+
 echo "== disk-backed targets (L* -> h5ad -> backed AnnData / Seurat+BPCells / SCE+HDF5Array) =="
 bash conformance/backed_targets.sh >/tmp/lstar_bt.log 2>&1 \
   && { pass "disk-backed conversion targets"; grep "SKIP" /tmp/lstar_bt.log | sed 's/^/      /'; } \

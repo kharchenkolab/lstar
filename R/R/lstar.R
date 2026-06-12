@@ -58,10 +58,19 @@ lstar_read <- function(path) {
 #'
 #' @param ds an `lstar_dataset` (as returned by [lstar_read()] or a profile reader)
 #' @param path output store path (a `*.lstar.zarr` directory)
+#' @param chunk_elems if non-NULL, chunk each array along its first axis so each chunk holds about
+#'   this many elements (e.g. `1e6`). This is what lets a reader stream/block-read only the touched
+#'   chunks (e.g. [lstar_read_block()], `stream_col_stats()`); the default (NULL) writes each array as
+#'   a single chunk -- the portable, byte-identical-to-before default.
+#' @param compression chunk codec: `"none"` (default), `"gzip"`, or `"zlib"` (numcodecs-compatible;
+#'   readable by the C++ core and zarr-python).
+#' @param level compression level 1-9 (default 5), used when `compression` is `"gzip"`/`"zlib"`.
 #' @return the output `path`, invisibly.
-#' @seealso [lstar_read()]
+#' @seealso [lstar_read()], [lstar_read_block()]
 #' @export
-lstar_write <- function(ds, path) {
+lstar_write <- function(ds, path, chunk_elems = NULL, compression = c("none", "gzip", "zlib"),
+                        level = 5L) {
+  compression <- match.arg(compression)
   axes <- lapply(names(ds$axes), function(nm) {
     a <- ds$axes[[nm]]
     list(labels = as.character(a$labels), origin = a$origin %||% "observed",
@@ -99,7 +108,9 @@ lstar_write <- function(ds, path) {
                   profiles = as.character(ds$profiles %||% character(0)),
                   dropped = as.character(ds$dropped %||% character(0)),
                   axes = axes, fields = fields)
-  lstar_cpp_write(payload, path.expand(path))
+  lstar_cpp_write(payload, path.expand(path),
+                  as.integer(if (is.null(chunk_elems)) 0L else chunk_elems),
+                  if (compression == "none") "" else compression, as.integer(level))
   invisible(path)
 }
 

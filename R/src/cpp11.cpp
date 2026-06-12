@@ -41,10 +41,10 @@ extern "C" SEXP _lstar_lstar_cpp_read(SEXP path) {
   END_CPP11
 }
 // lstar_cpp.cpp
-void lstar_cpp_write(list ds, std::string path);
-extern "C" SEXP _lstar_lstar_cpp_write(SEXP ds, SEXP path) {
+void lstar_cpp_write(list ds, std::string path, int chunk_elems, std::string compression, int level);
+extern "C" SEXP _lstar_lstar_cpp_write(SEXP ds, SEXP path, SEXP chunk_elems, SEXP compression, SEXP level) {
   BEGIN_CPP11
-    lstar_cpp_write(cpp11::as_cpp<cpp11::decay_t<list>>(ds), cpp11::as_cpp<cpp11::decay_t<std::string>>(path));
+    lstar_cpp_write(cpp11::as_cpp<cpp11::decay_t<list>>(ds), cpp11::as_cpp<cpp11::decay_t<std::string>>(path), cpp11::as_cpp<cpp11::decay_t<int>>(chunk_elems), cpp11::as_cpp<cpp11::decay_t<std::string>>(compression), cpp11::as_cpp<cpp11::decay_t<int>>(level));
     return R_NilValue;
   END_CPP11
 }
@@ -56,7 +56,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_lstar_lstar_cpp_read_csc_block",    (DL_FUNC) &_lstar_lstar_cpp_read_csc_block,    4},
     {"_lstar_lstar_cpp_stream_col_stats",  (DL_FUNC) &_lstar_lstar_cpp_stream_col_stats,  5},
     {"_lstar_lstar_cpp_subsample_de_rank", (DL_FUNC) &_lstar_lstar_cpp_subsample_de_rank, 7},
-    {"_lstar_lstar_cpp_write",             (DL_FUNC) &_lstar_lstar_cpp_write,             2},
+    {"_lstar_lstar_cpp_write",             (DL_FUNC) &_lstar_lstar_cpp_write,             5},
     {NULL, NULL, 0}
 };
 }

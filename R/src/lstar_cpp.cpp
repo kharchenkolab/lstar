@@ -192,7 +192,13 @@ list lstar_cpp_read(std::string path) {
 // Write: R list -> libstar Dataset -> Zarr store. The R layer disassembles Matrix objects
 // into (data, indices, indptr) / dense vectors before calling this.
 [[cpp11::register]]
-void lstar_cpp_write(list ds, std::string path) {
+void lstar_cpp_write(list ds, std::string path, int chunk_elems = 0,
+                     std::string compression = "", int level = 5) {
+  lstar::json compressor = nullptr;                 // "" -> uncompressed; else numcodecs gzip/zlib codec
+  if (compression == "gzip" || compression == "zlib")
+    compressor = lstar::json{{"id", compression}, {"level", level}};
+  else if (!compression.empty())
+    throw std::runtime_error("unsupported compression: " + compression + " (use 'gzip', 'zlib', or '')");
   lstar::Dataset out;
   out.kind = as_cpp<std::string>(ds["kind"]);
   out.spec_version = as_cpp<std::string>(ds["spec_version"]);
@@ -241,5 +247,5 @@ void lstar_cpp_write(list ds, std::string path) {
     }
     out.fields.push_back(std::move(fl));
   }
-  lstar::write(out, path);
+  lstar::write(out, path, (int64_t)chunk_elems, compressor);
 }

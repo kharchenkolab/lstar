@@ -20,6 +20,6 @@ lstar_cpp_read <- function(path) {
   .Call(`_lstar_lstar_cpp_read`, path)
 }
 
-lstar_cpp_write <- function(ds, path) {
-  invisible(.Call(`_lstar_lstar_cpp_write`, ds, path))
+lstar_cpp_write <- function(ds, path, chunk_elems, compression, level) {
+  invisible(.Call(`_lstar_lstar_cpp_write`, ds, path, chunk_elems, compression, level))
 }
