@@ -75,6 +75,34 @@ write_seurat <- function(ds) {
   cells <- as.character(ds$axes$cells$labels)
   genes <- as.character(ds$axes$genes$labels)
 
+  # Collection (a Seurat v5 *split*/integration object reads as per-sample measures over
+  # (cells.<s>, genes)). Join them into the union (cells, genes) measure(s) so a single assay can be
+  # built, recording each cell's sample so the assay can be re-split into v5 layers below.
+  split_by <- NULL
+  persamp <- Filter(function(nm) {
+    f <- ds$fields[[nm]]; sp <- as.character(f$span)
+    identical(f$role, "measure") && length(sp) == 2 && sp[2] == "genes" && startsWith(sp[1], "cells.")
+  }, names(ds$fields))
+  if (length(persamp)) {
+    soc <- stats::setNames(rep(NA_character_, length(cells)), cells)
+    roots <- sub("\\.[^.]+$", "", persamp)
+    for (root in unique(roots)) {
+      M <- Matrix::Matrix(0, nrow = length(cells), ncol = length(genes), sparse = TRUE,
+                          dimnames = list(cells, genes))
+      st <- "raw"
+      for (nm in persamp[roots == root]) {
+        ca <- as.character(ds$fields[[nm]]$span)[1]
+        sc <- as.character(ds$axes[[ca]]$labels)
+        M[sc, ] <- as(ds$fields[[nm]]$values, "CsparseMatrix")
+        soc[sc] <- sub("^cells\\.", "", ca)
+        st <- ds$fields[[nm]]$state %||% st
+        ds$fields[[nm]] <- NULL
+      }
+      ds$fields[[root]] <- list(values = M, role = "measure", span = c("cells", "genes"), state = st)
+    }
+    split_by <- soc
+  }
+
   meas <- .fields_over(ds, c("cells", "genes"), role = "measure")
   counts_nm <- .pick(ds, meas, prefer_state = "raw", prefer_name = "counts")
   data_nm <- .pick(ds, meas, prefer_state = "lognorm", prefer_name = "X", exclude = counts_nm)
@@ -131,6 +159,10 @@ write_seurat <- function(ds) {
     if (!is.factor(iv)) iv <- as.factor(iv)
     SeuratObject::Idents(so) <- stats::setNames(iv, cells)
   }
+
+  if (!is.null(split_by) && inherits(so[["RNA"]], "Assay5")) {   # re-split a v5 integration object
+    so[["RNA"]] <- split(so[["RNA"]], f = unname(split_by[cells]))
+  }
   so
 }
 
@@ -153,6 +185,10 @@ read_seurat <- function(so, assay = SeuratObject::DefaultAssay(so)) {
              dropped = character(0), axes = list(), fields = list())
   ds$axes$cells <- list(labels = cells, origin = "observed", role = "observation")
   ds$axes$genes <- list(labels = genes, origin = "observed", role = "feature")
+  # non-default assays (e.g. an ADT/protein assay in CITE-seq) are a *second feature space* (Tier-3
+  # multimodal, not yet typed) -- record the loss rather than silently reading only the default assay.
+  others <- setdiff(tryCatch(SeuratObject::Assays(so), error = function(e) assay), assay)
+  if (length(others)) ds$dropped <- c(ds$dropped, paste0("assay/", others))
   lac <- .seurat_layer_access(so, assay)
 
   add <- function(nm, values, role, span, state = "") {

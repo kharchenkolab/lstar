@@ -53,6 +53,10 @@ echo "== Seurat Tier-1 extras (DimReduc stdev -> measure; active Idents captured
 bash conformance/seurat_extras.sh >/tmp/lstar_se.log 2>&1 \
   && pass "Seurat stdev + active Idents round-trip" || { echo "  FAIL seurat_extras"; tail -15 /tmp/lstar_se.log; exit 1; }
 
+echo "== Seurat version variety (v3 Assay / v5 Assay5 / v5 split / SCTAssay / multimodal round-trip) =="
+bash conformance/seurat_versions.sh >/tmp/lstar_sv.log 2>&1 \
+  && pass "Seurat version variants round-trip + validate" || { echo "  FAIL seurat_versions"; tail -20 /tmp/lstar_sv.log; exit 1; }
+
 echo "== collection conformance (R collection -> L* -> Python) =="
 bash conformance/collection.sh >/tmp/lstar_coll.log 2>&1 \
   && pass "collection of samples round-trips R->py" || { echo "  FAIL collection"; tail -15 /tmp/lstar_coll.log; exit 1; }

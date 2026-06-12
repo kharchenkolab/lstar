@@ -54,6 +54,8 @@ jobs:
         run: bash conformance/cross_format.sh
       - name: Seurat Tier-1 extras (DimReduc stdev -> measure; active Idents captured + restored)
         run: bash conformance/seurat_extras.sh
+      - name: Seurat version variety (v3 Assay / v5 Assay5 / v5 split / SCTAssay / multimodal)
+        run: bash conformance/seurat_versions.sh
       - name: collection conformance (collection of samples R -> L* -> Python)
         run: bash conformance/collection.sh
       - name: blocked-reader conformance (R/C++ bounded col stats == full read)
