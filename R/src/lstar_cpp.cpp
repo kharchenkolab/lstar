@@ -124,6 +124,17 @@ list lstar_cpp_subsample_de_rank(doubles data, integers indptr, integers indices
                          "lfc"_nm = vec_to_dbl(r.lfc), "nA"_nm = (int)r.nA, "nB"_nm = (int)r.nB});
 }
 
+// Zero-aware per-gene mean/var/nnz of a CSC measure in a store, read block-by-block so the whole
+// matrix never lands in memory (the bounded-memory reduction; same libstar kernel as Python/WASM).
+[[cpp11::register]]
+list lstar_cpp_stream_col_stats(std::string path, std::string field, int block,
+                                int n_threads, bool lognorm) {
+  lstar::ColStats s = lstar::stream_csc_col_mean_var(
+      path + "/fields/" + field, (int64_t)block, n_threads, lognorm);
+  return writable::list({"mean"_nm = vec_to_dbl(s.mean), "var"_nm = vec_to_dbl(s.var),
+                         "nnz"_nm = to_ints(s.nnz)});
+}
+
 [[cpp11::register]]
 list lstar_cpp_read(std::string path) {
   lstar::Dataset ds = lstar::read(path);

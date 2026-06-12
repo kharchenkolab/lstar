@@ -146,6 +146,24 @@ float32 measure stays float32 (no widening) while the moments accumulate in floa
 float64-accurate*. Scripts: [`examples/lazy_streaming_demo.py`](../examples/lazy_streaming_demo.py),
 [`examples/real_perf.py`](../examples/real_perf.py).
 
+**The same reduction from R/C++, reading the store block-by-block.** `lstar::stream_col_stats(path,
+field)` computes the identical per-gene mean/variance/nnz directly off a (chunked) store without ever
+loading the measure — the C++ core reads only each gene block's chunks (`read_array_range` →
+`stream_csc_col_mean_var`), so an atlas too large to hold still yields its HVG statistics.
+
+```r
+library(lstar)
+s <- stream_col_stats("big.lstar.zarr", "counts", lognorm = TRUE)   # bounded memory, off-disk
+hvg <- order(s$var, decreasing = TRUE)[1:2000]                      # same statistic as Python
+```
+
+On the same 40k × 20k Marrow measure (gene-major CSC) this runs in **~184 MB** of peak RSS versus
+**~7.0 GB** for read-the-whole-thing-then-reduce (≈38× less) and ~10× faster, to the identical numbers.
+The reduction is dominated by reading/decoding chunks rather than arithmetic, so intra-block threads
+barely change the wall clock here — the win is memory, not cores. Benchmark:
+[`examples/stream_reduce_bench.sh`](../examples/stream_reduce_bench.sh); conformance check that the
+blocked result equals a full read: [`conformance/stream_reduce.sh`](../conformance/stream_reduce.sh).
+
 ---
 
 ## 4. Chunking + compression (Python)

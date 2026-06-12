@@ -8,6 +8,10 @@ lstar_cpp_subsample_de_rank <- function(data, indptr, indices, nrows, ngenes, me
   .Call(`_lstar_lstar_cpp_subsample_de_rank`, data, indptr, indices, nrows, ngenes, membership, lognorm)
 }
 
+lstar_cpp_stream_col_stats <- function(path, field, block, n_threads, lognorm) {
+  .Call(`_lstar_lstar_cpp_stream_col_stats`, path, field, block, n_threads, lognorm)
+}
+
 lstar_cpp_read <- function(path) {
   .Call(`_lstar_lstar_cpp_read`, path)
 }

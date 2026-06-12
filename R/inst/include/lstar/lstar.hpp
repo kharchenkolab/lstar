@@ -285,6 +285,44 @@ inline NdArray read_array(const fs::path& dir) {
     return a;
 }
 
+// Read elements [lo, hi) of a 1-D zarr array, decoding only the chunks that overlap the range.
+// This is the bounded-memory primitive behind the blocked reader: a column block of a CSC measure
+// touches only its slice of `data`/`indices`, so a per-gene reduction never reads the whole matrix.
+// (When the array was written as a single chunk -- the unchunked default -- this still decodes that
+// one chunk, so bounded streaming needs a chunked store, e.g. one written with chunk_elems set.)
+inline NdArray read_array_range(const fs::path& dir, int64_t lo, int64_t hi) {
+    json za = read_json(dir / ".zarray");
+    if (za.contains("order") && za["order"].is_string() && za["order"].get<std::string>() != "C")
+        throw std::runtime_error("F-order array unsupported: " + dir.string());
+    auto shape = za["shape"].get<std::vector<int64_t>>();
+    if (shape.size() != 1) throw std::runtime_error("read_array_range: 1-D only: " + dir.string());
+    const int64_t n = shape[0];
+    const int64_t cs = za["chunks"].get<std::vector<int64_t>>()[0];
+    json compressor = za.contains("compressor") ? za["compressor"] : json(nullptr);
+    NdArray a;
+    a.dtype = za["dtype"].get<std::string>();
+    const size_t dsz = dtype_size(a.dtype);
+    lo = std::max<int64_t>(0, lo);
+    hi = std::min<int64_t>(n, hi);
+    const int64_t len = std::max<int64_t>(0, hi - lo);
+    a.shape = {len};
+    a.bytes.assign(static_cast<size_t>(len) * dsz, 0);   // fill_value 0 for any missing chunk
+    if (len == 0) return a;
+    for (int64_t ci = lo / cs; ci <= (hi - 1) / cs; ++ci) {
+        const int64_t cstart = ci * cs;
+        const int64_t s = std::max(lo, cstart), e = std::min(hi, cstart + cs);  // overlap [s,e)
+        fs::path cf = dir / std::to_string(ci);
+        if (e <= s || !fs::exists(cf)) continue;
+        std::vector<uint8_t> raw =
+            decode_chunk(compressor, read_bytes(cf), static_cast<size_t>(cs) * dsz);
+        raw.resize(static_cast<size_t>(cs) * dsz);       // pad a short final chunk
+        std::memcpy(a.bytes.data() + static_cast<size_t>(s - lo) * dsz,
+                    raw.data() + static_cast<size_t>(s - cstart) * dsz,
+                    static_cast<size_t>(e - s) * dsz);
+    }
+    return a;
+}
+
 inline void write_array(const fs::path& dir, const NdArray& a) {
     fs::create_directories(dir);
     json za;
@@ -580,6 +618,53 @@ inline ColStats csc_col_mean_var(const T* data, const int64_t* indptr,
         s.nnz[(size_t)j] = b - a;
     }
     return s;
+}
+
+// Dispatch csc_col_mean_var on a block's stored value dtype, so a float32 measure is reduced in
+// place (no widening copy) -- the memory-lean path. `indptr` is the block-local pointer (int64).
+inline ColStats col_mean_var_dispatch(const NdArray& data, const int64_t* indptr,
+                                      int64_t ncols, int64_t nrows, int n_threads, bool lognorm) {
+    const std::string& dt = data.dtype;
+    if (dt == "<f8") return csc_col_mean_var(data.as<double>(),  indptr, ncols, nrows, n_threads, lognorm);
+    if (dt == "<f4") return csc_col_mean_var(data.as<float>(),   indptr, ncols, nrows, n_threads, lognorm);
+    if (dt == "<i4") return csc_col_mean_var(data.as<int32_t>(), indptr, ncols, nrows, n_threads, lognorm);
+    if (dt == "<i8") return csc_col_mean_var(data.as<int64_t>(), indptr, ncols, nrows, n_threads, lognorm);
+    throw std::runtime_error("col_mean_var: unsupported data dtype " + dt);
+}
+
+// Zero-aware per-column mean/variance of a CSC measure read straight from a store *block-by-block*,
+// so the whole matrix never lands in memory -- the C++/R counterpart of Python's `stream_col_stats`.
+// `field_group` is the field's directory (…/fields/<name>). `indptr` (small) is read whole; for each
+// column block only that block's slice of `data` is read (via read_array_range, touching just the
+// overlapping chunks) and reduced. Blocking by column is *exact* (each column's nonzeros sit fully
+// in one block), so per-column results need no cross-block merge. Bounded memory requires a chunked
+// `data` array (a store written with chunk_elems set, e.g. by streamed conversion). n_threads is the
+// usual policy (1=serial, N=N threads, <=0=OpenMP default), applied within each block's reduction.
+inline ColStats stream_csc_col_mean_var(const fs::path& field_group, int64_t block = 4096,
+                                        int n_threads = 0, bool lognorm = false) {
+    json m = read_json(field_group / ".zattrs")["lstar"];
+    if (opt_str(m, "encoding") != "csc")
+        throw std::runtime_error("stream_csc_col_mean_var: field is not CSC (need gene-major)");
+    auto shape = m["shape"].get<std::vector<int64_t>>();
+    const int64_t nrows = shape[0], ncols = shape[1];
+    std::vector<int64_t> indptr = as_i64(read_array(field_group / "indptr"));
+    if (block <= 0) block = 4096;
+    ColStats out;
+    out.mean.assign((size_t)ncols, 0.0);
+    out.var.assign((size_t)ncols, 0.0);
+    out.nnz.assign((size_t)ncols, 0);
+    for (int64_t a = 0; a < ncols; a += block) {
+        const int64_t b = std::min(a + block, ncols);
+        const int64_t lo = indptr[a], hi = indptr[b];
+        NdArray dblk = read_array_range(field_group / "data", lo, hi);     // only this block's nonzeros
+        std::vector<int64_t> liptr((size_t)(b - a + 1));
+        for (int64_t j = 0; j <= b - a; ++j) liptr[(size_t)j] = indptr[a + j] - lo;
+        ColStats s = col_mean_var_dispatch(dblk, liptr.data(), b - a, nrows, n_threads, lognorm);
+        std::copy(s.mean.begin(), s.mean.end(), out.mean.begin() + a);
+        std::copy(s.var.begin(), s.var.end(), out.var.begin() + a);
+        std::copy(s.nnz.begin(), s.nnz.end(), out.nnz.begin() + a);
+    }
+    return out;
 }
 
 // Per-group sufficient statistics over a CSC measure (cells x genes, gene-major): for each gene

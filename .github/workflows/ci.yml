@@ -44,3 +44,5 @@ jobs:
         run: bash conformance/cross_format.sh
       - name: collection conformance (collection of samples R -> L* -> Python)
         run: bash conformance/collection.sh
+      - name: blocked-reader conformance (R/C++ bounded col stats == full read)
+        run: bash conformance/stream_reduce.sh
