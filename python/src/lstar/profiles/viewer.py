@@ -61,18 +61,24 @@ def write_viewer(ds, grouping="leiden", counts="counts", n_od=300):
     # cell-major DE panel: (cells, od_genes), CSR, log1p — read a few hundred rows for subsample DE
     panel = Xlr[:, od_idx].tocsr().astype("f4")
 
+    # Idempotent: skip anything the store already carries, so write_viewer can also "top up"
+    # a store that was written with only some viewer fields (e.g. add de_panel to an old store).
+    def put(name, *a, **k):
+        if name not in ds.fields:
+            ds.add_field(name, *a, **k)
+
     if ("groups_%s" % grouping) not in ds.axes:
         ds.add_axis("groups_%s" % grouping, groups, origin="derived", role="feature")
     if "od_genes" not in ds.axes:
         ds.add_axis("od_genes", [gene_labels[i] for i in od_idx], origin="derived", role="feature")
     span_gg = ["groups_%s" % grouping, "genes"]
-    ds.add_field("stats_%s_sum" % grouping, S.astype("f4"), role="measure", span=span_gg)
-    ds.add_field("stats_%s_sumsq" % grouping, SS.astype("f4"), role="measure", span=span_gg)
-    ds.add_field("stats_%s_nexpr" % grouping, NE.astype("f4"), role="measure", span=span_gg)
-    ds.add_field("markers_%s_lfc" % grouping, lfc, role="measure", span=["genes", "groups_%s" % grouping])
-    ds.add_field("markers_%s_padj" % grouping, padj, role="measure", span=["genes", "groups_%s" % grouping])
-    ds.add_field("cell_order", order, role="measure", span=["cells"], state="permutation")
-    ds.add_field("de_panel", panel, role="measure", span=["cells", "od_genes"], state="lognorm", encoding="csr")
+    put("stats_%s_sum" % grouping, S.astype("f4"), role="measure", span=span_gg)
+    put("stats_%s_sumsq" % grouping, SS.astype("f4"), role="measure", span=span_gg)
+    put("stats_%s_nexpr" % grouping, NE.astype("f4"), role="measure", span=span_gg)
+    put("markers_%s_lfc" % grouping, lfc, role="measure", span=["genes", "groups_%s" % grouping])
+    put("markers_%s_padj" % grouping, padj, role="measure", span=["genes", "groups_%s" % grouping])
+    put("cell_order", order, role="measure", span=["cells"], state="permutation")
+    put("de_panel", panel, role="measure", span=["cells", "od_genes"], state="lognorm", encoding="csr")
     if "viewer@0.1" not in ds.profiles:
         ds.profiles.append("viewer@0.1")
     return ds

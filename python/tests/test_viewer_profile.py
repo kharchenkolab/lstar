@@ -42,3 +42,14 @@ def test_write_viewer_roundtrip():
     ds2 = lstar.read(p)
     assert "viewer@0.1" in ds2.profiles
     assert "de_panel" in ds2.fields and "stats_leiden_sum" in ds2.fields
+
+
+def test_write_viewer_idempotent_topup():
+    # calling it again must not raise (skips existing fields); used to add de_panel to an
+    # already-written store without recomputing/duplicating the cluster stats.
+    ds, _, _ = _toy(seed=2)
+    lstar.write_viewer(ds, "leiden", n_od=10)
+    n_fields = len(ds.fields)
+    lstar.write_viewer(ds, "leiden", n_od=10)        # second pass: no-op on existing fields
+    assert len(ds.fields) == n_fields
+    assert ds.profiles.count("viewer@0.1") == 1
