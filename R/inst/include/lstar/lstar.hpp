@@ -149,9 +149,18 @@ inline std::string read_text(const fs::path& p) {
     return ss.str();
 }
 inline std::vector<uint8_t> read_bytes(const fs::path& p) {
-    std::ifstream f(p, std::ios::binary);
+    // Bulk read: size via ate, then one read() call. (istreambuf_iterator reads byte-by-byte through
+    // the streambuf -- ~10-50x slower; it dominated chunk-decode time on large stores.)
+    std::ifstream f(p, std::ios::binary | std::ios::ate);
     if (!f) throw std::runtime_error("cannot open " + p.string());
-    return std::vector<uint8_t>(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+    const std::streamsize n = f.tellg();
+    std::vector<uint8_t> buf(n > 0 ? static_cast<size_t>(n) : 0);
+    if (n > 0) {
+        f.seekg(0);
+        if (!f.read(reinterpret_cast<char*>(buf.data()), n))
+            throw std::runtime_error("short read " + p.string());
+    }
+    return buf;
 }
 inline void write_text(const fs::path& p, const std::string& s) {
     std::ofstream f(p, std::ios::binary);

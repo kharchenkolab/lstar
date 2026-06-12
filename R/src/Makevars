@@ -1,6 +1,9 @@
 CXX_STD = CXX17
 # zlib (bundled with R) lets the core read gzip/zlib-compressed chunks.
 PKG_CPPFLAGS = -I../inst/include -DLSTAR_HAVE_ZLIB
+# OpenMP: the streaming kernels (csc_col_mean_var, stream_col_stats, ...) are OpenMP-parallel; without
+# these flags the #pragma omp directives are no-ops and the R build runs serial regardless of n_threads.
+PKG_CXXFLAGS = $(SHLIB_OPENMP_CXXFLAGS)
 # std::filesystem is in libstdc++/libc++ on the supported C++17 toolchains (gcc >= 9.1, clang);
-# no -lstdc++fs needed. zlib via -lz (R links it too).
-PKG_LIBS = -lz
+# no -lstdc++fs needed. zlib via -lz (R links it too); OpenMP runtime via SHLIB_OPENMP_CXXLIBS.
+PKG_LIBS = -lz $(SHLIB_OPENMP_CXXLIBS)
