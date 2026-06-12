@@ -13,14 +13,15 @@ over (cells, genes) and a categorical grouping label over (cells):
   de_panel                   measure (cells, od_genes) CSR, log1p  the cell-major DE panel
                                                                     (subsample DE at O(rows))
 
-The cluster stats mirror libstar's csc_col_sum_by_group; this numpy reference is the exporter
-(offline) path. Marks `viewer@0.1` in ds.profiles.
+The cluster stats are computed by libstar's csc_col_sum_by_group via the compiled accelerator
+when present (the same C++ core bound to WASM/R), with an identical numpy fallback. Marks
+`viewer@0.1` in ds.profiles.
 """
 import numpy as np
 import scipy.sparse as sp
 
 
-def write_viewer(ds, grouping="leiden", counts="counts", n_od=300):
+def write_viewer(ds, grouping="leiden", counts="counts", n_od=300, engine="auto"):
     X = ds.field(counts).values
     X = sp.csc_matrix(X) if not sp.issparse(X) else X.tocsc()
     ncells, ngenes = X.shape
@@ -35,13 +36,20 @@ def write_viewer(ds, grouping="leiden", counts="counts", n_od=300):
     Xl = X.copy().astype("f8"); Xl.data = np.log1p(Xl.data)
     Xlr = Xl.tocsr()
 
-    # cluster sufficient stats over log1p
-    S = np.zeros((K, ngenes)); SS = np.zeros((K, ngenes)); NE = np.zeros((K, ngenes))
-    for g in range(K):
-        sub = Xlr[code == g]
-        S[g] = np.asarray(sub.sum(0)).ravel()
-        SS[g] = np.asarray(sub.multiply(sub).sum(0)).ravel()
-        NE[g] = np.asarray((sub > 0).sum(0)).ravel()
+    # cluster sufficient stats over log1p — the shared libstar kernel (csc_col_sum_by_group, the
+    # same C++ bound to WASM/R) when the accelerator is built, else an identical numpy reference.
+    from .._engine import resolve_engine, _accel
+    use_cpp = resolve_engine(engine) == "c++" and hasattr(_accel, "col_sum_by_group")
+    if use_cpp:
+        S, SS, NE = _accel.col_sum_by_group(X.data, X.indptr, X.indices, ncells, ngenes,
+                                            code.astype("int32"), K, True, 0)
+    else:
+        S = np.zeros((K, ngenes)); SS = np.zeros((K, ngenes)); NE = np.zeros((K, ngenes))
+        for g in range(K):
+            sub = Xlr[code == g]
+            S[g] = np.asarray(sub.sum(0)).ravel()
+            SS[g] = np.asarray(sub.multiply(sub).sum(0)).ravel()
+            NE[g] = np.asarray((sub > 0).sum(0)).ravel()
     nper = np.array([(code == g).sum() for g in range(K)])
     grand = np.asarray(Xl.sum(0)).ravel()
 

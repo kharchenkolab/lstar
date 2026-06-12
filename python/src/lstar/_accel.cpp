@@ -67,6 +67,72 @@ static py::tuple csc_to_csr(py::array data, py::array indices, py::array indptr,
                           py::array_t<int64_t>(r.indptr.size(), r.indptr.data()));
 }
 
+// Per-(group, gene) sufficient stats over a CSC measure: sum, sumsq, nnz of each group's cells.
+// `group_of_cell` (length nrows) maps a cell/row to a group id in [0, ngroups). Returns three
+// (ngroups, ngenes) f64 arrays — the viewer profile's cluster stats, computed on the shared core.
+static py::tuple col_sum_by_group(py::array data, py::array indptr, py::array indices,
+                                  int64_t nrows, int64_t ncols, py::array group_of_cell,
+                                  int ngroups, bool lognorm, int n_threads) {
+    auto ip = py::array_t<int64_t, py::array::c_style | py::array::forcecast>::ensure(indptr);
+    auto idx = py::array_t<int64_t, py::array::c_style | py::array::forcecast>::ensure(indices);
+    auto grp = py::array_t<int32_t, py::array::c_style | py::array::forcecast>::ensure(group_of_cell);
+    if (!ip || ip.size() != ncols + 1) throw std::runtime_error("indptr must have length ncols+1");
+    if (!grp || grp.size() != nrows) throw std::runtime_error("group_of_cell must have length nrows");
+    const int64_t* ipp = ip.data();
+    const int64_t* idxp = idx.data();
+    const int* gp = grp.data();
+
+    lstar::GroupStats s;
+    const auto dt = data.dtype();
+    if (dt.kind() == 'f' && dt.itemsize() == 4) {
+        auto d = py::array_t<float, py::array::c_style>::ensure(data);
+        const float* dp = d.data();
+        py::gil_scoped_release rel;
+        s = lstar::csc_col_sum_by_group(dp, ipp, idxp, nrows, ncols, gp, ngroups, lognorm, n_threads);
+    } else {
+        auto d = py::array_t<double, py::array::c_style | py::array::forcecast>::ensure(data);
+        const double* dp = d.data();
+        py::gil_scoped_release rel;
+        s = lstar::csc_col_sum_by_group(dp, ipp, idxp, nrows, ncols, gp, ngroups, lognorm, n_threads);
+    }
+    const std::vector<py::ssize_t> shape{(py::ssize_t)s.ngroups, (py::ssize_t)s.ngenes};
+    return py::make_tuple(py::array_t<double>(shape, s.sum.data()),
+                          py::array_t<double>(shape, s.sumsq.data()),
+                          py::array_t<double>(shape, s.n_expr.data()));
+}
+
+// Two-group mean(log1p) difference over a CSR *cell-major* measure (e.g. the viewer de_panel):
+// indptr is over rows/cells (length nrows+1), indices are gene ids. membership (length nrows) is
+// 0=A, 1=B, <0=excluded. Returns (meanA, meanB, lfc) f64 over genes plus the per-side cell counts.
+static py::tuple subsample_de_rank(py::array data, py::array indptr, py::array indices,
+                                   int64_t nrows, int64_t ngenes, py::array membership, bool lognorm) {
+    auto ip = py::array_t<int64_t, py::array::c_style | py::array::forcecast>::ensure(indptr);
+    auto idx = py::array_t<int64_t, py::array::c_style | py::array::forcecast>::ensure(indices);
+    auto mem = py::array_t<int32_t, py::array::c_style | py::array::forcecast>::ensure(membership);
+    if (!ip || ip.size() != nrows + 1) throw std::runtime_error("indptr must have length nrows+1 (CSR cell-major)");
+    if (!mem || mem.size() != nrows) throw std::runtime_error("membership must have length nrows");
+    const int64_t* ipp = ip.data();
+    const int64_t* idxp = idx.data();
+    const int* mp = mem.data();
+
+    lstar::DERank r;
+    const auto dt = data.dtype();
+    if (dt.kind() == 'f' && dt.itemsize() == 4) {
+        auto d = py::array_t<float, py::array::c_style>::ensure(data);
+        const float* dp = d.data();
+        py::gil_scoped_release rel;
+        r = lstar::subsample_de_rank(dp, ipp, idxp, nrows, ngenes, mp, lognorm);
+    } else {
+        auto d = py::array_t<double, py::array::c_style | py::array::forcecast>::ensure(data);
+        const double* dp = d.data();
+        py::gil_scoped_release rel;
+        r = lstar::subsample_de_rank(dp, ipp, idxp, nrows, ngenes, mp, lognorm);
+    }
+    return py::make_tuple(py::array_t<double>(r.meanA.size(), r.meanA.data()),
+                          py::array_t<double>(r.meanB.size(), r.meanB.data()),
+                          py::array_t<double>(r.lfc.size(), r.lfc.data()), r.nA, r.nB);
+}
+
 static int max_threads() {
 #ifdef _OPENMP
     return omp_get_max_threads();
@@ -81,6 +147,12 @@ PYBIND11_MODULE(_accel, m) {
           py::arg("n_threads") = 0, py::arg("lognorm") = false);
     m.def("csc_to_csr", &csc_to_csr, py::arg("data"), py::arg("indices"), py::arg("indptr"),
           py::arg("nrows"), py::arg("ncols"));
+    m.def("col_sum_by_group", &col_sum_by_group, py::arg("data"), py::arg("indptr"),
+          py::arg("indices"), py::arg("nrows"), py::arg("ncols"), py::arg("group_of_cell"),
+          py::arg("ngroups"), py::arg("lognorm") = false, py::arg("n_threads") = 0);
+    m.def("subsample_de_rank", &subsample_de_rank, py::arg("data"), py::arg("indptr"),
+          py::arg("indices"), py::arg("nrows"), py::arg("ngenes"), py::arg("membership"),
+          py::arg("lognorm") = true);
     m.def("max_threads", &max_threads);
 #ifdef _OPENMP
     m.attr("openmp") = true;
