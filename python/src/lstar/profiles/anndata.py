@@ -283,11 +283,42 @@ def read_anndata(adata, kind="sample"):
         ds.aux["anndata.uns"] = uns
     _read_rank_genes_groups(adata, ds)              # type one-vs-rest DE; leave pairwise in passthrough
     _read_uns_promotions(adata, ds)                 # promote color palettes + PCA variance out of the tail
+    _read_uns_graphs(adata, ds)                     # type uns cell/gene graphs (scVelo velocity_graph)
     return ds
 
 
 # Subtypes of fields that are regenerated into `uns` on write (so they aren't routed as ordinary fields).
-_TYPED_UNS_SUBTYPES = {"de", "color", "pca_var"}
+_TYPED_UNS_SUBTYPES = {"de", "color", "pca_var", "uns_graph"}
+
+
+def _read_uns_graphs(adata, ds):
+    """Type top-level `uns` sparse **square** matrices as relations over the matching axis. scVelo writes
+    `velocity_graph` / `velocity_graph_neg` (cell x cell transition graphs) to `uns`, not `obsp` -- so
+    without this they'd land in the passthrough and be dropped (the aux tree can't hold a sparse leaf).
+    A (n_cells x n_cells) matrix becomes a `relation` over (cells, cells); (n_genes x n_genes) over
+    (genes, genes). Removed from the passthrough; regenerated on write. (A PAGA cluster x cluster graph
+    is nested under `uns['paga']` and sized to the cluster axis, so it is not matched here.)"""
+    import scipy.sparse as sp
+    uns = (getattr(ds, "aux", None) or {}).get("anndata.uns")
+    if not uns:
+        return
+    ncell = len(ds.axes["cells"]) if "cells" in ds.axes else -1
+    ngene = len(ds.axes["genes"]) if "genes" in ds.axes else -1
+    for key in [k for k in list(uns) if sp.issparse(uns[k])]:
+        m = uns[key]
+        ax = "cells" if m.shape == (ncell, ncell) else "genes" if m.shape == (ngene, ngene) else None
+        if ax is None:
+            continue
+        ds.add_field(str(key), m, role="relation", span=[ax, ax], subtype="uns_graph",
+                     directed=True, weighted=True, provenance={"anndata": "uns/%s" % key})
+        uns.pop(key, None)
+
+
+def _write_uns_graphs(adata, ds):
+    """Regenerate the typed `uns` graphs (e.g. velocity_graph) from their relation fields."""
+    for name, f in ds.fields.items():
+        if f.subtype == "uns_graph":
+            adata.uns[str(name)] = f.values
 
 
 def _safe_uns_copy(v, _depth=0):
@@ -524,6 +555,7 @@ def write_anndata(ds):
     _restore_uns(adata, ds)                         # reproduce the passthrough uns (the untyped tail)
     _write_rank_genes_groups(adata, ds)             # regenerate the typed DE bundle into uns
     _write_uns_promotions(adata, ds)                # regenerate promoted colors + PCA variance into uns
+    _write_uns_graphs(adata, ds)                    # regenerate uns cell/gene graphs (velocity_graph)
     if dropped:
         adata.uns["lstar/dropped"] = list(dropped)
     return adata
@@ -682,6 +714,7 @@ def write_anndata_streamed(ds, path, chunk_elems=None):
     _restore_uns(adata, ds)                 # reproduce the passthrough uns
     _write_rank_genes_groups(adata, ds)     # regenerate the typed DE bundle into uns
     _write_uns_promotions(adata, ds)        # regenerate promoted colors + PCA variance into uns
+    _write_uns_graphs(adata, ds)            # regenerate uns cell/gene graphs (velocity_graph)
     if r["dropped"]:
         adata.uns["lstar/dropped"] = list(r["dropped"])
 
