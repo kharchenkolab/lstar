@@ -1,23 +1,27 @@
 # lstar
 
-**A lightweight library for moving single-cell and spatial omics data between formats and languages —
-without losing your analysis along the way.**
+**A general model for single-cell and spatial omics data — built from *axes* and *fields* — and the
+lightweight glue that moves data losslessly between AnnData, Seurat, SingleCellExperiment, and
+pagoda/conos.**
 
-Single-cell data lives in a handful of incompatible containers: AnnData (Python), Seurat and
-SingleCellExperiment (R), the pagoda-verse / Conos. Moving a dataset from one to another usually means
-a lossy, one-off converter — and anything off the beaten path (a PCA's gene loadings, a velocity graph,
-a multi-sample integration) tends to fall on the floor. `lstar` is the glue that avoids that: it maps
-each format to one small, shared model (**L★**) and back, so a conversion preserves the *meaning* of
-each piece and **reports** anything a target format can't hold instead of dropping it silently.
+L★ represents a dataset as **axes** (the entities you index by — cells, genes, samples, clusters) and
+**fields** (typed data over them — counts, embeddings, graphs, labels, designs). Because everything is
+just axes and fields, one small model spans the diversity of real single-cell work that a fixed
+`cells × genes` container strains on — for example a multi-sample (even cross-species) integration kept
+as a *collection* of heterogeneous samples rather than one concatenated matrix; a CITE-seq object with
+a second, protein feature axis; or a case-control cohort carrying a statistical *design* over its
+samples. The routine count-matrix-plus-a-clustering case stays just as simple, while the harder cases
+use the same vocabulary instead of an opaque `uns`/`misc` blob (see [Why lstar?](#why-lstar)).
 
-It is available in **Python, R, and C++** (sharing one fast C++ core), reads and writes a portable
+In the short term, the most immediately useful thing this buys you is **moving data between the formats
+people already use**. Each existing container — AnnData (Python), Seurat and SingleCellExperiment (R),
+pagoda/conos — fixes a few named slots; routing a dataset through L★ converts one to another while
+preserving the *meaning* of each piece and **reporting** anything a target can't hold instead of
+dropping it silently.
+
+lstar is available in **Python, R, and C++** (sharing one fast C++ core), reads and writes a portable
 [Zarr](https://zarr.dev)-based format, and is built to scale — you can open a million-cell dataset over
 the network and read just the parts you need.
-
-```python
-# Convert an AnnData straight to a Seurat object, keeping the PCA loadings a direct
-# converter would drop — Python writes a portable store, R reads it. (Details below.)
-```
 
 > **Status:** early development, not yet released. Working today: read/write the same store from
 > Python, C++, and R; profiles for AnnData, Seurat (v3/v4/v5), SingleCellExperiment, and Conos; the
