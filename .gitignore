@@ -37,3 +37,4 @@ core/build/
 R/src/*.o
 R/src/*.so
 R/src/symbols.rds
+testdata/

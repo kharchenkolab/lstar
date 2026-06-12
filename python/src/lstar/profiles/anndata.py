@@ -271,11 +271,14 @@ def read_anndata(adata, kind="sample"):
     # uns: preserved *verbatim* via lossless passthrough (params, colors, dendrograms, DE tables, ...)
     # rather than recorded name-only -- the `aux/` subtree round-trips it and a reader can later promote
     # recognized structures out of the tail. lstar-internal markers (e.g. lstar/state) are excluded.
-    # A mutable copy so promotion/typing (which pop from nested dicts like uns['pca']) never touch the
-    # caller's AnnData. NOT copy.deepcopy: anndata's `uns['neighbors']` is an `OverloadedDict` that
-    # back-references the AnnData/obsp, so deepcopy explodes (cyclic + giant sparse). `_safe_uns_copy`
-    # copies the dict/list *spine* and references array/scalar leaves -- enough to pop safely.
-    uns = {k: _safe_uns_copy(v) for k, v in adata.uns.items() if not str(k).startswith("lstar/")}
+    # Capture uns from its *raw backing dict*, not the OverloadedDict view: `adata.uns['neighbors']`
+    # is overloaded to inject the obsp graphs (connectivities/distances) into the returned dict -- we
+    # don't want those (they're already captured as `relation`s, and they'd become None through the
+    # passthrough and break anndata's neighbors-setter on restore). `_safe_uns_copy` then spine-copies
+    # so promotions can pop safely without touching the caller (and never follows OverloadedDict cycles).
+    raw_uns = getattr(adata.uns, "data", None)
+    src = raw_uns if isinstance(raw_uns, dict) else adata.uns
+    uns = {k: _safe_uns_copy(v) for k, v in src.items() if not str(k).startswith("lstar/")}
     if uns:
         ds.aux["anndata.uns"] = uns
     _read_rank_genes_groups(adata, ds)              # type one-vs-rest DE; leave pairwise in passthrough

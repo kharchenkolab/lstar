@@ -1,0 +1,77 @@
+"""Real example datasets the test suite is grounded in -- no hand-fabricated structures.
+
+Small real datasets are *fetched* (downloaded) on demand and cached in the repo `testdata/` dir
+(gitignored); large/local-only datasets (a real Tabula Muris atlas) are used when present. Loaders
+return `None` only when a dataset is genuinely unavailable after a real fetch attempt (offline /
+restricted env) -- callers then print a SKIP note rather than silently passing. The point: every
+profile test runs against structures a real tool actually produced (categoricals, color palettes,
+`rank_genes_groups` from t-test/wilcoxon/logreg/pairwise, PCA variance, graphs), so we test reality.
+"""
+import os
+import warnings
+
+TESTDATA = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "testdata"))
+
+
+def _sc():
+    warnings.filterwarnings("ignore")
+    import scanpy as sc
+    os.makedirs(TESTDATA, exist_ok=True)
+    sc.settings.datasetdir = TESTDATA
+    sc.settings.verbosity = 0
+    return sc
+
+
+def pbmc68k_reduced():
+    """700x765 real PBMC, fully processed: obs categoricals (bulk_labels/phase/louvain), `*_colors`,
+    `uns['pca']`, a real one-vs-rest `rank_genes_groups` (method=logreg -> names+scores only), and the
+    `neighbors` OverloadedDict. Downloads ~ a few MB; cached."""
+    try:
+        return _sc().datasets.pbmc68k_reduced()
+    except Exception as e:                     # pragma: no cover - only on a genuine fetch failure
+        print("  [corpus] pbmc68k_reduced unavailable:", e)
+        return None
+
+
+def pbmc3k_processed():
+    """2638x1838 real PBMC, fully processed (louvain, `*_colors`, pca, neighbors, tsne/umap). ~23 MB."""
+    try:
+        return _sc().datasets.pbmc3k_processed()
+    except Exception as e:                     # pragma: no cover
+        print("  [corpus] pbmc3k_processed unavailable:", e)
+        return None
+
+
+def pbmc3k_with_de(method="t-test", reference="rest", groupby="louvain"):
+    """pbmc3k_processed with a **real** `rank_genes_groups` computed by the real scanpy pipeline --
+    method in {t-test, wilcoxon, logreg, ...}; `reference="rest"` (one-vs-rest) or a group name
+    (pairwise). t-test/wilcoxon yield the full names/scores/logfoldchanges/pvals/pvals_adj bundle."""
+    sc = _sc()
+    a = pbmc3k_processed()
+    if a is None:
+        return None
+    a = a.copy()
+    try:
+        sc.tl.rank_genes_groups(a, groupby, method=method, reference=reference)
+    except Exception as e:                     # pragma: no cover
+        print("  [corpus] rank_genes_groups(%s,%s) failed:" % (method, reference), e)
+        return None
+    return a
+
+
+# A real, realistically-sized atlas (Tabula Muris Senis droplet, Marrow; official annotations).
+# Local-only (1.2 GB); used for a realistic-size smoke when present, else noted.
+MARROW = "/home/pkharchenko/cacoa/age/tab.muris/" \
+         "tabula-muris-senis-droplet-processed-official-annotations-Marrow.h5ad"
+
+
+def marrow_backed():
+    """The real Marrow atlas (40220x20138) opened backed, or None if not on this machine."""
+    import anndata as ad
+    if not os.path.exists(MARROW):
+        return None
+    try:
+        return ad.read_h5ad(MARROW, backed="r")
+    except Exception as e:                     # pragma: no cover
+        print("  [corpus] Marrow unavailable:", e)
+        return None
