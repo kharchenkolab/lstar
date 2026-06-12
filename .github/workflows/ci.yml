@@ -17,7 +17,7 @@ jobs:
         run: cmake -S core -B core/build -DCMAKE_BUILD_TYPE=Release && cmake --build core/build -j2
       - name: python tests + Python<->C++ cross-impl
         run: |
-          for t in test_roundtrip test_anndata_profile test_crossimpl test_validate test_versions test_lazy test_stream_write test_categorical test_induce test_nullable test_aux test_de; do
+          for t in test_roundtrip test_anndata_profile test_crossimpl test_validate test_versions test_lazy test_stream_write test_categorical test_induce test_nullable test_aux test_de test_tier1_promote; do
             echo "== $t =="; PYTHONPATH=python/src python3 python/tests/$t.py
           done
       - name: chunked+gzip cross-impl (Python -> C++ -> Python) + transpose
@@ -52,6 +52,8 @@ jobs:
         run: bash conformance/de.sh
       - name: cross-format conformance (AnnData <-> Seurat <-> SCE via L*)
         run: bash conformance/cross_format.sh
+      - name: Seurat Tier-1 extras (DimReduc stdev -> measure; active Idents captured + restored)
+        run: bash conformance/seurat_extras.sh
       - name: collection conformance (collection of samples R -> L* -> Python)
         run: bash conformance/collection.sh
       - name: blocked-reader conformance (R/C++ bounded col stats == full read)

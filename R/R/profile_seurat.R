@@ -111,17 +111,25 @@ write_seurat <- function(ds) {
       key <- .dimreduc_key(nm)
       colnames(emb) <- paste0(key, seq_len(ncol(emb)))
       load_nm <- paste0(coord, "_loadings")
+      sd_nm <- paste0(coord, "_stdev")
+      sdv <- if (!is.null(ds$fields[[sd_nm]])) as.numeric(ds$fields[[sd_nm]]$values) else numeric(0)
       if (!is.null(ds$fields[[load_nm]])) {
         L <- as.matrix(ds$fields[[load_nm]]$values)
         rownames(L) <- genes
         colnames(L) <- colnames(emb)
         dr <- SeuratObject::CreateDimReducObject(embeddings = emb, loadings = L,
-                                                 key = key, assay = "RNA")
+                                                 key = key, assay = "RNA", stdev = sdv)
       } else {
-        dr <- SeuratObject::CreateDimReducObject(embeddings = emb, key = key, assay = "RNA")
+        dr <- SeuratObject::CreateDimReducObject(embeddings = emb, key = key, assay = "RNA", stdev = sdv)
       }
       so[[nm]] <- dr
     }
+  }
+
+  if (!is.null(ds$fields[["ident"]])) {            # restore the active identity (Idents)
+    iv <- ds$fields[["ident"]]$values
+    if (!is.factor(iv)) iv <- as.factor(iv)
+    SeuratObject::Idents(so) <- stats::setNames(iv, cells)
   }
   so
 }
@@ -206,9 +214,23 @@ read_seurat <- function(so, assay = SeuratObject::DefaultAssay(so)) {
     emb <- SeuratObject::Embeddings(dr)
     ds$axes[[rn]] <- list(labels = colnames(emb), origin = "derived", role = "coordinate")
     add(rn, unname(as.matrix(emb)), "embedding", c("cells", rn))
+    sd <- tryCatch(SeuratObject::Stdev(dr), error = function(e) numeric(0))   # per-dim stdev -> measure
+    if (length(sd) == ncol(emb)) add(paste0(rn, "_stdev"), as.numeric(sd), "measure", rn)
     ld <- SeuratObject::Loadings(dr)
     if (length(ld) > 0 && nrow(ld) > 0)
       add(paste0(rn, "_loadings"), unname(as.matrix(ld)), "loading", c("genes", rn))
+  }
+
+  # active identity (Idents): the active-vs-stored distinction is otherwise lost. Capture it as a
+  # categorical 'ident' field (inducing its factor axis) flagged `active_ident`; restored on write.
+  id <- tryCatch(SeuratObject::Idents(so), error = function(e) NULL)
+  if (!is.null(id) && length(id) == length(cells)) {
+    idf <- droplevels(as.factor(id))
+    ds$fields[["ident"]] <- list(role = "label", span = "cells", state = "", subtype = "active_ident",
+                                 encoding = "categorical", values = idf)
+    if (is.null(ds$axes[["ident"]]))
+      ds$axes[["ident"]] <- list(labels = levels(idf), origin = "derived", role = "factor",
+                                 induced_by = "ident")
   }
 
   class(ds) <- "lstar_dataset"

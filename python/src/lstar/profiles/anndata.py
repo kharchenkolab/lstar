@@ -271,11 +271,69 @@ def read_anndata(adata, kind="sample"):
     # uns: preserved *verbatim* via lossless passthrough (params, colors, dendrograms, DE tables, ...)
     # rather than recorded name-only -- the `aux/` subtree round-trips it and a reader can later promote
     # recognized structures out of the tail. lstar-internal markers (e.g. lstar/state) are excluded.
-    uns = {k: v for k, v in adata.uns.items() if not str(k).startswith("lstar/")}
+    import copy
+    # deep-copy so promotion/typing (which pop from nested dicts like uns['pca']) never mutate the
+    # caller's AnnData; uns is small relative to the matrices, so the copy is cheap.
+    uns = copy.deepcopy({k: v for k, v in adata.uns.items() if not str(k).startswith("lstar/")})
     if uns:
         ds.aux["anndata.uns"] = uns
     _read_rank_genes_groups(adata, ds)              # type one-vs-rest DE; leave pairwise in passthrough
+    _read_uns_promotions(adata, ds)                 # promote color palettes + PCA variance out of the tail
     return ds
+
+
+# Subtypes of fields that are regenerated into `uns` on write (so they aren't routed as ordinary fields).
+_TYPED_UNS_SUBTYPES = {"de", "color", "pca_var"}
+
+
+def _read_uns_promotions(adata, ds):
+    """Promote recognized structures out of the lossless passthrough into typed fields **bound to their
+    axes** -- the payoff of capturing `uns` verbatim first, then typing incrementally:
+
+    - **color palettes** `uns['<key>_colors']` -> a `<key>_colors` label field over the factor axis
+      `<key>` (one color per category, in category order; reordering the factor re-permutes the palette);
+    - **PCA variance** `uns['pca']['variance'|'variance_ratio']` -> a measure over the `pca` coordinate
+      axis (the same axis as the `X_pca` scores / `PCs` loadings).
+
+    Promoted entries are removed from the passthrough so they aren't double-stored; everything else stays
+    in the tail."""
+    uns = (getattr(ds, "aux", None) or {}).get("anndata.uns")
+    if not uns:
+        return
+    for key in [k for k in list(uns) if str(k).endswith("_colors")]:
+        base = str(key)[:-len("_colors")]
+        ax = ds.axes.get(base)
+        if ax is not None and ax.role == "factor":
+            colors = np.asarray(uns[key], dtype=str)
+            if colors.ndim == 1 and colors.shape[0] == len(ax):
+                ds.add_field(str(key), colors, role="label", span=[base], subtype="color",
+                             provenance={"anndata": "uns/%s" % key})
+                uns.pop(key, None)
+    pca = uns.get("pca")
+    if isinstance(pca, dict) and "pca" in ds.axes:
+        n = len(ds.axes["pca"])
+        for src, fld in (("variance", "pca_variance"), ("variance_ratio", "pca_variance_ratio")):
+            v = pca.get(src)
+            if v is not None and np.asarray(v).ndim == 1 and np.asarray(v).shape[0] == n:
+                ds.add_field(fld, np.asarray(v, dtype=float), role="measure", span=["pca"],
+                             subtype="pca_var", provenance={"anndata": "uns/pca/%s" % src})
+                pca.pop(src, None)
+        if not pca:
+            uns.pop("pca", None)
+
+
+def _write_uns_promotions(adata, ds):
+    """Regenerate the promoted `uns` structures (color palettes, PCA variance) from their typed fields."""
+    for name, f in ds.fields.items():
+        if f.subtype == "color":
+            adata.uns[str(name)] = np.asarray(f.values, dtype=str)
+        elif f.subtype == "pca_var":
+            src = str((f.provenance or {}).get("anndata", "")).rsplit("/", 1)[-1] or str(name)
+            pca = adata.uns.get("pca")
+            if not isinstance(pca, dict):
+                pca = {}
+                adata.uns["pca"] = pca
+            pca[src] = np.asarray(f.values, dtype=float)
 
 
 def _read_rank_genes_groups(adata, ds):
@@ -395,8 +453,8 @@ def _route_fields(ds):
     r = {"X": None, "raw": None, "layers": {}, "obs": {}, "var": {},
          "obsm": {}, "varm": {}, "obsp": {}, "varp": {}, "dropped": []}
     for name, f in ds.fields.items():
-        if f.subtype == "de" or (f.provenance or {}).get("anndata") == "uns/rank_genes_groups":
-            continue                            # DE bundle -> regenerated into uns, not routed as a field
+        if f.subtype in _TYPED_UNS_SUBTYPES or (f.provenance or {}).get("anndata") == "uns/rank_genes_groups":
+            continue                            # DE / colors / pca-var -> regenerated into uns, not routed
         loc = (f.provenance or {}).get("anndata") or _vocab_location(ds, name, f)
         if loc == "X":
             r["X"] = f
@@ -448,8 +506,9 @@ def write_anndata(ds):
         rg = np.asarray(ds.axis(raw_field.span[1]).labels, dtype=str)
         raw_var = pd.DataFrame(index=rg)
         adata.raw = ad.AnnData(X=raw_field.values, obs=pd.DataFrame(index=cells), var=raw_var)
-    _restore_uns(adata, ds)                         # reproduce the passthrough uns (params/colors/...)
+    _restore_uns(adata, ds)                         # reproduce the passthrough uns (the untyped tail)
     _write_rank_genes_groups(adata, ds)             # regenerate the typed DE bundle into uns
+    _write_uns_promotions(adata, ds)                # regenerate promoted colors + PCA variance into uns
     if dropped:
         adata.uns["lstar/dropped"] = list(dropped)
     return adata
@@ -607,6 +666,7 @@ def write_anndata_streamed(ds, path, chunk_elems=None):
                                    obs=pd.DataFrame(index=cells), var=pd.DataFrame(index=rg))
     _restore_uns(adata, ds)                 # reproduce the passthrough uns
     _write_rank_genes_groups(adata, ds)     # regenerate the typed DE bundle into uns
+    _write_uns_promotions(adata, ds)        # regenerate promoted colors + PCA variance into uns
     if r["dropped"]:
         adata.uns["lstar/dropped"] = list(r["dropped"])
 

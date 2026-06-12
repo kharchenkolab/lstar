@@ -20,7 +20,7 @@ R CMD INSTALL --preclean --no-multiarch --library="$RLIB" R >/tmp/lstar_rinstall
   && pass "R package install" || { echo "  FAIL R install"; tail -15 /tmp/lstar_rinstall.log; exit 1; }
 
 echo "== Python tests =="
-for t in test_roundtrip test_anndata_profile test_crossimpl test_validate test_versions test_lazy test_stream_write test_categorical test_induce test_nullable test_aux test_de; do
+for t in test_roundtrip test_anndata_profile test_crossimpl test_validate test_versions test_lazy test_stream_write test_categorical test_induce test_nullable test_aux test_de test_tier1_promote; do
   if PYTHONPATH=python/src python3 python/tests/$t.py >/tmp/lstar_$t.log 2>&1; then pass "$t"
   else echo "  FAIL  $t"; tail -15 /tmp/lstar_$t.log; exit 1; fi
 done
@@ -48,6 +48,10 @@ bash conformance/de.sh >/tmp/lstar_de.log 2>&1 \
 echo "== cross-format conformance (R: Seurat + SCE) =="
 bash conformance/cross_format.sh >/tmp/lstar_cf.log 2>&1 \
   && pass "AnnData<->Seurat<->SCE via L*" || { echo "  FAIL cross-format"; tail -15 /tmp/lstar_cf.log; exit 1; }
+
+echo "== Seurat Tier-1 extras (DimReduc stdev -> measure; active Idents captured + restored) =="
+bash conformance/seurat_extras.sh >/tmp/lstar_se.log 2>&1 \
+  && pass "Seurat stdev + active Idents round-trip" || { echo "  FAIL seurat_extras"; tail -15 /tmp/lstar_se.log; exit 1; }
 
 echo "== collection conformance (R collection -> L* -> Python) =="
 bash conformance/collection.sh >/tmp/lstar_coll.log 2>&1 \
