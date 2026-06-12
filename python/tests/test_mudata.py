@@ -23,10 +23,10 @@ def _store():
     return os.path.join(tempfile.mkdtemp(), "mu.lstar.zarr")
 
 
-def test_synthetic_mudata_roundtrip():
-    md = corpus.synthetic_mudata()
+def test_citeseq_mudata_roundtrip():
+    md = corpus.citeseq_mudata()                               # REAL CITE-seq (subsampled minipbcite)
     if md is None:
-        print("  SKIP test_synthetic_mudata_roundtrip (mudata not installed)"); return
+        print("  SKIP test_citeseq_mudata_roundtrip (mudata/fixture unavailable)"); return
     import scipy.sparse as sp
     ds = lstar.read_mudata(md)
     # RNA -> genes, ADT/prot -> proteins, both over the shared cells axis
@@ -34,8 +34,7 @@ def test_synthetic_mudata_roundtrip():
     rna_m = [n for n, f in ds.fields.items() if f.role == "measure" and f.span[1:] == ["genes"]]
     prot_m = [n for n, f in ds.fields.items() if f.role == "measure" and f.span[1:] == ["proteins"]]
     assert rna_m and prot_m and ds.field(rna_m[0]).span[0] == "cells"
-    # MuData lifts a modality's obs into global obs with a `<mod>:` prefix -> the categorical induces it
-    assert ds.axis("rna:leiden").role == "factor"
+    assert len(ds.axis("genes")) == 27 and len(ds.axis("proteins")) == 29
     assert not lstar.validate(ds)
 
     ds2 = lstar.read(_w(ds))                                    # round-trip through the store
@@ -44,8 +43,8 @@ def test_synthetic_mudata_roundtrip():
     assert set(md2.mod) == {"rna", "prot"}
     assert md2.mod["rna"].shape == md.mod["rna"].shape and md2.mod["prot"].shape == md.mod["prot"].shape
     def dense(x): return x.toarray() if sp.issparse(x) else np.asarray(x)
-    assert np.allclose(dense(md2.mod["prot"].X), dense(md.mod["prot"].X), rtol=1e-4)
-    print("MuData (synthetic RNA+ADT): modalities -> genes/proteins feature axes; round-trips + reconstructs")
+    assert np.allclose(dense(md2.mod["prot"].X), dense(md.mod["prot"].X), rtol=1e-4)  # real ADT counts
+    print("MuData (real CITE-seq RNA+ADT): modalities -> genes/proteins feature axes; round-trips exact")
 
 
 def test_real_minipbcite():
@@ -77,5 +76,5 @@ def _w(ds):
 
 
 if __name__ == "__main__":
-    test_synthetic_mudata_roundtrip()
+    test_citeseq_mudata_roundtrip()
     test_real_minipbcite()

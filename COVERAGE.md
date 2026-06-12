@@ -11,8 +11,12 @@ corpus) and `conformance/{seurat,sce}_versions.sh` + `real_corpus_r.sh` (R corpu
 | corpus | real examples | synthetic fixtures |
 |---|---|---|
 | AnnData (.h5ad) | **4** (pbmc68k_reduced, pbmc3k_processed, TMS-Marrow[local], pancreas-velocity) + micropatterns[local] | DE/nullable derived from real values |
-| MuData (.h5mu) | **1** (minipbcite CITE-seq) | 1 (RNA+ADT) |
-| Seurat | **2** (pbmc3k.final v4, cbmc CITE-seq)[local] | **5** (v3, v5, v5-split, SCT, RNA+ADT) |
+| MuData (.h5mu) | **2** (minipbcite CITE-seq[download]; citeseq fixture[committed]) | 0 |
+| Seurat | **3** (pbmc3k.final v4[local], cbmc CITE-seq[local], citeseq fixture[committed]) | **4** (v3, v5, v5-split, SCT) |
+
+> **Shared real CITE-seq fixture** (`python/tests/fixtures/citeseq/*.mtx`, 80 cells × 27 genes + 29
+> proteins, subsampled from real minipbcite, ~27 KB) — drives **both** the MuData and Seurat RNA+ADT
+> multimodal tests on the *same real* data. RNA+ADT is abundant; nothing here is simulated.
 | SingleCellExperiment | **1** (ZeiselBrain)[local] | **4** (counts, +reducedDims, +altExps, +factors/metadata) |
 | Conos / pagoda2 | 0 | 2 (mock collection, mock pagoda2) |
 

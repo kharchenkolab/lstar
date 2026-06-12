@@ -78,25 +78,38 @@ def marrow_backed():
         return None
 
 
-def synthetic_mudata():
-    """A small constructed real-CLASS MuData (RNA + ADT, CITE-seq shape) -- deterministic, no download,
-    so the multimodal path is always covered where `mudata` is installed. Returns None if mudata absent."""
+CITESEQ = os.path.join(FIXTURES, "citeseq")
+
+
+def citeseq_matrices():
+    """The committed **real** CITE-seq fixture (80 cells × 27 genes + 29 proteins, subsampled from the
+    real minipbcite dataset) as language-agnostic Matrix-Market -- so the MuData (Python) and Seurat (R)
+    multimodal tests run on the *same real* RNA+ADT data, not a simulation. Returns
+    (rna, adt, cells, genes, proteins) or None if the fixture is absent."""
+    import scipy.io as sio
+    if not os.path.exists(os.path.join(CITESEQ, "rna.mtx")):
+        return None
+    rd = lambda f: open(os.path.join(CITESEQ, f)).read().split()
+    rna = sio.mmread(os.path.join(CITESEQ, "rna.mtx")).tocsr().astype("float32")
+    adt = sio.mmread(os.path.join(CITESEQ, "adt.mtx")).tocsr().astype("float32")
+    return rna, adt, rd("cells.txt"), rd("genes.txt"), rd("proteins.txt")
+
+
+def citeseq_mudata():
+    """The real CITE-seq fixture as a MuData (RNA + ADT). None if mudata/fixture absent."""
     try:
         import anndata as ad
         import mudata
-        import numpy as np
         import pandas as pd
-        import scipy.sparse as sp
     except Exception:
         return None
-    rng = np.random.default_rng(0); n = 50
-    cells = [f"c{i}" for i in range(n)]
-    rna = ad.AnnData(sp.csr_matrix(rng.poisson(0.5, (n, 20)).astype("float32")),
-                     obs=pd.DataFrame({"leiden": pd.Categorical([str(i % 3) for i in range(n)])}, index=cells),
-                     var=pd.DataFrame(index=[f"g{j}" for j in range(20)]))
-    adt = ad.AnnData(sp.csr_matrix(rng.poisson(5, (n, 8)).astype("float32")),
-                     obs=pd.DataFrame(index=cells), var=pd.DataFrame(index=[f"ADT{j}" for j in range(8)]))
-    return mudata.MuData({"rna": rna, "prot": adt})
+    got = citeseq_matrices()
+    if got is None:
+        return None
+    rna, adt, cells, genes, prots = got
+    arna = ad.AnnData(rna, obs=pd.DataFrame(index=cells), var=pd.DataFrame(index=genes))
+    aadt = ad.AnnData(adt, obs=pd.DataFrame(index=cells), var=pd.DataFrame(index=prots))
+    return mudata.MuData({"rna": arna, "prot": aadt})
 
 
 def minipbcite():

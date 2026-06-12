@@ -41,13 +41,19 @@ sct <- tryCatch(suppressWarnings(suppressMessages(SCTransform(CreateSeuratObject
 if (!is.null(sct)) stores <- c(stores, rt("SCTAssay", sct, function(ds, so2) length(ds$fields) >= 3)) else
   cat("  [R] SCTAssay               SKIP (SCTransform unavailable)\n")
 
-adt <- matrix(rpois(8*nc, 10), 8, nc, dimnames = list(paste0("ADT",1:8), colnames(m)))
-mm <- CreateSeuratObject(m); mm[["ADT"]] <- CreateAssay5Object(counts = adt)
-stores <- c(stores, rt("multimodal RNA+ADT", mm, function(ds, so2)   # ADT captured as a 2nd feature space
+# multimodal: REAL CITE-seq (the same fixture the MuData test uses -- subsampled from minipbcite), so
+# RNA+ADT is grounded in real data, not a simulation. Matrix-Market is cells x features -> t() for Seurat.
+cdir <- "'"$ROOT"'/python/tests/fixtures/citeseq"
+crna <- Matrix::t(Matrix::readMM(file.path(cdir, "rna.mtx"))); cadt <- Matrix::t(Matrix::readMM(file.path(cdir, "adt.mtx")))
+ccells <- readLines(file.path(cdir, "cells.txt"))
+dimnames(crna) <- list(readLines(file.path(cdir, "genes.txt")), ccells)
+dimnames(cadt) <- list(readLines(file.path(cdir, "proteins.txt")), ccells)
+mm <- CreateSeuratObject(as(crna, "CsparseMatrix")); mm[["ADT"]] <- CreateAssay5Object(counts = as(cadt, "CsparseMatrix"))
+stores <- c(stores, rt("multimodal RNA+ADT (real)", mm, function(ds, so2)  # ADT captured as 2nd feature space
   "ADT" %in% names(ds$axes) && identical(ds$axes$ADT$role, "feature") &&
   identical(as.character(ds$fields[["ADT.counts"]]$span), c("cells","ADT")) &&
-  setequal(Assays(so2), c("RNA","ADT")) &&
-  isTRUE(all.equal(as.matrix(LayerData(so2[["ADT"]],"counts")), adt, check.attributes = FALSE))))
+  setequal(Assays(so2), c("RNA","ADT")) && nrow(so2[["ADT"]]) == 29 &&
+  isTRUE(all.equal(as.matrix(LayerData(so2[["ADT"]],"counts")), as.matrix(cadt), check.attributes = FALSE))))
 cat(paste(stores, collapse="\n"), "\n", file = "/tmp/sv_stores.txt")
 ' 2>&1 | grep -E "^  \[R\]"
 
