@@ -54,6 +54,21 @@ def _guess_subtype(key):
     return None
 
 
+def _uniq(ds, name, axis):
+    """A field name unique within `ds`. AnnData allows the *same* column name in `obs` and `var` (e.g.
+    `n_counts`) -- but L* fields share one namespace, so the second would clobber the first (silent data
+    loss). On a clash, disambiguate by the axis (`n_counts` over cells, `n_counts.genes` over genes); the
+    field's `provenance` still records the true native location, so write-back routes it correctly."""
+    if name not in ds.fields:
+        return name
+    cand = "%s.%s" % (name, axis)
+    i = 1
+    while cand in ds.fields:
+        i += 1
+        cand = "%s.%s%d" % (name, axis, i)
+    return cand
+
+
 def _by_dtype_series(s):
     """An obs/var column -> (values, role, mask). pandas **nullable extension** dtypes (Int64/boolean/
     string) carry a validity mask so integer-ness and the value-vs-missing distinction survive -- the
@@ -234,16 +249,16 @@ def read_anndata(adata, kind="sample"):
 
     for k in list(adata.layers.keys()):
         lk = _backed_sparse(fn, "layers/%s" % k) or adata.layers[k]
-        ds.add_field(k, lk, role="measure", span=["cells", "genes"],
+        ds.add_field(_uniq(ds, str(k), "layer"), lk, role="measure", span=["cells", "genes"],
                      state=_guess_state(k), provenance={"anndata": "layers/%s" % k})
 
     for col in adata.obs.columns:
         vals, role, mask = _by_dtype_series(adata.obs[col])
-        ds.add_field(str(col), vals, role=role, span=["cells"], mask=mask,
+        ds.add_field(_uniq(ds, str(col), "cells"), vals, role=role, span=["cells"], mask=mask,
                      provenance={"anndata": "obs/%s" % col})
     for col in adata.var.columns:
         vals, role, mask = _by_dtype_series(adata.var[col])
-        ds.add_field(str(col), vals, role=role, span=["genes"], mask=mask,
+        ds.add_field(_uniq(ds, str(col), "genes"), vals, role=role, span=["genes"], mask=mask,
                      provenance={"anndata": "var/%s" % col})
 
     for k in list(adata.obsm.keys()):

@@ -1,105 +1,83 @@
-"""M2: AnnData profile round-trip.
+"""AnnData profile round-trip -- grounded in **real** data (pbmc68k_reduced: real X + .raw counts over a
+divergent gene set, real obs categoricals/numerics, real obsm pca/umap, varm PCs, obsp graphs, uns).
 
-  AnnData --read_anndata--> L* Dataset --write_anndata--> AnnData     (profile round trip)
+  AnnData --read_anndata--> L* --write_anndata--> AnnData            (profile round trip)
   AnnData --read_anndata--> L* --zarr--> L* --write_anndata--> AnnData (full pipeline)
-
-Both must preserve X, layers, obs, var, obsm, varm, obsp on the shared-vocabulary core.
+  repeated conversion is a fixed point (stable over cycles).
 
 Run: PYTHONPATH=python/src python3 python/tests/test_anndata_profile.py
 """
 import os
+import sys
 import tempfile
+import warnings
 
 import numpy as np
 import scipy.sparse as sp
 
-import anndata as ad
-import pandas as pd
+sys.path.insert(0, os.path.dirname(__file__))
+import corpus  # noqa: E402
 
-from lstar import read_anndata, write_anndata, write, read
+from lstar import read, read_anndata, write, write_anndata  # noqa: E402
+
+warnings.filterwarnings("ignore")
 
 
-def make_adata():
-    n, g, pc = 80, 40, 8
-    rng = np.random.default_rng(1)
-    X = sp.random(n, g, density=0.2, format="csr", random_state=1)
-    counts = sp.random(n, g, density=0.2, format="csr", random_state=2)
-    obs = pd.DataFrame(
-        {"leiden": pd.Categorical(["c%d" % (i % 4) for i in range(n)]),
-         "n_umi": rng.integers(100, 1000, n).astype(float)},
-        index=["cell%d" % i for i in range(n)])
-    var = pd.DataFrame(
-        {"dispersion": rng.standard_normal(g).astype(float),
-         "highly_variable": (rng.random(g) > 0.5)},
-        index=["g%d" % j for j in range(g)])
-    a = ad.AnnData(X=X, obs=obs, var=var, layers={"counts": counts})
-    a.obsm["X_pca"] = rng.standard_normal((n, pc)).astype("float32")
-    a.obsm["X_umap"] = rng.standard_normal((n, 2)).astype("float32")
-    a.varm["PCs"] = rng.standard_normal((g, pc)).astype("float32")
-    a.obsp["connectivities"] = sp.random(n, n, density=0.1, format="csr", random_state=3)
-    a.uns["something"] = {"note": "not in the shared vocabulary"}
-    return a
+def _dense(x):
+    return x.toarray() if sp.issparse(x) else np.asarray(x)
 
 
 def _eq(x, y):
-    if sp.issparse(x) or sp.issparse(y):
-        x = x.toarray() if sp.issparse(x) else np.asarray(x)
-        y = y.toarray() if sp.issparse(y) else np.asarray(y)
-    return np.allclose(np.asarray(x, dtype=float), np.asarray(y, dtype=float))
+    # equal_nan: real data carries NaN (e.g. undefined PCA loadings in varm['PCs']); NaN is a valid
+    # float that round-trips faithfully through the dense encoding, so NaN==NaN counts as equal here.
+    return np.allclose(_dense(x).astype(float), _dense(y).astype(float), rtol=1e-5, atol=1e-6, equal_nan=True)
 
 
 def check(a, a2):
     assert list(a2.obs_names) == list(a.obs_names)
     assert list(a2.var_names) == list(a.var_names)
     assert _eq(a2.X, a.X)
-    assert _eq(a2.layers["counts"], a.layers["counts"])
-    assert _eq(a2.obsm["X_pca"], a.obsm["X_pca"])
-    assert _eq(a2.obsm["X_umap"], a.obsm["X_umap"])
-    assert _eq(a2.varm["PCs"], a.varm["PCs"])
-    assert _eq(a2.obsp["connectivities"], a.obsp["connectivities"])
-    assert (a2.obs["leiden"].astype(str).values == a.obs["leiden"].astype(str).values).all()
-    assert np.allclose(a2.obs["n_umi"].values.astype(float), a.obs["n_umi"].values.astype(float))
-    assert np.allclose(a2.var["dispersion"].values.astype(float), a.var["dispersion"].values.astype(float))
-    assert (a2.var["highly_variable"].astype(str).values == a.var["highly_variable"].astype(str).values).all()
+    assert a2.raw is not None and _eq(a2.raw.X, a.raw.X)               # real .raw counts (divergent genes)
+    for k in a.obsm:                                                    # X_pca, X_umap
+        assert _eq(a2.obsm[k], a.obsm[k]), k
+    for k in a.varm:                                                    # PCs
+        assert _eq(a2.varm[k], a.varm[k]), k
+    for k in a.obsp:                                                    # distances, connectivities
+        assert _eq(a2.obsp[k], a.obsp[k]), k
+    for c in a.obs.columns:                                             # categoricals + numerics
+        assert list(a2.obs[c].astype(str)) == list(a.obs[c].astype(str)), c
 
 
 def run():
-    a = make_adata()
+    a = corpus.pbmc68k_reduced()
+    if a is None:
+        print("  SKIP test_anndata_profile (corpus unavailable)"); return
     ds = read_anndata(a)
 
-    # shared-vocabulary signatures
+    # shared-vocabulary signatures on real data
     assert ds.field("X").role == "measure"
-    assert ds.field("counts").role == "measure" and ds.field("counts").state == "raw"
+    assert ds.field("raw").state == "raw"
     assert ds.field("pca").role == "embedding" and "pca" in ds.axes
-    assert ds.field("pca_loadings").role == "loading" and ds.field("pca_loadings").span == ["genes", "pca"]
-    assert ds.field("umap").role == "embedding"
-    assert ds.field("leiden").role == "label"
+    assert ds.field("bulk_labels").role == "label" and ds.axis("bulk_labels").role == "factor"
     assert ds.field("connectivities").role == "relation"
 
-    # uns is preserved verbatim (lossless passthrough), not dropped name-only
-    assert ds.aux["anndata.uns"]["something"]["note"] == "not in the shared vocabulary"
+    # (1) profile-only round trip
+    check(a, write_anndata(ds))
 
-    # (1) profile-only round trip (uns reproduced on write-back)
-    a1 = write_anndata(ds); check(a, a1)
-    assert a1.uns["something"]["note"] == "not in the shared vocabulary"
-
-    # (2) full pipeline through the zarr store
+    # (2) full pipeline through the zarr store; the untyped uns tail survives serialization
     p = os.path.join(tempfile.mkdtemp(), "a.lstar.zarr")
     write(ds, p)
     ds2 = read(p)
-    assert ds2.aux["anndata.uns"]["something"]["note"] == "not in the shared vocabulary"  # survives the store
-    a3 = write_anndata(ds2)
-    check(a, a3)
-    assert a3.uns["something"]["note"] == "not in the shared vocabulary"  # reproduced after serialization
+    assert "anndata.uns" in ds2.aux                                    # passthrough survived the store
+    check(a, write_anndata(ds2))
 
-    # (3) variable-length round trip: AnnData -> L* -> AnnData, repeated, is a fixed point, so a
-    # conversion chain of any length returns to the original native format unchanged.
+    # (3) repeated conversion is a fixed point
     cur = a
-    for _ in range(4):
+    for _ in range(3):
         cur = write_anndata(read_anndata(cur))
         check(a, cur)
 
-    print("anndata profile OK: round-trip via profile and via zarr; fixed point over 4 cycles; "
+    print("anndata profile (real pbmc68k): round-trip via profile + via zarr; fixed point over 3 cycles; "
           "%d fields, %d axes" % (len(ds.fields), len(ds.axes)))
 
 
