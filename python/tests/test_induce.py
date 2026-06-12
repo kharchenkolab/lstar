@@ -6,12 +6,16 @@ induced axis + `induced_by`, and `validate()`'s drift check.
 Run: PYTHONPATH=python/src python3 python/tests/test_induce.py
 """
 import os
+import sys
 import tempfile
 
 import numpy as np
 
-import lstar
-from lstar import Categorical
+sys.path.insert(0, os.path.dirname(__file__))
+import corpus  # noqa: E402
+
+import lstar  # noqa: E402
+from lstar import Categorical  # noqa: E402
 
 
 def _store():
@@ -98,7 +102,31 @@ def test_validate_catches_induced_axis_drift():
     print("validate catches drift between a factor axis and its inducing field's categories")
 
 
+def test_induction_on_real_categoricals():
+    """Induction on REAL data: pbmc68k_reduced's real categorical obs columns (bulk_labels, phase,
+    louvain) each induce a factor axis whose labels are exactly the real category set, round-tripping."""
+    import warnings; warnings.filterwarnings("ignore")
+    a = corpus.pbmc68k_reduced()
+    if a is None:
+        print("  SKIP test_induction_on_real_categoricals (corpus unavailable)"); return
+    ds = lstar.read_anndata(a)
+    for col in ("bulk_labels", "phase", "louvain"):
+        assert ds.field(col).encoding == "categorical"
+        ax = ds.axis(col)
+        assert ax.role == "factor" and ax.induced_by == col
+        assert list(np.asarray(ax.labels)) == list(a.obs[col].cat.categories.astype(str))
+    assert not lstar.validate(ds)
+    ds2 = lstar.read(_w(ds))
+    assert ds2.axis("louvain").role == "factor" and not lstar.validate(ds2)
+    print("induction (real pbmc68k): bulk_labels/phase/louvain -> factor axes (real category sets); round-trips")
+
+
+def _w(ds):
+    p = os.path.join(tempfile.mkdtemp(), "i.lstar.zarr"); lstar.write(ds, p); return p
+
+
 if __name__ == "__main__":
+    test_induction_on_real_categoricals()
     test_auto_induce_creates_factor_axis()
     test_plain_string_label_does_not_induce()
     test_induced_axis_roundtrips()

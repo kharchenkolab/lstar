@@ -6,11 +6,15 @@ corruption, the same class P1 fixed for categoricals). Float keeps NaN (no mask)
 Run: PYTHONPATH=python/src python3 python/tests/test_nullable.py
 """
 import os
+import sys
 import tempfile
 
 import numpy as np
 
-import lstar
+sys.path.insert(0, os.path.dirname(__file__))
+import corpus  # noqa: E402
+
+import lstar  # noqa: E402
 
 
 def _store():
@@ -43,40 +47,45 @@ def test_validate_catches_bad_mask_length():
 
 
 def test_anndata_nullable_columns():
-    import anndata as ad
+    """Grounded in a REAL dataset (pbmc3k): no public h5ad reliably ships pandas nullable extension
+    dtypes, so -- the documented path -- we derive nullable obs columns from real obs *values* (real
+    n_genes counts, a real QC threshold for missingness) and check the nullable Int64/boolean/string
+    survive read->L*->write type-faithfully."""
+    import warnings; warnings.filterwarnings("ignore")
     import pandas as pd
-    import scipy.sparse as sp
     from lstar import read_anndata, write_anndata, write, read
 
-    n = 6
-    obs = pd.DataFrame({
-        "n_umi":   pd.array([100, None, 300, 400, None, 600], dtype="Int64"),
-        "flagged": pd.array([True, None, False, True, None, False], dtype="boolean"),
-        "donor":   pd.array(["d1", "d2", None, "d1", None, "d3"], dtype="string"),
-        "frac":    pd.array([0.1, 0.2, None, 0.4, 0.5, 0.6], dtype="Float64"),
-    }, index=[f"cell{i}" for i in range(n)])
-    a = ad.AnnData(X=sp.random(n, 4, density=0.3, format="csr", random_state=0), obs=obs)
+    a = corpus.pbmc3k_processed()
+    if a is None:
+        print("  SKIP test_anndata_nullable_columns (corpus unavailable)"); return
+    a = a.copy()
+    ng = np.asarray(a.obs["n_genes"], dtype=float)              # real per-cell gene counts
+    miss = ng < np.percentile(ng, 5)                           # the lowest-QC cells: treat as missing
+    a.obs["n_genes_nullable"] = pd.array(np.where(miss, pd.NA, ng.astype("int64")), dtype="Int64")
+    a.obs["passes_qc"] = pd.array(np.where(miss, pd.NA, ng > np.median(ng)), dtype="boolean")
+    donor = np.asarray(a.obs["louvain"].astype(str))           # real labels, some set missing
+    a.obs["donor"] = pd.array(np.where(miss, pd.NA, donor), dtype="string")
 
     ds = read_anndata(a)
-    # the three nullable columns carry a mask; float keeps NaN (no mask)
-    assert ds.field("n_umi").mask is not None and ds.field("n_umi").values.dtype.kind == "i"
-    assert ds.field("flagged").mask is not None
-    assert ds.field("donor").mask is not None
-    assert ds.field("frac").mask is None
+    assert ds.field("n_genes_nullable").mask is not None and ds.field("n_genes_nullable").values.dtype.kind == "i"
+    assert ds.field("passes_qc").mask is not None and ds.field("donor").mask is not None
+    assert ds.field("percent_mito").mask is None              # a real float column: NaN, no mask
     assert not lstar.validate(ds)
 
-    p = _store(); write(ds, p)
-    a2 = write_anndata(read(p))                              # through the L* store + back to AnnData
-    # nullable dtypes + exact NA positions reconstructed
-    assert str(a2.obs["n_umi"].dtype) == "Int64"
-    assert list(a2.obs["n_umi"].isna()) == list(a.obs["n_umi"].isna())
-    assert list(a2.obs["n_umi"].dropna()) == list(a.obs["n_umi"].dropna())
-    assert str(a2.obs["flagged"].dtype) == "boolean"
-    assert list(a2.obs["flagged"].isna()) == list(a.obs["flagged"].isna())
+    a2 = write_anndata(read(_w(ds)))                           # through the store + back to AnnData
+    assert str(a2.obs["n_genes_nullable"].dtype) == "Int64"
+    assert list(a2.obs["n_genes_nullable"].isna()) == list(a.obs["n_genes_nullable"].isna())
+    assert list(a2.obs["n_genes_nullable"].dropna()) == list(a.obs["n_genes_nullable"].dropna())
+    assert str(a2.obs["passes_qc"].dtype) == "boolean"
+    assert list(a2.obs["passes_qc"].isna()) == list(a.obs["passes_qc"].isna())
     assert str(a2.obs["donor"].dtype) == "string"
     assert list(a2.obs["donor"].isna()) == list(a.obs["donor"].isna())
     assert list(a2.obs["donor"].dropna()) == list(a.obs["donor"].dropna())
-    print("anndata nullable Int64/boolean/string round-trip type-faithful (NA positions + values exact)")
+    print("anndata nullable Int64/boolean/string (real pbmc3k values): round-trip type-faithful")
+
+
+def _w(ds):
+    p = _store(); lstar.write(ds, p); return p
 
 
 if __name__ == "__main__":
