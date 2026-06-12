@@ -3,7 +3,7 @@
 A dataset is a set of Axes (entities you index by) and Fields (typed data over axes).
 See ../../misc/Lstar_proposal.md for the model.
 """
-from .model import Dataset, Axis, Field, OBSERVED, DERIVED
+from .model import Dataset, Axis, Field, Categorical, OBSERVED, DERIVED
 from .zarr_io import read, write
 from .validate import validate
 from .lazy import LazyDense, LazyCSX, stream_col_stats
@@ -12,7 +12,7 @@ from .kernels import col_sum_by_group
 from .profiles.anndata import (read_anndata, write_anndata, convert_anndata,
                                write_anndata_streamed, convert_to_h5ad)
 
-__all__ = ["Dataset", "Axis", "Field", "read", "write", "validate", "OBSERVED", "DERIVED",
+__all__ = ["Dataset", "Axis", "Field", "Categorical", "read", "write", "validate", "OBSERVED", "DERIVED",
            "LazyDense", "LazyCSX", "stream_col_stats", "has_accel", "show_config",
            "col_sum_by_group", "read_anndata", "write_anndata", "convert_anndata",
            "write_anndata_streamed", "convert_to_h5ad"]

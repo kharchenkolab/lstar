@@ -15,7 +15,7 @@ import zarr
 
 from .lazy import is_stream_source as _is_stream_source
 from .lazy import iter_sized_blocks
-from .model import Dataset, Field
+from .model import Dataset, Field, Categorical, _is_categorical, as_categorical
 
 LSTAR = "lstar"
 SPEC_VERSION = "0.1"
@@ -181,6 +181,14 @@ def _write_values(g, fl, meta, compressor, chunk_elems=None):
         _ds(g, "col", m.col, compressor, chunk_elems)
         _ds(g, "weight", m.data, compressor, chunk_elems)
         meta["shape"] = [int(x) for x in m.shape]
+    elif enc == "categorical" or _is_categorical(fl.values):
+        cat = as_categorical(fl.values)                # codes (-1 = missing) + categories + ordered
+        _ds(g, "codes", cat.codes.astype(np.int32), compressor, chunk_elems)
+        if meta.get("categories") is None:             # inline categories (P1); an axis ref (P2) skips this
+            _write_strings(g, "categories", cat.categories, compressor, chunk_elems)
+        meta["encoding"] = "categorical"
+        meta["ordered"] = bool(cat.ordered)
+        meta["shape"] = [int(len(cat))]
     else:
         arr = np.asarray(fl.values)
         if arr.dtype.kind in ("U", "S", "O"):          # string field -> utf8 + offsets
@@ -204,6 +212,9 @@ def _read_values(g, m):
                              shape=tuple(m["shape"]))
     if enc == "utf8":
         return _read_strings(g, "values")
+    if enc == "categorical":
+        cats = _read_strings(g, "categories") if "categories" in g else m.get("_categories")
+        return Categorical(np.asarray(g["codes"]), cats, ordered=bool(m.get("ordered", False)))
     return np.asarray(g["values"])
 
 
@@ -215,7 +226,7 @@ def _lazy_values(g, m):
         return LazyCSX(enc, g["data"], g["indices"], g["indptr"], tuple(m["shape"]))
     if enc == "utf8":                       # labels are small; materialize
         return _read_strings(g, "values")
-    if enc == "coo":                        # rare; materialize
+    if enc in ("coo", "categorical"):       # rare / small; materialize
         return _read_values(g, m)
     return LazyDense(g["values"])
 

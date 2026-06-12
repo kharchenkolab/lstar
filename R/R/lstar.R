@@ -41,6 +41,12 @@ lstar_read <- function(path) {
     }
   } else if (enc == "utf8") {
     f$strings
+  } else if (enc == "categorical") {
+    codes <- as.integer(f$codes)                 # 0-based; -1 = missing
+    iv <- codes + 1L
+    iv[codes < 0] <- NA
+    structure(iv, levels = as.character(f$categories),
+              class = if (isTRUE(f$ordered)) c("ordered", "factor") else "factor")
   } else {
     shp <- as.integer(f$shape)
     if (length(shp) <= 1) f$dense else t(matrix(f$dense, nrow = shp[2], ncol = shp[1]))
@@ -48,7 +54,8 @@ lstar_read <- function(path) {
 }
 
 .infer_encoding <- function(v) {
-  if (is.character(v) || is.factor(v)) "utf8"
+  if (is.factor(v)) "categorical"
+  else if (is.character(v)) "utf8"
   else if (methods::is(v, "RsparseMatrix")) "csr"
   else if (methods::is(v, "sparseMatrix")) "csc"
   else "dense"
@@ -92,6 +99,13 @@ lstar_write <- function(ds, path, chunk_elems = NULL, compression = c("none", "g
       out$shape <- as.integer(dim(m))
     } else if (enc == "utf8") {
       out$strings <- as.character(v)
+    } else if (enc == "categorical") {
+      v <- if (is.factor(v)) v else factor(v)
+      code <- as.integer(v) - 1L                   # R factor: 1-based, NA -> -1, 0-based
+      code[is.na(code)] <- -1L
+      out$codes <- as.integer(code)
+      out$categories <- as.character(levels(v))
+      out$ordered <- is.ordered(v)
     } else {
       if (is.null(dim(v))) {                       # a plain vector -> arity-1 field
         out$dense <- as.numeric(v); out$shape <- as.integer(length(v))

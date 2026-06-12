@@ -20,10 +20,14 @@ R CMD INSTALL --preclean --no-multiarch --library="$RLIB" R >/tmp/lstar_rinstall
   && pass "R package install" || { echo "  FAIL R install"; tail -15 /tmp/lstar_rinstall.log; exit 1; }
 
 echo "== Python tests =="
-for t in test_roundtrip test_anndata_profile test_crossimpl test_validate test_versions test_lazy test_stream_write; do
+for t in test_roundtrip test_anndata_profile test_crossimpl test_validate test_versions test_lazy test_stream_write test_categorical; do
   if PYTHONPATH=python/src python3 python/tests/$t.py >/tmp/lstar_$t.log 2>&1; then pass "$t"
   else echo "  FAIL  $t"; tail -15 /tmp/lstar_$t.log; exit 1; fi
 done
+
+echo "== categorical-encoding conformance (codes/categories/ordered/-1 across Py/C++/R) =="
+bash conformance/categorical.sh >/tmp/lstar_cat.log 2>&1 \
+  && pass "categorical round-trips Py<->C++<->R" || { echo "  FAIL categorical"; tail -15 /tmp/lstar_cat.log; exit 1; }
 
 echo "== cross-format conformance (R: Seurat + SCE) =="
 bash conformance/cross_format.sh >/tmp/lstar_cf.log 2>&1 \

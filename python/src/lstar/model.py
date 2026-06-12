@@ -15,6 +15,51 @@ OBSERVED = "observed"
 DERIVED = "derived"
 
 
+class Categorical:
+    """A categorical / factor value: integer codes into an ordered set of category labels.
+
+    `codes[i] == k` means element i is `categories[k]`; `-1` is **missing**. This is the in-memory form
+    of the `categorical` encoding -- the one mechanism behind dtype-faithful labels (the category set,
+    order, and missingness all survive a round trip) and, via induction, factor axes. `np.asarray(cat)`
+    decodes to label strings (missing -> "").
+    """
+
+    def __init__(self, codes, categories, ordered=False):
+        self.codes = np.asarray(codes).astype(np.int64, copy=False)
+        self.categories = np.asarray(categories, dtype=str)
+        self.ordered = bool(ordered)
+
+    @property
+    def shape(self):
+        return (int(self.codes.shape[0]),)
+
+    def __len__(self):
+        return int(self.codes.shape[0])
+
+    def __array__(self, dtype=None):
+        safe = np.clip(self.codes, 0, max(len(self.categories) - 1, 0))
+        out = np.where(self.codes >= 0, self.categories[safe], "")
+        return out.astype(dtype) if dtype is not None else out
+
+    def __repr__(self):
+        return "Categorical(n=%d, k=%d, ordered=%s)" % (len(self), len(self.categories), self.ordered)
+
+
+def _is_categorical(v):
+    """True for an L* Categorical or a duck-typed pandas.Categorical (.codes/.categories, not ndarray)."""
+    return isinstance(v, Categorical) or (
+        not isinstance(v, np.ndarray) and hasattr(v, "codes") and hasattr(v, "categories"))
+
+
+def as_categorical(v, ordered=None):
+    """Coerce a Categorical / pandas.Categorical into an L* `Categorical` (codes, categories, ordered)."""
+    if isinstance(v, Categorical):
+        return v if ordered is None else Categorical(v.codes, v.categories, ordered)
+    codes = np.asarray(v.codes)                                # pandas.Categorical: -1 is missing
+    cats = np.asarray(v.categories, dtype=str)
+    return Categorical(codes, cats, bool(v.ordered if ordered is None else ordered))
+
+
 @dataclass
 class Axis:
     name: str
@@ -72,6 +117,8 @@ class Dataset:
     def add_field(self, name, values, role=None, span=None, state=None, encoding=None,
                   coverage="full", directed=None, weighted=None, subtype=None,
                   uncertainty=None, provenance=None):
+        if _is_categorical(values):
+            values = as_categorical(values)               # normalize pandas.Categorical -> L* Categorical
         span = self._infer_span(values, span)
         role = role or self._infer_role(values, span)
         encoding = encoding or self._infer_encoding(values)
@@ -104,6 +151,8 @@ class Dataset:
 
     @staticmethod
     def _infer_role(values, span):
+        if _is_categorical(values):
+            return "label"
         if len(span) == 1:
             arr = np.asarray(values)
             return "label" if arr.dtype.kind in ("U", "S", "O") else "measure"
@@ -112,6 +161,8 @@ class Dataset:
     @staticmethod
     def _infer_encoding(values):
         import scipy.sparse as sp
+        if _is_categorical(values):
+            return "categorical"
         if _is_stream_source(values):       # a chunked sparse source (LazyCSX / backed h5ad)
             return values.fmt
         if sp.issparse(values):
@@ -131,6 +182,8 @@ def _is_stream_source(v):
 
 def _shape(values):
     import scipy.sparse as sp
+    if _is_categorical(values):
+        return (len(values),)
     if sp.issparse(values) or _is_stream_source(values):
         return tuple(values.shape)
     return tuple(np.asarray(values).shape)

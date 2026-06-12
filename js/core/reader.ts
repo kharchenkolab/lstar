@@ -80,7 +80,7 @@ export class LstarDataset {
       const lm = (f.attrs as any).lstar ?? {};
       this.fields.set(name, { name, role: lm.role, span: lm.span ?? [], encoding: lm.encoding,
                               state: lm.state ?? undefined, subtype: lm.subtype ?? undefined,
-                              shape: lm.shape });
+                              shape: lm.shape, ordered: lm.ordered } as any);
     }
     return this;
   }
@@ -105,6 +105,14 @@ export class LstarDataset {
     const bytes = (await this._get("fields/" + name + "/values")).data as Uint8Array;
     const offs = (await this._get("fields/" + name + "/values_offsets")).data as any;
     return decodeStrings(bytes, offs);
+  }
+
+  /** A categorical (factor) field: integer codes (-1 = missing) + the category labels + ordered. */
+  async fieldCategorical(name: string): Promise<{ codes: Int32Array; categories: string[]; ordered: boolean }> {
+    const codes = Int32Array.from((await this._get("fields/" + name + "/codes")).data as any);
+    const bytes = (await this._get("fields/" + name + "/categories")).data as Uint8Array;
+    const offs = (await this._get("fields/" + name + "/categories_offsets")).data as any;
+    return { codes, categories: decodeStrings(bytes, offs), ordered: !!(this.fields.get(name) as any)?.ordered };
   }
 
   /** A sparse (csc/csr) field's raw arrays + shape. Reads the whole field. */

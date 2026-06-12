@@ -210,6 +210,11 @@ list lstar_cpp_read(std::string path) {
       fl = writable::list({"role"_nm = f.role, "span"_nm = to_strings(f.span),
                            "encoding"_nm = f.encoding, "state"_nm = f.state, "subtype"_nm = f.subtype,
                            "strings"_nm = to_strings(f.strings)});
+    } else if (f.encoding == "categorical") {
+      fl = writable::list({"role"_nm = f.role, "span"_nm = to_strings(f.span),
+                           "encoding"_nm = f.encoding, "state"_nm = f.state, "subtype"_nm = f.subtype,
+                           "codes"_nm = nd_integers(f.codes), "categories"_nm = to_strings(f.categories),
+                           "ordered"_nm = f.ordered});
     } else {
       fl = writable::list({"role"_nm = f.role, "span"_nm = to_strings(f.span),
                            "encoding"_nm = f.encoding, "state"_nm = f.state, "subtype"_nm = f.subtype,
@@ -275,6 +280,15 @@ void lstar_cpp_write(list ds, std::string path, int chunk_elems = 0,
       fl.indptr  = nd_from_doubles(ptr, {(int64_t)ptr.size()}, "<i4");
     } else if (fl.encoding == "utf8") {
       fl.strings = as_cpp<std::vector<std::string>>(f["strings"]);
+    } else if (fl.encoding == "categorical") {
+      integers codes = f["codes"];                        // 0-based int, -1 = missing
+      fl.codes.dtype = "<i4";
+      fl.codes.shape = {(int64_t)codes.size()};
+      fl.codes.bytes.resize((size_t)codes.size() * 4);
+      { auto p = fl.codes.as<int32_t>(); for (R_xlen_t j = 0; j < codes.size(); ++j) p[j] = codes[j]; }
+      fl.categories = as_cpp<std::vector<std::string>>(f["categories"]);
+      fl.ordered = as_cpp<bool>(f["ordered"]);
+      fl.has_ordered = true;
     } else {
       integers shp = f["shape"];
       std::vector<int64_t> sh;

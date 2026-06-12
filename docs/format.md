@@ -64,7 +64,8 @@ The `lstar.encoding` attribute selects which value arrays a field group holds:
 | `csc` | `data`, `indices`, `indptr` (+ `lstar.shape`) | sparse, **gene-compressed** — color any gene cheaply |
 | `csr` | `data`, `indices`, `indptr` (+ `lstar.shape`) | sparse, **cell-compressed** — fetch a cell's genes cheaply |
 | `coo` / `edge_list` | `row`/`source`, `col`/`target`, `weight` | unordered sparse triples; graphs |
-| `utf8` | `values` (uint8), `values_offsets` (int64) | string / `label` fields |
+| `utf8` | `values` (uint8), `values_offsets` (int64) | string / `label` fields with no category set |
+| `categorical` | `codes` (int, `-1`=missing) + inline `categories` (utf8); `lstar.ordered` | factor/categorical `label` fields — preserves category order + missingness; the substrate for **factor axes** (a label's categories *are* a derived axis) and dictionary-encoded labels |
 | `ragged` | `values`, `offsets` | variable-length `sequence` data *(spec; not yet written)* |
 | `raster` | an OME-NGFF multiscale group | images over `(y, x, channel)` *(spec; not yet written)* |
 | `recipe` | *no value arrays* — `lstar.recipe = {op, inputs:[…], params}` | a **virtual** field computed on read *(spec; not yet written)* |

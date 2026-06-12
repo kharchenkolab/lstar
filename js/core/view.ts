@@ -38,6 +38,10 @@ export class LstarView {
   async metadata(name: string): Promise<Metadata> {
     const meta = this.ds.fields.get(name);
     if (!meta) throw new Error("no field " + name);
+    if (meta.encoding === "categorical") {        // codes + categories are stored directly
+      const { codes, categories } = await this.ds.fieldCategorical(name);
+      return { kind: "categorical", codes, categories };
+    }
     if (meta.encoding === "utf8") {
       const strings = await this.ds.fieldStrings(name);
       const categories: string[] = [];

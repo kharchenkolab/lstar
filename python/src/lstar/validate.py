@@ -11,7 +11,7 @@ import numpy as np
 import scipy.sparse as sp
 
 CORE_ROLES = {"measure", "embedding", "loading", "relation", "label", "sequence",
-              "design", "transform", "vector", "probability", "coordinate"}
+              "design", "transform", "vector", "probability", "coordinate", "factor"}
 CORE_STATES = {None, "", "raw", "lognorm", "scaled", "clr"}
 
 
@@ -37,6 +37,16 @@ def validate(ds, strict=False):
                 shp, exp = tuple(f.values.shape), (axlen[span[0]], axlen[span[1]])
                 if shp != exp:
                     err("field '%s' sparse shape %s != axis lengths %s" % (name, shp, exp))
+        elif enc == "categorical":
+            cat = f.values
+            n = len(cat)
+            if len(span) == 1 and n != axlen[span[0]]:
+                err("field '%s' categorical length %d != axis '%s' length %d"
+                    % (name, n, span[0], axlen[span[0]]))
+            k = len(getattr(cat, "categories", []))
+            codes = np.asarray(getattr(cat, "codes", []))
+            if codes.size and (codes.min() < -1 or codes.max() >= k):
+                err("field '%s' categorical codes out of range [-1, %d)" % (name, k))
         elif enc == "utf8" or (f.role == "label" and len(span) == 1):
             arr = np.asarray(f.values)
             if len(span) == 1 and (arr.ndim != 1 or arr.shape[0] != axlen[span[0]]):

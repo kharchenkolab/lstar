@@ -120,6 +120,9 @@ struct Field {
     std::vector<std::string> strings; // "utf8"
     NdArray data, indices, indptr;    // "csr"/"csc"
     std::vector<int64_t> shape;       // sparse 2-D shape
+    NdArray codes;                    // "categorical": int codes (-1 = missing)
+    std::vector<std::string> categories;  // "categorical": inline category labels
+    bool ordered = false, has_ordered = false;
 };
 
 struct Dataset {
@@ -543,6 +546,11 @@ inline Dataset read(const fs::path& root) {
             f.shape = m["shape"].get<std::vector<int64_t>>();
         } else if (f.encoding == "utf8") {
             f.strings = read_strings(g, "values");
+        } else if (f.encoding == "categorical") {
+            f.codes = read_array(g / "codes");
+            if (fs::exists(g / "categories")) f.categories = read_strings(g, "categories");  // inline
+            f.ordered = m.value("ordered", false);
+            f.has_ordered = true;
         } else {  // dense
             f.dense = read_array(g / "values");
         }
@@ -598,6 +606,10 @@ inline void write(const Dataset& ds, const fs::path& root,
         fl["weighted"] = f.has_weighted ? json(f.weighted) : json(nullptr);
         if (f.encoding == "csr" || f.encoding == "csc") fl["shape"] = f.shape;
         if (f.encoding == "utf8") fl["shape"] = std::vector<int64_t>{(int64_t)f.strings.size()};
+        if (f.encoding == "categorical") {
+            fl["shape"] = std::vector<int64_t>{f.codes.nelem()};
+            fl["ordered"] = f.has_ordered ? json(f.ordered) : json(false);
+        }
         write_group(g, json{{"lstar", fl}});
         if (f.encoding == "csr" || f.encoding == "csc") {
             write_array(g / "data", f.data, chunk_elems, compressor);
@@ -605,6 +617,9 @@ inline void write(const Dataset& ds, const fs::path& root,
             write_array(g / "indptr", f.indptr, chunk_elems, compressor);
         } else if (f.encoding == "utf8") {
             write_strings(g, "values", f.strings, chunk_elems, compressor);
+        } else if (f.encoding == "categorical") {
+            write_array(g / "codes", f.codes, chunk_elems, compressor);
+            write_strings(g, "categories", f.categories, chunk_elems, compressor);  // inline (P1)
         } else {
             write_array(g / "values", f.dense, chunk_elems, compressor);
         }
