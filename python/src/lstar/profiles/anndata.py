@@ -274,7 +274,92 @@ def read_anndata(adata, kind="sample"):
     uns = {k: v for k, v in adata.uns.items() if not str(k).startswith("lstar/")}
     if uns:
         ds.aux["anndata.uns"] = uns
+    _read_rank_genes_groups(adata, ds)              # type one-vs-rest DE; leave pairwise in passthrough
     return ds
+
+
+def _read_rank_genes_groups(adata, ds):
+    """Type a **one-vs-rest** `uns['rank_genes_groups']` into a DE bundle over `(factor, gene-axis)` and
+    remove it from the passthrough (so it isn't stored twice). Pairwise / reference-group results are
+    left in the passthrough verbatim -- the documented asymmetry (only the representable shape is typed).
+    The per-group ranking `names` is *not* stored: it is recoverable by argsort of the scores on write."""
+    from ..de import de_field_name
+    rgg = adata.uns.get("rank_genes_groups")
+    if not isinstance(rgg, dict) or "names" not in rgg:
+        return
+    params = dict(rgg.get("params", {}))
+    if str(params.get("reference", "rest")) != "rest":      # pairwise / ref-group -> passthrough only
+        return
+    factor = str(params.get("groupby", ""))
+    if not factor:
+        return
+    names = rgg["names"]
+    groups = list(names.dtype.names)
+    use_raw = bool(params.get("use_raw", False))
+    gene_axis = "genes_raw" if (use_raw and "genes_raw" in ds.axes) else "genes"
+    glabels = np.asarray(ds.axis(gene_axis).labels, dtype=str)
+    gidx = {g: i for i, g in enumerate(glabels)}
+    if factor in ds.axes and ds.axes[factor].role == "factor":   # reuse the induced clustering axis
+        forder = list(np.asarray(ds.axis(factor).labels, dtype=str))
+    else:                                                        # or derive one from the DE groups
+        forder = [str(g) for g in groups]
+        ds.add_axis(factor, forder, origin=DERIVED, role="factor")
+    grow = {g: i for i, g in enumerate(forder)}
+    n_f, n_g = len(forder), len(glabels)
+    stat_keys = {"scores": "score", "logfoldchanges": "lfc", "pvals": "pval", "pvals_adj": "padj"}
+    made = False
+    for key, stat in stat_keys.items():
+        if key not in rgg:
+            continue
+        rec = rgg[key]
+        arr = np.full((n_f, n_g), np.nan, dtype=np.float64)     # NaN where a group didn't rank a gene
+        for grp in groups:
+            r = grow.get(str(grp))
+            if r is None:
+                continue
+            cols = np.array([gidx.get(nm, -1) for nm in np.asarray(names[grp]).astype(str)])
+            ok = cols >= 0
+            arr[r, cols[ok]] = np.asarray(rec[grp], dtype=float)[ok]
+        ds.add_field(de_field_name(factor, stat), arr, role="measure", span=[factor, gene_axis],
+                     subtype="de", provenance={"anndata": "uns/rank_genes_groups", "de_factor": factor,
+                                               "de_stat": stat, "method": params.get("method"),
+                                               "reference": "rest", "use_raw": use_raw})
+        made = True
+    if made and "anndata.uns" in ds.aux:
+        ds.aux["anndata.uns"].pop("rank_genes_groups", None)   # typed now -> drop from the passthrough
+
+
+def _write_rank_genes_groups(adata, ds):
+    """Regenerate `uns['rank_genes_groups']` from the typed DE bundle: rank each group's genes by score
+    (argsort) to rebuild the per-group `names`, and emit the structured arrays + `params`."""
+    from ..de import de_bundle, de_factors
+    for factor in de_factors(ds):
+        bundle = de_bundle(ds, factor)
+        any_f = next(iter(bundle.values()))
+        gene_axis = any_f.span[1]
+        groups = [str(g) for g in np.asarray(ds.axis(factor).labels, dtype=str)]
+        glabels = np.asarray(ds.axis(gene_axis).labels, dtype=str)
+        prov = any_f.provenance or {}
+        basis = bundle.get("score") or bundle.get("lfc") or any_f
+        bvals = np.asarray(basis.values, dtype=float)
+        orders = [np.argsort(-np.nan_to_num(bvals[gi], nan=-np.inf), kind="stable")
+                  for gi in range(len(groups))]
+        names_rec = np.empty(len(glabels), dtype=[(g, glabels.dtype) for g in groups])
+        for gi, g in enumerate(groups):
+            names_rec[g] = glabels[orders[gi]]
+        rgg = {"params": {"groupby": factor, "reference": "rest",
+                          "method": prov.get("method") or "lstar", "use_raw": bool(prov.get("use_raw", False))},
+               "names": names_rec}
+        for st, key in {"score": "scores", "lfc": "logfoldchanges",
+                        "pval": "pvals", "padj": "pvals_adj"}.items():
+            if st not in bundle:
+                continue
+            vals = np.asarray(bundle[st].values, dtype=float)
+            rec = np.empty(len(glabels), dtype=[(g, "f4") for g in groups])
+            for gi, g in enumerate(groups):
+                rec[g] = vals[gi][orders[gi]].astype("f4")
+            rgg[key] = rec
+        adata.uns["rank_genes_groups"] = rgg
 
 
 def _vocab_location(ds, name, f):
@@ -310,6 +395,8 @@ def _route_fields(ds):
     r = {"X": None, "raw": None, "layers": {}, "obs": {}, "var": {},
          "obsm": {}, "varm": {}, "obsp": {}, "varp": {}, "dropped": []}
     for name, f in ds.fields.items():
+        if f.subtype == "de" or (f.provenance or {}).get("anndata") == "uns/rank_genes_groups":
+            continue                            # DE bundle -> regenerated into uns, not routed as a field
         loc = (f.provenance or {}).get("anndata") or _vocab_location(ds, name, f)
         if loc == "X":
             r["X"] = f
@@ -362,6 +449,7 @@ def write_anndata(ds):
         raw_var = pd.DataFrame(index=rg)
         adata.raw = ad.AnnData(X=raw_field.values, obs=pd.DataFrame(index=cells), var=raw_var)
     _restore_uns(adata, ds)                         # reproduce the passthrough uns (params/colors/...)
+    _write_rank_genes_groups(adata, ds)             # regenerate the typed DE bundle into uns
     if dropped:
         adata.uns["lstar/dropped"] = list(dropped)
     return adata
@@ -518,6 +606,7 @@ def write_anndata_streamed(ds, path, chunk_elems=None):
             adata.raw = ad.AnnData(X=np.asarray(raw_field.values),
                                    obs=pd.DataFrame(index=cells), var=pd.DataFrame(index=rg))
     _restore_uns(adata, ds)                 # reproduce the passthrough uns
+    _write_rank_genes_groups(adata, ds)     # regenerate the typed DE bundle into uns
     if r["dropped"]:
         adata.uns["lstar/dropped"] = list(r["dropped"])
 

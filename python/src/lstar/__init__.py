@@ -9,11 +9,13 @@ from .validate import validate
 from .lazy import LazyDense, LazyCSX, stream_col_stats
 from ._engine import has_accel, show_config
 from .kernels import col_sum_by_group
+from .de import markers, de_bundle, de_factors
 from .profiles.anndata import (read_anndata, write_anndata, convert_anndata,
                                write_anndata_streamed, convert_to_h5ad)
 
 __all__ = ["Dataset", "Axis", "Field", "Categorical", "read", "write", "validate", "OBSERVED", "DERIVED",
            "LazyDense", "LazyCSX", "stream_col_stats", "has_accel", "show_config",
-           "col_sum_by_group", "read_anndata", "write_anndata", "convert_anndata",
+           "col_sum_by_group", "markers", "de_bundle", "de_factors",
+           "read_anndata", "write_anndata", "convert_anndata",
            "write_anndata_streamed", "convert_to_h5ad"]
 __version__ = "0.0.1"
