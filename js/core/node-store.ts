@@ -17,4 +17,10 @@ export class NodeFSStore implements LstarStore {
       throw e;
     }
   }
+  /** Write one object (mkdir -p the parent). The write side of the `get` contract used by writer.ts. */
+  async set(key: string, value: Uint8Array): Promise<void> {
+    const fp = path.join(this.root, key);
+    await fs.mkdir(path.dirname(fp), { recursive: true });
+    await fs.writeFile(fp, value);
+  }
 }

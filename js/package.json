@@ -14,7 +14,8 @@
     "build": "bash build.sh",
     "test:kernels": "node test/kernels.test.mjs",
     "test:reader": "node --experimental-strip-types test/reader.test.ts",
-    "test:view": "node --experimental-strip-types test/view.test.ts"
+    "test:view": "node --experimental-strip-types test/view.test.ts",
+    "test:writer": "node --experimental-strip-types test/writer.test.ts"
   },
   "keywords": ["lstar", "single-cell", "zarr", "zarrita", "webassembly", "wasm", "viewer", "csc", "emscripten"],
   "license": "MIT",
