@@ -75,6 +75,13 @@ The `lstar.encoding` attribute selects which value arrays a field group holds:
 offsets[i+1]]`. This avoids fixed-width unicode arrays and is trivially decodable from C++ and
 JavaScript (`TextDecoder`). The same encoding holds axis `labels`.
 
+**Nullability (validity mask).** Any field may carry an optional `mask` array (`uint8`, same length as
+its values, `1 = missing`) plus `lstar.nullable = true`. This is how pandas **nullable** `Int64` /
+`boolean` / `string` columns keep their integer-ness and their value-vs-missing distinction instead of
+collapsing to float-NaN. It is distinct from the categorical `-1` sentinel (which is built into `codes`)
+and from float `NaN` (which already encodes missing, so a float field needs no mask). An absent `mask`
+means no nulls — existing stores read unchanged.
+
 **Partial coverage** *(spec; not yet implemented).* A field that covers only some of an axis adds an
 `index/<axis>` array — the covered labels (a subset of `axes/<axis>/labels`). Access is a label join;
 uncovered elements are *absent*.

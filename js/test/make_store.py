@@ -24,6 +24,8 @@ def main():
     umap = rng.standard_normal((ncells, 2)).astype("f4")
     leiden = np.array([["A", "B", "C"][i % 3] for i in range(ncells)])
     n_umi = np.asarray(X.sum(axis=1)).ravel().astype("f4")
+    qc = np.floor(n_umi).astype(np.int64)             # a nullable integer measure (a couple missing)
+    qc_mask = np.zeros(ncells, dtype=np.uint8); qc_mask[[1, 3]] = 1
 
     ds = lstar.Dataset(kind="sample")
     ds.add_axis("cells", [f"cell{i}" for i in range(ncells)], role="observation")
@@ -33,6 +35,7 @@ def main():
     ds.add_field("umap", umap, role="embedding", span=["cells", "umap"])
     ds.add_field("leiden", leiden, role="label", span=["cells"])
     ds.add_field("n_umi", n_umi, role="measure", span=["cells"])
+    ds.add_field("qc", qc, role="measure", span=["cells"], mask=qc_mask)   # nullable: 1 == missing
     lstar.write(ds, STORE)                            # Zarr v2, single-chunk, consolidated metadata
 
     # Expected values for the TS tests.
@@ -58,6 +61,7 @@ def main():
         "umap": umap.ravel(order="C").tolist(),       # C-order, ncells x 2
         "leiden": leiden.tolist(),
         "n_umi": n_umi.tolist(),
+        "qc": {"values": qc.tolist(), "mask": qc_mask.tolist()},
         "gene_col": {"index": gcol, "rows": col.row.tolist(), "vals": col.data.tolist()},
         "colstats_lognorm": {"mean": mean.tolist(), "var": var.tolist(), "nnz": nnz.tolist()},
         "counts_sum": float(X.sum()),

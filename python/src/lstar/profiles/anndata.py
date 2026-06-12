@@ -55,27 +55,51 @@ def _guess_subtype(key):
 
 
 def _by_dtype_series(s):
+    """An obs/var column -> (values, role, mask). pandas **nullable extension** dtypes (Int64/boolean/
+    string) carry a validity mask so integer-ness and the value-vs-missing distinction survive -- the
+    same silent-corruption class P1 fixed for categoricals. Float keeps NaN (no mask)."""
     import pandas as pd
-    if pd.api.types.is_bool_dtype(s):
-        return np.asarray(s.values), "label"
     if isinstance(s.dtype, pd.CategoricalDtype):       # preserve category order + NaN (-> -1 missing)
         c = s.values
         return Categorical(np.asarray(c.codes), np.asarray(c.categories, dtype=str),
-                           ordered=bool(c.ordered)), "label"
+                           ordered=bool(c.ordered)), "label", None
+    if pd.api.types.is_extension_array_dtype(s):       # nullable Int/boolean/string: values + null mask
+        mask = np.asarray(s.isna(), dtype=np.uint8)
+        if pd.api.types.is_bool_dtype(s):
+            return np.asarray(s.fillna(False)).astype(bool), "label", mask
+        if pd.api.types.is_integer_dtype(s):
+            return np.asarray(s.fillna(0)).astype(np.int64), "measure", mask
+        if pd.api.types.is_float_dtype(s):
+            return np.asarray(s.astype("float64")), "measure", None     # NaN already encodes missing
+        return np.asarray(s.fillna("").astype(str).values, dtype=str), "label", mask
+    if pd.api.types.is_bool_dtype(s):
+        return np.asarray(s.values), "label", None
     if pd.api.types.is_numeric_dtype(s):
-        return np.asarray(s.values), "measure"
-    return np.asarray(s.astype(str).values, dtype=str), "label"
+        return np.asarray(s.values), "measure", None
+    return np.asarray(s.astype(str).values, dtype=str), "label", None
 
 
 def _to_pandas_col(f):
-    """An L* obs/var field as a column value for write-back: a `Categorical` field is rebuilt as a
-    `pd.Categorical` (categories, order, and `-1`->NaN missing preserved), else a plain array."""
+    """An L* obs/var field as a column value for write-back: a `Categorical` -> `pd.Categorical`
+    (categories/order/`-1`->NaN preserved); a masked field -> the matching pandas **nullable** dtype
+    (Int64/boolean/string), so a round-trip is type-faithful; else a plain array."""
     if _is_categorical(f.values):
         import pandas as pd
         c = f.values
         return pd.Categorical.from_codes(np.asarray(c.codes), categories=list(c.categories),
                                          ordered=bool(c.ordered))
-    return np.asarray(f.values)
+    arr = np.asarray(f.values)
+    if getattr(f, "mask", None) is not None:
+        import pandas as pd
+        m = np.asarray(f.mask).astype(bool)
+        if arr.dtype.kind == "b":
+            return pd.arrays.BooleanArray(arr.astype(bool), m)
+        if arr.dtype.kind in ("i", "u"):
+            return pd.arrays.IntegerArray(arr.astype("int64"), m)
+        if arr.dtype.kind in ("U", "S", "O"):
+            obj = arr.astype(object); obj[m] = pd.NA
+            return pd.array(obj, dtype="string")
+    return arr
 
 
 def _coord_axis(ds, name, ncol, observed=False):
@@ -214,12 +238,12 @@ def read_anndata(adata, kind="sample"):
                      state=_guess_state(k), provenance={"anndata": "layers/%s" % k})
 
     for col in adata.obs.columns:
-        vals, role = _by_dtype_series(adata.obs[col])
-        ds.add_field(str(col), vals, role=role, span=["cells"],
+        vals, role, mask = _by_dtype_series(adata.obs[col])
+        ds.add_field(str(col), vals, role=role, span=["cells"], mask=mask,
                      provenance={"anndata": "obs/%s" % col})
     for col in adata.var.columns:
-        vals, role = _by_dtype_series(adata.var[col])
-        ds.add_field(str(col), vals, role=role, span=["genes"],
+        vals, role, mask = _by_dtype_series(adata.var[col])
+        ds.add_field(str(col), vals, role=role, span=["genes"], mask=mask,
                      provenance={"anndata": "var/%s" % col})
 
     for k in list(adata.obsm.keys()):

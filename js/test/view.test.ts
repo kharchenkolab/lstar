@@ -35,6 +35,12 @@ check("metadata(leiden) categorical", md.kind === "categorical" &&
 const num = await view.metadata("n_umi");
 check("metadata(n_umi) numeric", num.kind === "numeric" && approx((num as any).values, expected.n_umi));
 
+// nullable metadata: the missing mask rides along so a null renders distinctly from 0
+const qcMd = await view.metadata("qc");
+check("metadata(qc) numeric + mask", qcMd.kind === "numeric" &&
+      (qcMd as any).mask !== undefined &&
+      Array.from((qcMd as any).mask as Uint8Array).join(",") === expected.qc.mask.join(","));
+
 // gene coloring: scatter the gene's CSC column, log1p; compare to a dense reference built from expected
 {
   const gc = expected.gene_col;

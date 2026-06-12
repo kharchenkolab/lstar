@@ -72,6 +72,14 @@ def validate(ds, strict=False):
         if f.role == "relation" and len(span) != 2:
             err("field '%s' relation must span 2 axes, got %s" % (name, span))
 
+        if getattr(f, "mask", None) is not None:          # nullable validity mask: 1 == missing
+            mk = np.asarray(f.mask)
+            if mk.dtype.kind not in ("u", "i", "b"):
+                err("field '%s' mask dtype %s is not integer/bool" % (name, mk.dtype))
+            if len(span) == 1 and mk.shape[0] != axlen[span[0]]:
+                err("field '%s' mask length %d != axis '%s' length %d"
+                    % (name, mk.shape[0], span[0], axlen[span[0]]))
+
         # open vocabularies -> warnings only
         if f.role and f.role not in CORE_ROLES and not f.role.startswith("x-"):
             warn("field '%s' uses non-core role '%s'" % (name, f.role))

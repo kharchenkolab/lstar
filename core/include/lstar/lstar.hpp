@@ -124,6 +124,8 @@ struct Field {
     NdArray codes;                    // "categorical": int codes (-1 = missing)
     std::vector<std::string> categories;  // "categorical": inline category labels
     bool ordered = false, has_ordered = false;
+    NdArray mask;                     // optional uint8 validity mask, 1 == missing (nullable Int/bool/string)
+    bool has_mask = false;
 };
 
 struct Dataset {
@@ -556,6 +558,10 @@ inline Dataset read(const fs::path& root) {
         } else {  // dense
             f.dense = read_array(g / "values");
         }
+        if (m.value("nullable", false) && fs::exists(g / "mask")) {   // optional validity mask
+            f.mask = read_array(g / "mask");
+            f.has_mask = true;
+        }
         ds.fields.push_back(std::move(f));
     }
     return ds;
@@ -607,6 +613,7 @@ inline void write(const Dataset& ds, const fs::path& root,
         fl["provenance"] = f.provenance;
         fl["directed"] = f.has_directed ? json(f.directed) : json(nullptr);
         fl["weighted"] = f.has_weighted ? json(f.weighted) : json(nullptr);
+        fl["nullable"] = f.has_mask ? json(true) : json(nullptr);
         if (f.encoding == "csr" || f.encoding == "csc") fl["shape"] = f.shape;
         if (f.encoding == "utf8") fl["shape"] = std::vector<int64_t>{(int64_t)f.strings.size()};
         if (f.encoding == "categorical") {
@@ -626,6 +633,7 @@ inline void write(const Dataset& ds, const fs::path& root,
         } else {
             write_array(g / "values", f.dense, chunk_elems, compressor);
         }
+        if (f.has_mask) write_array(g / "mask", f.mask, chunk_elems, compressor);
     }
     consolidate_metadata(root);
 }

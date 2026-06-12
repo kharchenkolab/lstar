@@ -11,8 +11,8 @@ import type { LstarDataset } from "./reader.ts";
 
 export interface ColStats { mean: Float64Array; var: Float64Array; nnz: Int32Array; }
 export type Metadata =
-  | { kind: "categorical"; codes: Int32Array; categories: string[] }
-  | { kind: "numeric"; values: Float32Array };
+  | { kind: "categorical"; codes: Int32Array; categories: string[]; mask?: Uint8Array }
+  | { kind: "numeric"; values: Float32Array; mask?: Uint8Array };
 
 function toF64(a: any): Float64Array { return a instanceof Float64Array ? a : Float64Array.from(a); }
 function toI32(a: any): Int32Array { return a instanceof Int32Array ? a : Int32Array.from(a); }
@@ -38,6 +38,7 @@ export class LstarView {
   async metadata(name: string): Promise<Metadata> {
     const meta = this.ds.fields.get(name);
     if (!meta) throw new Error("no field " + name);
+    const mask = await this.ds.fieldMask(name);   // nullable: 1 == missing (renders distinctly from 0/"")
     if (meta.encoding === "categorical") {        // codes + categories are stored directly
       const { codes, categories } = await this.ds.fieldCategorical(name);
       return { kind: "categorical", codes, categories };
@@ -48,14 +49,15 @@ export class LstarView {
       const idx = new Map<string, number>();
       const codes = new Int32Array(strings.length);
       for (let i = 0; i < strings.length; i++) {
+        if (mask && mask[i]) { codes[i] = -1; continue; }   // missing -> -1, not a "" category
         let c = idx.get(strings[i]);
         if (c === undefined) { c = categories.length; categories.push(strings[i]); idx.set(strings[i], c); }
         codes[i] = c;
       }
-      return { kind: "categorical", codes, categories };
+      return { kind: "categorical", codes, categories, mask: mask ?? undefined };
     }
     const { data } = await this.ds.fieldDense(name);
-    return { kind: "numeric", values: toF32(data) };
+    return { kind: "numeric", values: toF32(data), mask: mask ?? undefined };
   }
 
   /**

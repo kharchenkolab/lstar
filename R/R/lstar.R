@@ -30,7 +30,7 @@ lstar_read <- function(path) {
 
 .lstar_assemble <- function(f) {
   enc <- f$encoding
-  if (enc %in% c("csc", "csr")) {
+  v <- if (enc %in% c("csc", "csr")) {
     dims <- as.integer(f$shape)
     if (enc == "csc") {
       Matrix::sparseMatrix(i = f$indices, p = f$indptr, x = f$data,
@@ -51,6 +51,11 @@ lstar_read <- function(path) {
     shp <- as.integer(f$shape)
     if (length(shp) <= 1) f$dense else t(matrix(f$dense, nrow = shp[2], ncol = shp[1]))
   }
+  if (!is.null(f$mask) && is.null(dim(v))) {       # nullable: 1 == missing -> NA in the R vector
+    miss <- as.integer(f$mask) == 1L
+    if (any(miss)) v[miss] <- NA
+  }
+  v
 }
 
 .infer_encoding <- function(v) {
@@ -98,7 +103,9 @@ lstar_write <- function(ds, path, chunk_elems = NULL, compression = c("none", "g
       out$indptr <- as.numeric(m@p)
       out$shape <- as.integer(dim(m))
     } else if (enc == "utf8") {
-      out$strings <- as.character(v)
+      sv <- as.character(v)
+      if (any(is.na(sv))) { out$mask <- as.integer(is.na(sv)); sv[is.na(sv)] <- "" }  # nullable string
+      out$strings <- sv
     } else if (enc == "categorical") {
       v <- if (is.factor(v)) v else factor(v)
       code <- as.integer(v) - 1L                   # R factor: 1-based, NA -> -1, 0-based
@@ -108,6 +115,7 @@ lstar_write <- function(ds, path, chunk_elems = NULL, compression = c("none", "g
       out$ordered <- is.ordered(v)
     } else {
       if (is.null(dim(v))) {                       # a plain vector -> arity-1 field
+        if (any(is.na(v))) { out$mask <- as.integer(is.na(v)); v[is.na(v)] <- 0 }  # nullable int/num
         out$dense <- as.numeric(v); out$shape <- as.integer(length(v))
       } else {                                     # a matrix -> C-order + 2-D shape
         m <- as.matrix(v)

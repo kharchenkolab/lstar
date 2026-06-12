@@ -45,6 +45,12 @@ check("fieldDense(umap) values", approx(umap.data, expected.umap));
 const leiden = await ds.fieldStrings("leiden");
 check("fieldStrings(leiden)", eq(leiden, expected.leiden));
 
+// nullable: the validity mask (1 == missing) is exposed; a non-nullable field has none
+const qcMask = await ds.fieldMask("qc");
+check("fieldMeta(qc) nullable", ds.fields.get("qc")!.nullable === true);
+check("fieldMask(qc)", qcMask !== null && eq(Array.from(qcMask!), expected.qc.mask));
+check("fieldMask(n_umi) absent", (await ds.fieldMask("n_umi")) === null);
+
 // the hot path: one CSC gene-column, fetched as a slice
 const gc = expected.gene_col;
 const { rows, vals } = await ds.cscColumn("counts", gc.index);

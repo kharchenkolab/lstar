@@ -26,6 +26,7 @@ export interface FieldMeta {
   state?: string;
   subtype?: string;
   shape?: number[];
+  nullable?: boolean;   // carries a `mask` array (1 == missing): nullable Int/boolean/string
 }
 
 const TD = new TextDecoder();
@@ -82,7 +83,8 @@ export class LstarDataset {
       const lm = (f.attrs as any).lstar ?? {};
       this.fields.set(name, { name, role: lm.role, span: lm.span ?? [], encoding: lm.encoding,
                               state: lm.state ?? undefined, subtype: lm.subtype ?? undefined,
-                              shape: lm.shape, ordered: lm.ordered } as any);
+                              shape: lm.shape, ordered: lm.ordered,
+                              nullable: lm.nullable ?? undefined } as any);
     }
     return this;
   }
@@ -107,6 +109,12 @@ export class LstarDataset {
     const bytes = (await this._get("fields/" + name + "/values")).data as Uint8Array;
     const offs = (await this._get("fields/" + name + "/values_offsets")).data as any;
     return decodeStrings(bytes, offs);
+  }
+
+  /** A nullable field's validity mask (`1 == missing`), or null when the field carries no nulls. */
+  async fieldMask(name: string): Promise<Uint8Array | null> {
+    if (!(this.fields.get(name) as any)?.nullable) return null;
+    return Uint8Array.from((await this._get("fields/" + name + "/mask")).data as any);
   }
 
   /** A categorical (factor) field: integer codes (-1 = missing) + the category labels + ordered. */

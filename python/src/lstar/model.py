@@ -89,6 +89,7 @@ class Field:
     weighted: Optional[bool] = None
     subtype: Optional[str] = None
     uncertainty: Optional[str] = None
+    mask: Any = None                     # optional uint8 validity mask, 1 == missing (nullable Int/bool/string)
     provenance: dict = _dcfield(default_factory=dict)
 
 
@@ -116,16 +117,18 @@ class Dataset:
     # ---- fields ----
     def add_field(self, name, values, role=None, span=None, state=None, encoding=None,
                   coverage="full", directed=None, weighted=None, subtype=None,
-                  uncertainty=None, provenance=None):
+                  uncertainty=None, mask=None, provenance=None):
         if _is_categorical(values):
             values = as_categorical(values)               # normalize pandas.Categorical -> L* Categorical
         span = self._infer_span(values, span)
         role = role or self._infer_role(values, span)
         encoding = encoding or self._infer_encoding(values)
+        if mask is not None:
+            mask = np.asarray(mask).astype(np.uint8, copy=False)   # 1 == missing
         self.fields[name] = Field(
             name, values, role=role, span=span, state=state, encoding=encoding,
             coverage=coverage, directed=directed, weighted=weighted, subtype=subtype,
-            uncertainty=uncertainty, provenance=provenance or {})
+            uncertainty=uncertainty, mask=mask, provenance=provenance or {})
         if _is_categorical(values):            # a categorical label induces its factor axis (data-driven)
             self._auto_induce(name)
         return self.fields[name]

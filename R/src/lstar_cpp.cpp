@@ -35,6 +35,7 @@ writable::integers nd_integers(const lstar::NdArray& a) {
   if (dt == "<i4") { auto p = a.as<int32_t>(); for (R_xlen_t i = 0; i < (R_xlen_t)n; ++i) out[i] = p[i]; }
   else if (dt == "<i8") { auto p = a.as<int64_t>(); for (R_xlen_t i = 0; i < (R_xlen_t)n; ++i) out[i] = (int)p[i]; }
   else if (dt == "<u4") { auto p = a.as<uint32_t>(); for (R_xlen_t i = 0; i < (R_xlen_t)n; ++i) out[i] = (int)p[i]; }
+  else if (dt == "|u1" || dt == "<u1") { auto p = a.as<uint8_t>(); for (R_xlen_t i = 0; i < (R_xlen_t)n; ++i) out[i] = (int)p[i]; }
   else throw std::runtime_error("nd_integers: unsupported dtype " + dt);
   return out;
 }
@@ -221,6 +222,7 @@ list lstar_cpp_read(std::string path) {
                            "encoding"_nm = f.encoding, "state"_nm = f.state, "subtype"_nm = f.subtype,
                            "dense"_nm = nd_doubles(f.dense), "shape"_nm = to_ints(f.dense.shape)});
     }
+    if (f.has_mask) fl.push_back("mask"_nm = nd_integers(f.mask));   // 1 == missing (nullable)
     fields[k] = fl;
     fnames[k] = f.name;
   }
@@ -301,6 +303,18 @@ void lstar_cpp_write(list ds, std::string path, int chunk_elems = 0,
       for (R_xlen_t j = 0; j < shp.size(); ++j) sh.push_back((int64_t)shp[j]);
       doubles dn = f["dense"];
       fl.dense = nd_from_doubles(dn, sh, "<f8");          // dense stays predictable f8 (round-trip-safe)
+    }
+    {                                                     // optional validity mask (1 == missing)
+      strings ns = f.names();
+      for (R_xlen_t j = 0; j < ns.size(); ++j) if (std::string(ns[j]) == "mask") {
+        integers mk = f["mask"];
+        fl.mask.dtype = "|u1"; fl.mask.shape = {(int64_t)mk.size()};
+        fl.mask.bytes.resize((size_t)mk.size());
+        auto p = fl.mask.as<uint8_t>();
+        for (R_xlen_t i = 0; i < mk.size(); ++i) p[i] = (mk[i] != NA_INTEGER && mk[i] != 0) ? 1 : 0;
+        fl.has_mask = true;
+        break;
+      }
     }
     out.fields.push_back(std::move(fl));
   }

@@ -56,6 +56,9 @@ def write(ds, path, compressor=None, chunk_elems=None, stream=False):
                 "weighted": fl.weighted, "subtype": fl.subtype, "uncertainty": fl.uncertainty,
                 "provenance": fl.provenance}
         _write_values(g, fl, meta, compressor, chunk_elems)
+        if fl.mask is not None:                        # nullable Int/bool/string: an explicit validity mask
+            _ds(g, "mask", np.asarray(fl.mask, dtype=np.uint8), compressor, chunk_elems)
+            meta["nullable"] = True
         g.attrs[LSTAR] = meta
 
     root.attrs[LSTAR] = {"spec_version": ds.spec_version or SPEC_VERSION, "kind": ds.kind,
@@ -102,12 +105,13 @@ def read(path, lazy=False):
         g = root["fields"][name]
         m = dict(g.attrs[LSTAR])
         vals = _lazy_values(g, m) if lazy else _read_values(g, m)
+        mask = np.asarray(g["mask"], dtype=np.uint8) if m.get("nullable") and "mask" in g else None
         ds.fields[name] = Field(
             name, vals, role=m.get("role"), span=m.get("span"), state=m.get("state"),
             encoding=m.get("encoding"), coverage=m.get("coverage", "full"),
             directed=m.get("directed"), weighted=m.get("weighted"),
             subtype=m.get("subtype"), uncertainty=m.get("uncertainty"),
-            provenance=m.get("provenance", {}))
+            mask=mask, provenance=m.get("provenance", {}))
     return ds
 
 
