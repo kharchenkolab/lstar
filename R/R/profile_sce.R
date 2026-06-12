@@ -111,6 +111,12 @@ read_sce <- function(sce) {
     rot <- attr(emb, "rotation")
     if (!is.null(rot)) add(paste0(coord, "_loadings"), unname(as.matrix(rot)), "loading", c("genes", coord))
   }
+  # altExps (a second feature space: ADT/spike-ins -- Tier-3 multimodal, not yet typed) and `metadata`
+  # (free-form study-level list) are recorded as losses rather than silently dropped.
+  ae <- tryCatch(SingleCellExperiment::altExpNames(sce), error = function(e) character(0))
+  if (length(ae)) ds$dropped <- c(ds$dropped, paste0("altExp/", ae))
+  md <- names(S4Vectors::metadata(sce))
+  if (length(md)) ds$dropped <- c(ds$dropped, paste0("metadata/", md))
   class(ds) <- "lstar_dataset"
   ds
 }

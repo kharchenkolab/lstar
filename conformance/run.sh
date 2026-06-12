@@ -57,6 +57,10 @@ echo "== Seurat version variety (v3 Assay / v5 Assay5 / v5 split / SCTAssay / mu
 bash conformance/seurat_versions.sh >/tmp/lstar_sv.log 2>&1 \
   && pass "Seurat version variants round-trip + validate" || { echo "  FAIL seurat_versions"; tail -20 /tmp/lstar_sv.log; exit 1; }
 
+echo "== SCE version variety (counts / +reducedDims / +altExps / +colData-rowData factors+metadata) =="
+bash conformance/sce_versions.sh >/tmp/lstar_scev.log 2>&1 \
+  && pass "SCE version variants round-trip + validate" || { echo "  FAIL sce_versions"; tail -20 /tmp/lstar_scev.log; exit 1; }
+
 echo "== collection conformance (R collection -> L* -> Python) =="
 bash conformance/collection.sh >/tmp/lstar_coll.log 2>&1 \
   && pass "collection of samples round-trips R->py" || { echo "  FAIL collection"; tail -15 /tmp/lstar_coll.log; exit 1; }
