@@ -96,7 +96,8 @@ write_seurat <- function(ds) {
   for (nm in names(ds$fields)) {
     f <- ds$fields[[nm]]
     if (identical(as.character(f$span), "cells") && length(f$values) == length(cells)) {
-      so[[nm]] <- stats::setNames(as.vector(f$values), cells)
+      val <- f$values                                     # keep a factor a factor (don't strip to character)
+      so[[nm]] <- stats::setNames(if (is.factor(val)) val else as.vector(val), cells)
     }
   }
 
@@ -154,6 +155,13 @@ read_seurat <- function(so, assay = SeuratObject::DefaultAssay(so)) {
     ds$fields[[nm]] <<- list(role = role, span = span, state = state, subtype = subtype,
                              values = values)
   }
+  add_factor <- function(nm, v, span) {                   # a factor column -> categorical field that
+    v <- as.factor(v)                                     # induces a bare-named `factor` axis (its levels)
+    ds$fields[[nm]] <<- list(role = "label", span = span, state = "", subtype = "",
+                             encoding = "categorical", values = v)
+    if (is.null(ds$axes[[nm]]))                           # don't clobber an existing axis of that name
+      ds$axes[[nm]] <<- list(labels = levels(v), origin = "derived", role = "factor", induced_by = nm)
+  }
   state_of <- function(L) switch(L, counts = "raw", data = "lognorm", scale.data = "scaled", "")
   name_of <- function(L) switch(L, counts = "counts", data = "X", L)
   # A Seurat v5 assay split for integration (split(assay, f = sample)) holds a *collection*:
@@ -181,6 +189,7 @@ read_seurat <- function(so, assay = SeuratObject::DefaultAssay(so)) {
   for (col in colnames(md)) {
     v <- md[[col]]
     if (is.numeric(v)) add(col, as.numeric(v), "measure", "cells")
+    else if (is.factor(v)) add_factor(col, v, "cells")    # preserve levels/order + induce a factor axis
     else add(col, as.character(v), "label", "cells")
   }
 

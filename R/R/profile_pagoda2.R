@@ -49,40 +49,46 @@ write_pagoda2 <- function(p2, path = NULL, grouping = "leiden") {
     fields$umap <- list(values = emb, role = "embedding", span = c("cells", "umap"))
   } else dropped <- c(dropped, "embedding")
 
-  # cell metadata: grouping, cell_type, qc
+  # cell metadata: grouping, cell_type, qc. A categorical cell label is stored as a `categorical`
+  # field (factor: codes + ordered category set) and *induces* a bare-named `factor` axis (role=factor,
+  # induced_by) whose labels ARE its categories -- so per-group results (below) are fields over it.
   meta <- p2$cellMeta
-  lei <- NULL
+  lei <- NULL; groups <- NULL; K <- 0L
   if (!is.null(meta) && grouping %in% names(meta)) {
     lei <- as.character(meta[[grouping]])
-    fields[[grouping]] <- list(values = lei, role = "label", span = "cells", encoding = "utf8")
+    groups <- sort(unique(lei[!is.na(lei)])); K <- length(groups)
+    fields[[grouping]] <- list(values = factor(lei, levels = groups), role = "label",
+                               span = "cells", encoding = "categorical")
+    axes[[grouping]] <- list(labels = groups, origin = "derived", role = "factor", induced_by = grouping)
   }
-  for (col in c("cell_type", "sample", "condition")) if (!is.null(meta) && col %in% names(meta))
-    fields[[col]] <- list(values = as.character(meta[[col]]), role = "label", span = "cells", encoding = "utf8")
+  for (col in c("cell_type", "sample", "condition")) if (!is.null(meta) && col %in% names(meta)) {
+    cv <- as.character(meta[[col]]); lv <- sort(unique(cv[!is.na(cv)]))
+    fields[[col]] <- list(values = factor(cv, levels = lv), role = "label", span = "cells", encoding = "categorical")
+    axes[[col]] <- list(labels = lv, origin = "derived", role = "factor", induced_by = col)
+  }
   for (col in c("mito", "percent_mito", "n_molecules", "n_genes"))
     if (!is.null(meta) && col %in% names(meta))
       fields[[col]] <- list(values = as.numeric(meta[[col]]), role = "measure", span = "cells")
 
-  # viewer profile: cluster sufficient stats (libstar kernel) + marker tables
+  # viewer profile: cluster sufficient stats (libstar kernel) + marker tables, all over the induced
+  # (factor, genes) axis pair in a single canonical orientation (K x genes).
   profiles <- "pagoda2@0.1"
   if (!is.null(lei)) {
-    groups <- sort(unique(lei))
     code <- as.integer(factor(lei, levels = groups)) - 1L
-    K <- length(groups)
     gs <- lstar_cpp_col_sum_by_group(as.double(cnt@x), cnt@p, cnt@i, nc, ng, code, K, TRUE)
     S <- matrix(gs$sum, nrow = K, byrow = TRUE)
     SS <- matrix(gs$sumsq, nrow = K, byrow = TRUE)
     NE <- matrix(gs$n_expr, nrow = K, byrow = TRUE)
     Xl <- cnt; Xl@x <- log1p(Xl@x); grand <- Matrix::colSums(Xl)
     nper <- as.integer(table(factor(lei, levels = groups)))
-    lfc <- vapply(seq_len(K), function(g) S[g, ] / max(nper[g], 1) - (grand - S[g, ]) / max(nc - nper[g], 1), numeric(ng))
-    padj <- pmin(pmax(exp(-abs(lfc * sqrt(t(NE) + 1))), 1e-12), 1)
-    axes[[paste0("groups_", grouping)]] <- list(labels = groups, origin = "derived", role = "feature")
-    sg <- c(paste0("groups_", grouping), "genes")
+    lfc <- vapply(seq_len(K), function(g) S[g, ] / max(nper[g], 1) - (grand - S[g, ]) / max(nc - nper[g], 1), numeric(ng))  # ng x K
+    padj <- pmin(pmax(exp(-abs(lfc * sqrt(t(NE) + 1))), 1e-12), 1)                                                          # ng x K
+    sg <- c(grouping, "genes")                              # canonical (factor, genes) for stats AND markers
     fields[[paste0("stats_", grouping, "_sum")]]   <- list(values = S,  role = "measure", span = sg)
     fields[[paste0("stats_", grouping, "_sumsq")]] <- list(values = SS, role = "measure", span = sg)
     fields[[paste0("stats_", grouping, "_nexpr")]] <- list(values = NE, role = "measure", span = sg)
-    fields[[paste0("markers_", grouping, "_lfc")]]  <- list(values = lfc,  role = "measure", span = c("genes", paste0("groups_", grouping)))
-    fields[[paste0("markers_", grouping, "_padj")]] <- list(values = padj, role = "measure", span = c("genes", paste0("groups_", grouping)))
+    fields[[paste0("markers_", grouping, "_lfc")]]  <- list(values = t(lfc),  role = "measure", span = sg)   # ng x K -> K x ng
+    fields[[paste0("markers_", grouping, "_padj")]] <- list(values = t(padj), role = "measure", span = sg)
     profiles <- c(profiles, "viewer@0.1")
   } else dropped <- c(dropped, "clustering")
 

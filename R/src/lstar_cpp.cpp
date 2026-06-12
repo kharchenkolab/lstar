@@ -191,7 +191,8 @@ list lstar_cpp_read(std::string path) {
   for (size_t k = 0; k < ds.axes.size(); ++k) {
     const auto& a = ds.axes[k];
     axes[k] = writable::list({"labels"_nm = to_strings(a.labels),
-                              "origin"_nm = a.origin, "role"_nm = a.role});
+                              "origin"_nm = a.origin, "role"_nm = a.role,
+                              "induced_by"_nm = a.induced_by});
     axnames[k] = a.name;
   }
   axes.attr("names") = axnames;
@@ -256,6 +257,11 @@ void lstar_cpp_write(list ds, std::string path, int chunk_elems = 0,
     ax.labels = as_cpp<std::vector<std::string>>(a["labels"]);
     ax.origin = as_cpp<std::string>(a["origin"]);
     ax.role = as_cpp<std::string>(a["role"]);
+    {                                                   // induced_by is optional (older payloads omit it)
+      strings ns = a.names();
+      for (R_xlen_t j = 0; j < ns.size(); ++j)
+        if (std::string(ns[j]) == "induced_by") { ax.induced_by = as_cpp<std::string>(a["induced_by"]); break; }
+    }
     out.axes.push_back(std::move(ax));
   }
 

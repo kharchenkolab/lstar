@@ -65,7 +65,7 @@ class Axis:
     name: str
     labels: Any
     origin: str = OBSERVED
-    role: Optional[str] = None          # observation | feature | coordinate | None
+    role: Optional[str] = None          # observation | feature | coordinate | factor | None
     induced_by: Optional[str] = None
     provenance: dict = _dcfield(default_factory=dict)
 
@@ -126,10 +126,57 @@ class Dataset:
             name, values, role=role, span=span, state=state, encoding=encoding,
             coverage=coverage, directed=directed, weighted=weighted, subtype=subtype,
             uncertainty=uncertainty, provenance=provenance or {})
+        if _is_categorical(values):            # a categorical label induces its factor axis (data-driven)
+            self._auto_induce(name)
         return self.fields[name]
 
     def field(self, name):
         return self.fields[name]
+
+    # ---- induction (model.md "Three induction rules") ----
+    def induce(self, field_name):
+        """Derive the axis a field induces, idempotently, recording the link (`induced_by`).
+
+        A categorical `label` induces a **factor axis**: its categories, in category order, become an
+        ordered set of axis labels (`role="factor"`, `origin="derived"`). Per-group results -- DE,
+        pseudobulk, PAGA -- are then ordinary fields *over this axis* rather than special cases. The
+        categories live once (on the field); the axis carries the same labels and an `induced_by` back
+        link, so `validate()` can confirm they never drift.
+
+        **Canonical identity = the field's name (bare) + its ordered label set.** Inducing a label whose
+        canonical axis already exists *with the same labels* returns it (so DE from scanpy and markers
+        from pagoda2 land on one axis and align); a name clash with *different* labels is an error the
+        writer must resolve -- never a silent merge of two distinct label sets. Returns the axis name.
+        """
+        fl = self.fields[field_name]
+        if not _is_categorical(fl.values):
+            raise ValueError(
+                "induce(%r): only a categorical label induces an axis (encoding=%r)"
+                % (field_name, fl.encoding))
+        labels = np.asarray(as_categorical(fl.values).categories, dtype=str)
+        name = field_name                          # canonical name = the inducing field's name, bare
+        existing = self.axes.get(name)
+        if existing is not None:
+            ex = np.asarray(existing.labels, dtype=str)
+            if ex.shape == labels.shape and bool(np.all(ex == labels)):
+                if existing.induced_by is None:    # adopt the link if reusing a hand-declared axis
+                    existing.induced_by = field_name
+                return name                        # same identity -> reuse (independent results align)
+            raise ValueError(
+                "induce(%r): axis '%s' already exists with different labels (%d vs %d); rename the "
+                "field or the axis -- collisions are never silently merged"
+                % (field_name, name, len(ex), len(labels)))
+        self.add_axis(name, labels, origin=DERIVED, role="factor", induced_by=field_name)
+        return name
+
+    def _auto_induce(self, field_name):
+        """Eager auto-induce on `add_field` of a categorical: create the factor axis, but never abort a
+        field add over a name clash -- a genuine clash (a categorical named like an existing axis with
+        different labels) is left for `validate()` to surface rather than raised here."""
+        try:
+            self.induce(field_name)
+        except ValueError:
+            pass
 
     def fields_over(self, axis_name):
         return [f for f in self.fields.values() if f.span and axis_name in f.span]

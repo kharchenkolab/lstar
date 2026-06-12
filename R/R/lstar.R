@@ -81,7 +81,7 @@ lstar_write <- function(ds, path, chunk_elems = NULL, compression = c("none", "g
   axes <- lapply(names(ds$axes), function(nm) {
     a <- ds$axes[[nm]]
     list(labels = as.character(a$labels), origin = a$origin %||% "observed",
-         role = a$role %||% "")
+         role = a$role %||% "", induced_by = a$induced_by %||% "")
   })
   names(axes) <- names(ds$axes)
 

@@ -100,6 +100,7 @@ struct Axis {
     std::string name;
     std::string origin = "observed";
     std::string role;                 // "" == none
+    std::string induced_by;           // "" == none; the field this axis was induced from (factor/coordinate)
     std::vector<std::string> labels;
     json provenance = json::object();
 };
@@ -513,6 +514,7 @@ inline Dataset read(const fs::path& root) {
         a.name = name;
         a.origin = m.value("origin", std::string("observed"));
         a.role = opt_str(m, "role");
+        a.induced_by = opt_str(m, "induced_by");
         if (m.contains("provenance") && !m["provenance"].is_null()) a.provenance = m["provenance"];
         a.labels = read_strings(g, "labels");
         ds.axes.push_back(std::move(a));
@@ -585,6 +587,7 @@ inline void write(const Dataset& ds, const fs::path& root,
         al["kind"] = "axis";
         al["origin"] = a.origin;
         al["role"] = a.role.empty() ? json(nullptr) : json(a.role);
+        al["induced_by"] = a.induced_by.empty() ? json(nullptr) : json(a.induced_by);
         al["provenance"] = a.provenance;
         write_group(g, json{{"lstar", al}});
         write_strings(g, "labels", a.labels, chunk_elems, compressor);

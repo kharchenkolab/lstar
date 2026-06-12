@@ -47,6 +47,13 @@ def validate(ds, strict=False):
             codes = np.asarray(getattr(cat, "codes", []))
             if codes.size and (codes.min() < -1 or codes.max() >= k):
                 err("field '%s' categorical codes out of range [-1, %d)" % (name, k))
+            ax = ds.axes.get(name)            # name clash that suppressed auto-induce (never silent)
+            if ax is not None and ax.induced_by != name:
+                albls = np.asarray(ax.labels, dtype=str)
+                acats = np.asarray(getattr(cat, "categories", []), dtype=str)
+                if albls.shape != acats.shape or not bool(np.all(albls == acats)):
+                    warn("categorical field '%s' shares a name with axis '%s' (different labels) but "
+                         "did not induce it -- a name clash; rename one to give it a factor axis" % (name, name))
         elif enc == "utf8" or (f.role == "label" and len(span) == 1):
             arr = np.asarray(f.values)
             if len(span) == 1 and (arr.ndim != 1 or arr.shape[0] != axlen[span[0]]):
@@ -70,6 +77,22 @@ def validate(ds, strict=False):
             warn("field '%s' uses non-core role '%s'" % (name, f.role))
         if f.role == "measure" and f.state not in CORE_STATES and not str(f.state).startswith("x-"):
             warn("field '%s' uses non-core state '%s'" % (name, f.state))
+
+    # induced factor axes must stay consistent with their inducing field -- induction is *checkable*,
+    # not merely conventional (model.md / induction_design.md §4): the axis labels ARE the field's
+    # categories, so any drift between them is a writer bug.
+    for name, ax in ds.axes.items():
+        if ax.role != "factor" or not ax.induced_by:
+            continue
+        f = ds.fields.get(ax.induced_by)
+        if f is None:
+            err("factor axis '%s' induced_by '%s' but no such field" % (name, ax.induced_by))
+            continue
+        cats = np.asarray(getattr(f.values, "categories", []), dtype=str)
+        albls = np.asarray(ax.labels, dtype=str)
+        if cats.shape != albls.shape or not bool(np.all(cats == albls)):
+            err("factor axis '%s' labels disagree with inducing field '%s' categories "
+                "(induced-axis drift)" % (name, ax.induced_by))
 
     if strict and any(i.startswith("ERROR") for i in issues):
         raise ValueError("L* validation failed:\n  " + "\n  ".join(

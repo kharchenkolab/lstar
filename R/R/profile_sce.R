@@ -75,6 +75,13 @@ read_sce <- function(sce) {
   ds$axes$genes <- list(labels = genes, origin = "observed", role = "feature")
   add <- function(nm, v, role, span, state = "")
     ds$fields[[nm]] <<- list(role = role, span = span, state = state, subtype = "", values = v)
+  add_factor <- function(nm, v, span) {                   # factor col/rowData -> categorical + factor axis
+    v <- as.factor(v)
+    ds$fields[[nm]] <<- list(role = "label", span = span, state = "", subtype = "",
+                             encoding = "categorical", values = v)
+    if (is.null(ds$axes[[nm]]))
+      ds$axes[[nm]] <<- list(labels = levels(v), origin = "derived", role = "factor", induced_by = nm)
+  }
 
   state_of <- function(a) switch(a, counts = "raw", logcounts = "lognorm", "")
   name_of <- function(a) switch(a, counts = "counts", logcounts = "X", a)
@@ -84,14 +91,16 @@ read_sce <- function(sce) {
   cdt <- SummarizedExperiment::colData(sce)
   for (col in colnames(cdt)) {
     v <- cdt[[col]]
-    add(col, if (is.numeric(v)) as.numeric(v) else as.character(v),
-        if (is.numeric(v)) "measure" else "label", "cells")
+    if (is.numeric(v)) add(col, as.numeric(v), "measure", "cells")
+    else if (is.factor(v)) add_factor(col, v, "cells")
+    else add(col, as.character(v), "label", "cells")
   }
   rdt <- SummarizedExperiment::rowData(sce)
   for (col in colnames(rdt)) {
     v <- rdt[[col]]
-    add(col, if (is.numeric(v)) as.numeric(v) else as.character(v),
-        if (is.numeric(v)) "measure" else "label", "genes")
+    if (is.numeric(v)) add(col, as.numeric(v), "measure", "genes")
+    else if (is.factor(v)) add_factor(col, v, "genes")
+    else add(col, as.character(v), "label", "genes")
   }
   for (rn in SingleCellExperiment::reducedDimNames(sce)) {
     emb <- SingleCellExperiment::reducedDim(sce, rn)

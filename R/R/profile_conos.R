@@ -49,6 +49,13 @@ write_conos <- function(co, clustering = NULL) {
     ds$fields[[nm]] <<- list(role = role, span = span, state = state, subtype = subtype,
                              values = values)
   }
+  add_factor <- function(nm, v, span) {                   # a clustering factor -> categorical field +
+    v <- droplevels(as.factor(v))                         # induced bare-named `factor` axis (its levels)
+    ds$fields[[nm]] <<- list(role = "label", span = span, state = "", subtype = "",
+                             encoding = "categorical", values = v)
+    if (is.null(ds$axes[[nm]]))
+      ds$axes[[nm]] <<- list(labels = levels(v), origin = "derived", role = "factor", induced_by = nm)
+  }
 
   sample_names <- names(co$samples)
   n_per <- integer(length(sample_names)); names(n_per) <- sample_names
@@ -104,7 +111,7 @@ write_conos <- function(co, clustering = NULL) {
     cl_names <- if (!is.null(clustering)) clustering else names(co$clusters)
     for (cn in cl_names) {
       grp <- tryCatch(co$clusters[[cn]]$groups, error = function(e) NULL)
-      if (!is.null(grp)) add(cn, as.character(grp[ucells]), "label", "cells")
+      if (!is.null(grp)) add_factor(cn, grp[ucells], "cells")     # conos clusterings are factors -> factor axis
     }
 
     if (!is.null(g) && requireNamespace("igraph", quietly = TRUE)) {

@@ -140,6 +140,17 @@ downstream results are ordinary fields rather than special cases:
 3. **Union axis.** The union of several axes, with `relation`/`membership` fields back to each: the
    joint `cells` of a collection over its samples; metacells over cells; cells over transcript points.
 
+> **Implemented today (group axis).** Rule 2 is live: a `label` stored in the `categorical` encoding
+> (integer codes + an ordered category set) **induces** a derived **`factor` axis** whose labels *are*
+> its categories. `Dataset.induce(field)` (Python) does this — and `add_field` of a categorical fires it
+> **automatically** (induction is data-driven: it keys on the value's type, not on a profile listing
+> it). Identity is canonical — a label's bare name + its ordered label set — so independent results over
+> the same clustering land on **one** axis and align; a name clash with *different* labels is an error,
+> never a silent merge. The axis carries `induced_by` back to its field, and `validate()` checks the
+> axis labels still equal the field's categories, so induction is *checkable*, not merely conventional.
+> Coordinate (rule 1) and union (rule 3) axes are still created by the profiles directly. See
+> [`format.md`](format.md) for the on-disk `categorical` encoding.
+
 A few **named patterns** are bundles of the above, not new constructs:
 
 - A **table** (`obs`, `var`, `cellMeta`, `sampleMeta`) is the set of arity-1 fields over one axis,
@@ -180,9 +191,9 @@ Sample "pbmc_donorA"
     pca_loadings   loading    genes × pca      shares the 'pca' axis
     umap           embedding  cells × umap     induces the 'umap' axis
     knn            relation   cells × cells    similarity, weighted
-    leiden         label      cells → leiden   induces the 'leiden' group axis
-    markers.lfc    measure    genes × leiden   on the 'leiden' axis
-    markers.padj   measure    genes × leiden   + uncertainty
+    leiden         label      cells → leiden   induces the 'leiden' factor axis (categorical)
+    markers.lfc    measure    leiden × genes   on the 'leiden' axis (canonical factor-first)
+    markers.padj   measure    leiden × genes   + uncertainty
     dendrogram     hierarchy  over leiden
 ```
 

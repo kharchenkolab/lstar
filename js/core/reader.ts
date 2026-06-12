@@ -13,7 +13,8 @@ export interface LstarStore {
 export interface AxisMeta {
   name: string;
   origin: string;
-  role?: string;
+  role?: string;            // observation | feature | coordinate | factor | ...
+  induced_by?: string;      // the field this axis was induced from (a `factor` axis's categorical label)
   length: number;
 }
 
@@ -73,6 +74,7 @@ export class LstarDataset {
       const offs = await this._open("axes/" + name + "/labels_offsets");
       const lm = (ax.attrs as any).lstar ?? {};
       this.axes.set(name, { name, origin: lm.origin ?? "observed", role: lm.role,
+                            induced_by: lm.induced_by ?? undefined,
                             length: (offs.shape[0] as number) - 1 });
     }
     for (const name of m.fields as string[]) {

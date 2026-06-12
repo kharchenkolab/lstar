@@ -8,7 +8,7 @@ anndata is imported lazily, so `import lstar` never requires it.
 """
 import numpy as np
 
-from ..model import Dataset, OBSERVED, DERIVED
+from ..model import Categorical, Dataset, OBSERVED, DERIVED, _is_categorical
 
 PROFILE = "anndata@0.1"
 
@@ -58,9 +58,24 @@ def _by_dtype_series(s):
     import pandas as pd
     if pd.api.types.is_bool_dtype(s):
         return np.asarray(s.values), "label"
+    if isinstance(s.dtype, pd.CategoricalDtype):       # preserve category order + NaN (-> -1 missing)
+        c = s.values
+        return Categorical(np.asarray(c.codes), np.asarray(c.categories, dtype=str),
+                           ordered=bool(c.ordered)), "label"
     if pd.api.types.is_numeric_dtype(s):
         return np.asarray(s.values), "measure"
     return np.asarray(s.astype(str).values, dtype=str), "label"
+
+
+def _to_pandas_col(f):
+    """An L* obs/var field as a column value for write-back: a `Categorical` field is rebuilt as a
+    `pd.Categorical` (categories, order, and `-1`->NaN missing preserved), else a plain array."""
+    if _is_categorical(f.values):
+        import pandas as pd
+        c = f.values
+        return pd.Categorical.from_codes(np.asarray(c.codes), categories=list(c.categories),
+                                         ordered=bool(c.ordered))
+    return np.asarray(f.values)
 
 
 def _coord_axis(ds, name, ncol, observed=False):
@@ -291,8 +306,8 @@ def write_anndata(ds):
     X = r["X"].values if r["X"] is not None else None
     raw_field = r["raw"]
     layers = {k: f.values for k, f in r["layers"].items()}
-    obs = {k: np.asarray(f.values) for k, f in r["obs"].items()}
-    var = {k: np.asarray(f.values) for k, f in r["var"].items()}
+    obs = {k: _to_pandas_col(f) for k, f in r["obs"].items()}
+    var = {k: _to_pandas_col(f) for k, f in r["var"].items()}
     obsm = {k: np.asarray(f.values) for k, f in r["obsm"].items()}
     varm = {k: np.asarray(f.values) for k, f in r["varm"].items()}
     obsp = {k: f.values for k, f in r["obsp"].items()}
@@ -426,8 +441,8 @@ def write_anndata_streamed(ds, path, chunk_elems=None):
         else:
             layers_eager[k] = np.asarray(f.values)
 
-    obs = {k: np.asarray(f.values) for k, f in r["obs"].items()}
-    var = {k: np.asarray(f.values) for k, f in r["var"].items()}
+    obs = {k: _to_pandas_col(f) for k, f in r["obs"].items()}
+    var = {k: _to_pandas_col(f) for k, f in r["var"].items()}
     obsm = {k: np.asarray(f.values) for k, f in r["obsm"].items()}
     varm = {k: np.asarray(f.values) for k, f in r["varm"].items()}
 
