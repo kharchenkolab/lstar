@@ -6,10 +6,12 @@
 // Chunking/compression are intentionally simple here (single uncompressed chunk); the base store's
 // own fields keep their original chunking when `addToStore` leaves them untouched.
 
-/** Write side of the store contract: put one object by key (mkdir-p handled by the store). */
+/** Write side of the store contract: put one object by key (mkdir-p handled by the store).
+ * `delete` is optional and used only to drop stale consolidated metadata after `addToStore`. */
 export interface LstarWritableStore {
   get(key: string): Promise<Uint8Array | undefined>;
   set(key: string, value: Uint8Array): Promise<void>;
+  delete?(key: string): Promise<void>;
 }
 
 export interface AxisSpec { labels: (string | number)[]; origin?: string; role?: string; }
@@ -128,4 +130,8 @@ export async function addToStore(store: LstarWritableStore, add: { axes?: Record
   }
   for (const p of add.profiles ?? []) if (!(m.profiles ?? (m.profiles = [])).includes(p)) m.profiles.push(p);
   await store.set(".zattrs", j(root));
+  // The base store may carry consolidated metadata (.zmetadata) that now lists a stale field set;
+  // drop it so readers fall back to the live per-object metadata we just wrote (both zarrita's
+  // withConsolidated and Python's _open_root fall back gracefully when it's absent).
+  if (store.delete) await store.delete(".zmetadata");
 }

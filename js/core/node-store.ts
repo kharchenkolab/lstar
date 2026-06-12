@@ -23,4 +23,8 @@ export class NodeFSStore implements LstarStore {
     await fs.mkdir(path.dirname(fp), { recursive: true });
     await fs.writeFile(fp, value);
   }
+  /** Remove one object if present (used to drop stale consolidated metadata after a write). */
+  async delete(key: string): Promise<void> {
+    await fs.rm(path.join(this.root, key), { force: true });
+  }
 }
