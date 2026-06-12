@@ -58,20 +58,21 @@ lstar_read_block <- function(path, field, g_lo, g_hi, cell_names = NULL, gene_na
   m
 }
 
-#' Read an arbitrary set of gene columns of a CSC measure (run-coalesced), returning cells x genes.
+#' Read an arbitrary set of gene columns of a CSC measure, returning cells x genes.
 #'
-#' Maps gene names/indices to columns, reads each maximal contiguous run via `lstar_read_block`, and
-#' assembles the requested columns in order. Scattered genes touch more chunks (a real random-access
-#' cost of a chunked CSC store) -- contiguous subsets are cheapest.
+#' Gathers the requested gene columns from a chunked CSC store, decoding each touched chunk **at most
+#' once** (an ascending sweep over sorted-unique columns), then restores the caller's order. Efficient
+#' for scattered subsets (e.g. overdispersed genes for PCA) -- unlike a per-column read it does not
+#' re-decode a chunk once per gene it contains.
 #' @export
 lstar_read_genes <- function(path, field, genes, all_genes, cell_names = NULL) {
   idx <- if (is.character(genes)) match(genes, all_genes) else as.integer(genes)
   if (anyNA(idx)) stop("some requested genes are not in the store")
-  ord <- order(idx); sidx <- idx[ord] - 1L                 # 0-based, sorted
-  runs <- split(sidx, cumsum(c(TRUE, diff(sidx) != 1)))     # maximal contiguous runs
-  blocks <- lapply(runs, function(r) lstar_read_block(path, field, r[1], r[length(r)] + 1L))
-  m <- do.call(cbind, blocks)                               # cells x (sorted genes)
-  m <- m[, order(ord), drop = FALSE]                        # restore requested order
+  u <- sort(unique(idx))                                    # 1-based, sorted, unique
+  b <- lstar_cpp_read_csc_cols(path, field, as.integer(u - 1L))      # decode each chunk once
+  m <- new("dgCMatrix", i = as.integer(b$indices), p = as.integer(b$indptr),
+           x = as.numeric(b$data), Dim = as.integer(c(b$nrows, length(u))))
+  m <- m[, match(idx, u), drop = FALSE]                     # restore caller order (and any duplicates)
   if (!is.null(cell_names)) rownames(m) <- cell_names
   colnames(m) <- if (is.character(genes)) genes else all_genes[genes]
   m

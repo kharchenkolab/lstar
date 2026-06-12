@@ -145,6 +145,18 @@ list lstar_cpp_read_csc_block(std::string path, std::string field, int g_lo, int
                          "ncols"_nm = (int)b.ncols});
 }
 
+// Gather an arbitrary (sorted, unique, 0-based) set of gene columns of a CSC measure, decoding each
+// touched chunk at most once -- the efficient scattered-subset read.
+[[cpp11::register]]
+list lstar_cpp_read_csc_cols(std::string path, std::string field, integers cols) {
+  std::vector<int64_t> cv((size_t)cols.size());
+  for (R_xlen_t i = 0; i < cols.size(); ++i) cv[(size_t)i] = (int64_t)cols[i];
+  lstar::CscBlock b = lstar::read_csc_cols(path + "/fields/" + field, cv);
+  return writable::list({"data"_nm = nd_doubles(b.data), "indices"_nm = nd_integers(b.indices),
+                         "indptr"_nm = to_ints(b.indptr), "nrows"_nm = (int)b.nrows,
+                         "ncols"_nm = (int)b.ncols});
+}
+
 [[cpp11::register]]
 list lstar_cpp_read(std::string path) {
   lstar::Dataset ds = lstar::read(path);

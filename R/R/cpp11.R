@@ -16,6 +16,10 @@ lstar_cpp_read_csc_block <- function(path, field, g_lo, g_hi) {
   .Call(`_lstar_lstar_cpp_read_csc_block`, path, field, g_lo, g_hi)
 }
 
+lstar_cpp_read_csc_cols <- function(path, field, cols) {
+  .Call(`_lstar_lstar_cpp_read_csc_cols`, path, field, cols)
+}
+
 lstar_cpp_read <- function(path) {
   .Call(`_lstar_lstar_cpp_read`, path)
 }

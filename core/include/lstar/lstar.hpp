@@ -745,6 +745,87 @@ inline CscBlock read_csc_block(const fs::path& field_group, int64_t g_lo, int64_
     return b;
 }
 
+// A 1-D chunked zarr array read one element-range at a time, caching the last decoded chunk. Because
+// a gather issues ranges in ascending order, each chunk is decoded at most once across all ranges --
+// the key to an efficient scattered-column gather (vs decoding a chunk once per touched column).
+struct ChunkReader {
+    fs::path dir;
+    int64_t cs = 1, n = 0;
+    size_t dsz = 1;
+    json compressor;
+    int64_t cached = -1;
+    std::vector<uint8_t> buf;                              // the decoded chunk (cs*dsz bytes)
+
+    explicit ChunkReader(const fs::path& d) : dir(d) {
+        json za = read_json(d / ".zarray");
+        cs = za["chunks"].get<std::vector<int64_t>>()[0];
+        n = za["shape"].get<std::vector<int64_t>>()[0];
+        dsz = dtype_size(za["dtype"].get<std::string>());
+        compressor = za.contains("compressor") ? za["compressor"] : json(nullptr);
+    }
+    const uint8_t* chunk(int64_t ci) {
+        if (ci != cached) {
+            fs::path cf = dir / std::to_string(ci);
+            if (fs::exists(cf)) {
+                std::vector<uint8_t> raw =
+                    decode_chunk(compressor, read_bytes(cf), static_cast<size_t>(cs) * dsz);
+                raw.resize(static_cast<size_t>(cs) * dsz);
+                buf.swap(raw);
+            } else {
+                buf.assign(static_cast<size_t>(cs) * dsz, 0);   // missing chunk -> fill 0
+            }
+            cached = ci;
+        }
+        return buf.data();
+    }
+    // copy source elements [lo, hi) to `out` starting at element `dst` (out is dsz-byte elements)
+    void copy_range(uint8_t* out, int64_t dst, int64_t lo, int64_t hi) {
+        int64_t k = 0;
+        for (int64_t p = lo; p < hi; ) {
+            int64_t ci = p / cs;
+            int64_t cend = std::min<int64_t>(hi, (ci + 1) * cs);
+            const uint8_t* cb = chunk(ci);
+            std::memcpy(out + static_cast<size_t>(dst + k) * dsz,
+                        cb + static_cast<size_t>(p - ci * cs) * dsz,
+                        static_cast<size_t>(cend - p) * dsz);
+            k += cend - p;
+            p = cend;
+        }
+    }
+};
+
+// Gather an arbitrary set of gene (column) indices of a CSC measure, decoding each touched data/index
+// chunk at most once (the efficient scattered-subset read; `read_csc_block`-per-run re-decodes chunks
+// for scattered columns). `cols` must be sorted ascending and unique (the R wrapper enforces this and
+// restores the caller's order). Returns the gathered columns as their own CSC arrays.
+inline CscBlock read_csc_cols(const fs::path& field_group, const std::vector<int64_t>& cols) {
+    json m = read_json(field_group / ".zattrs")["lstar"];
+    if (opt_str(m, "encoding") != "csc")
+        throw std::runtime_error("read_csc_cols: field is not CSC (gene-major)");
+    auto shape = m["shape"].get<std::vector<int64_t>>();
+    std::vector<int64_t> ip = as_i64(read_array(field_group / "indptr"));
+    CscBlock b;
+    b.nrows = shape[0];
+    b.ncols = static_cast<int64_t>(cols.size());
+    b.indptr.assign(static_cast<size_t>(b.ncols + 1), 0);
+    for (int64_t j = 0; j < b.ncols; ++j)
+        b.indptr[(size_t)(j + 1)] = b.indptr[(size_t)j] + (ip[cols[(size_t)j] + 1] - ip[cols[(size_t)j]]);
+    const int64_t total = b.indptr.back();
+    ChunkReader dr(field_group / "data"), ir(field_group / "indices");
+    b.data.dtype = read_json(field_group / "data" / ".zarray")["dtype"].get<std::string>();
+    b.indices.dtype = read_json(field_group / "indices" / ".zarray")["dtype"].get<std::string>();
+    b.data.shape = {total};
+    b.indices.shape = {total};
+    b.data.bytes.assign(static_cast<size_t>(total) * dr.dsz, 0);
+    b.indices.bytes.assign(static_cast<size_t>(total) * ir.dsz, 0);
+    for (int64_t j = 0; j < b.ncols; ++j) {
+        int64_t g = cols[(size_t)j], lo = ip[g], hi = ip[g + 1], dst = b.indptr[(size_t)j];
+        dr.copy_range(b.data.bytes.data(), dst, lo, hi);
+        ir.copy_range(b.indices.bytes.data(), dst, lo, hi);
+    }
+    return b;
+}
+
 // Zero-aware per-column mean/variance of a CSC measure read straight from a store *block-by-block*,
 // so the whole matrix never lands in memory -- the C++/R counterpart of Python's `stream_col_stats`.
 // `field_group` is the field's directory (…/fields/<name>). `indptr` (small) is read whole; for each
