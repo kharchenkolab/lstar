@@ -12,6 +12,10 @@ lstar_cpp_stream_col_stats <- function(path, field, block, n_threads, lognorm, d
   .Call(`_lstar_lstar_cpp_stream_col_stats`, path, field, block, n_threads, lognorm, depth, depthScale, population)
 }
 
+lstar_cpp_stream_col_sum_by_group <- function(path, field, group, ngroups, lognorm, depth, depthScale, block, n_threads) {
+  .Call(`_lstar_lstar_cpp_stream_col_sum_by_group`, path, field, group, ngroups, lognorm, depth, depthScale, block, n_threads)
+}
+
 lstar_cpp_read_csc_block <- function(path, field, g_lo, g_hi) {
   .Call(`_lstar_lstar_cpp_read_csc_block`, path, field, g_lo, g_hi)
 }

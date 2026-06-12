@@ -142,6 +142,24 @@ list lstar_cpp_stream_col_stats(std::string path, std::string field, int block,
                          "nnz"_nm = to_ints(s.nnz)});
 }
 
+// Streaming per-(group, gene) SUM of a CSC measure (the fused pseudobulk / colSumByFacView), with the
+// optional depth-normalized log1p view. Returns the (ngroups x ncols) sums flat, row-major (g*ncols+j).
+[[cpp11::register]]
+doubles lstar_cpp_stream_col_sum_by_group(std::string path, std::string field, integers group,
+                                          int ngroups, bool lognorm, doubles depth, double depthScale,
+                                          int block, int n_threads) {
+  std::vector<int> g((size_t)group.size());
+  for (R_xlen_t i = 0; i < group.size(); ++i) g[(size_t)i] = group[i];
+  std::vector<double> dv;
+  if (depth.size() > 0) { dv.resize((size_t)depth.size()); for (R_xlen_t i = 0; i < depth.size(); ++i) dv[(size_t)i] = depth[i]; }
+  const std::vector<double>* dp = dv.empty() ? nullptr : &dv;
+  std::vector<double> out = lstar::stream_csc_col_sum_by_group(
+      path + "/fields/" + field, g, ngroups, lognorm, dp, depthScale, (int64_t)block, n_threads);
+  writable::doubles o((R_xlen_t)out.size());
+  for (size_t i = 0; i < out.size(); ++i) o[(R_xlen_t)i] = out[i];
+  return o;
+}
+
 // Read a contiguous gene (column) range [g_lo, g_hi) of a CSC measure as CSC arrays, touching only
 // the overlapping chunks. The general bounded block-read primitive (R assembles the dgCMatrix).
 [[cpp11::register]]

@@ -53,6 +53,22 @@ stream_col_stats <- function(path, field, block = 4096L, n_threads = 1L, lognorm
                              as.numeric(depthScale), isTRUE(population))
 }
 
+#' Per-(group, gene) sums of a CSC measure in a store, streamed and bounded-memory.
+#'
+#' Streaming, fused pseudobulk: per cell-group sums of each gene, computed in one threaded pass over a
+#' chunked CSC store, with the same optional depth-normalized `log1p` view as [stream_col_stats()] (the
+#' counterpart of pagoda2's `colSumByFacView`). `group` is a per-cell integer bucket in `[0, ngroups)`
+#' in store row order (out-of-range cells are skipped; pass NA cells as `0` for an explicit `<NA>` row).
+#' @return a `ngroups x ngenes` numeric matrix (row `g` = group `g`).
+#' @export
+lstar_stream_col_sum_by_group <- function(path, field, group, ngroups, lognorm = FALSE, depth = NULL,
+                                          depthScale = 1, block = 4096L, n_threads = 1L) {
+  v <- lstar_cpp_stream_col_sum_by_group(path, field, as.integer(group), as.integer(ngroups),
+         isTRUE(lognorm), if (is.null(depth)) numeric(0) else as.numeric(depth),
+         as.numeric(depthScale), as.integer(block), as.integer(n_threads))
+  matrix(v, nrow = ngroups, byrow = TRUE)        # out is row-major g*ncols+j -> (ngroups x ngenes)
+}
+
 #' Read a contiguous gene (column) range of a CSC measure from an L* store, bounded-memory.
 #'
 #' Reads genes `[g_lo, g_hi)` (0-based, half-open) of a CSC measure as a `dgCMatrix` (cells x genes),

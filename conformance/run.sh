@@ -41,6 +41,10 @@ echo "== blocked-reader conformance (R/C++ bounded col stats == full read) =="
 bash conformance/stream_reduce.sh >/tmp/lstar_sr.log 2>&1 \
   && pass "blocked col-stats reducer matches full read" || { echo "  FAIL stream_reduce"; tail -15 /tmp/lstar_sr.log; exit 1; }
 
+echo "== fused-view reducer conformance (depth+log1p mean/var + grouped sum == in-memory) =="
+bash conformance/fused_view.sh >/tmp/lstar_fv.log 2>&1 \
+  && pass "fused depth-view reducers match in-memory" || { echo "  FAIL fused_view"; tail -15 /tmp/lstar_fv.log; exit 1; }
+
 echo "== block-reader conformance (lstar_read_block / read_genes == full read) =="
 bash conformance/read_block.sh >/tmp/lstar_rb.log 2>&1 \
   && pass "block reader (contiguous + scattered) matches full read" || { echo "  FAIL read_block"; tail -15 /tmp/lstar_rb.log; exit 1; }

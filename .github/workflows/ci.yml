@@ -46,6 +46,8 @@ jobs:
         run: bash conformance/collection.sh
       - name: blocked-reader conformance (R/C++ bounded col stats == full read)
         run: bash conformance/stream_reduce.sh
+      - name: fused-view reducer conformance (depth+log1p mean/var + grouped sum == in-memory)
+        run: bash conformance/fused_view.sh
       - name: block-reader conformance (lstar_read_block / read_genes == full read)
         run: bash conformance/read_block.sh
       - name: R writer chunking/compression (R-written chunked+gzip readable by Py/C++)

@@ -928,6 +928,72 @@ inline GroupStats csc_col_sum_by_group(const T* data, const int64_t* indptr, con
     return s;
 }
 
+// Streaming per-(group, gene) SUM of a CSC measure read straight from a store, with the same optional
+// "plain" view (depth-normalize + log1p) as stream_csc_col_mean_var -- the fused counterpart of
+// pagoda2's colSumByFacView (pseudobulk / marker sums), one threaded streamed pass, no R marshalling.
+// `group_of_cell` (length nrows) maps each cell to a bucket in [0, ngroups) (out of range -> skipped;
+// pass NA cells as bucket 0 to mirror pagoda2's `<NA>` row). Output is flat row-major (g*ncols + gene).
+template <class T>
+inline void sum_by_group_block(const T* data, const int64_t* lindptr, int64_t bcols, int64_t col0,
+                               const int64_t* indices, int64_t ncols_total, const int* group_of_cell,
+                               int ngroups, bool lognorm, const double* depth, double depthScale,
+                               double* out, int n_threads) {
+#ifdef _OPENMP
+    if (n_threads > 0) omp_set_num_threads(n_threads);
+    #pragma omp parallel for schedule(static) if (n_threads != 1)
+#endif
+    for (int64_t j = 0; j < bcols; ++j) {            // each j writes distinct out columns -> race-free
+        for (int64_t k = lindptr[j]; k < lindptr[j + 1]; ++k) {
+            const int64_t row = indices[k];
+            const int g = group_of_cell[row];
+            if (g < 0 || g >= ngroups) continue;
+            double v = static_cast<double>(data[k]);
+            if (depth) v = v * depthScale / depth[row];
+            if (lognorm) v = std::log1p(v);
+            out[(size_t)g * (size_t)ncols_total + (size_t)(col0 + j)] += v;
+        }
+    }
+}
+inline void sum_by_group_block_dispatch(const NdArray& data, const int64_t* lindptr, int64_t bcols,
+        int64_t col0, const int64_t* indices, int64_t ncols_total, const int* group_of_cell,
+        int ngroups, bool lognorm, const double* depth, double depthScale, double* out, int n_threads) {
+    const std::string& dt = data.dtype;
+    if (dt == "<f8") sum_by_group_block(data.as<double>(),  lindptr, bcols, col0, indices, ncols_total, group_of_cell, ngroups, lognorm, depth, depthScale, out, n_threads);
+    else if (dt == "<f4") sum_by_group_block(data.as<float>(),   lindptr, bcols, col0, indices, ncols_total, group_of_cell, ngroups, lognorm, depth, depthScale, out, n_threads);
+    else if (dt == "<i4") sum_by_group_block(data.as<int32_t>(), lindptr, bcols, col0, indices, ncols_total, group_of_cell, ngroups, lognorm, depth, depthScale, out, n_threads);
+    else if (dt == "<i8") sum_by_group_block(data.as<int64_t>(), lindptr, bcols, col0, indices, ncols_total, group_of_cell, ngroups, lognorm, depth, depthScale, out, n_threads);
+    else throw std::runtime_error("sum_by_group: unsupported data dtype " + dt);
+}
+inline std::vector<double> stream_csc_col_sum_by_group(const fs::path& field_group,
+        const std::vector<int>& group_of_cell, int ngroups, bool lognorm,
+        const std::vector<double>* depth, double depthScale, int64_t block, int n_threads) {
+    json m = read_json(field_group / ".zattrs")["lstar"];
+    if (opt_str(m, "encoding") != "csc")
+        throw std::runtime_error("stream_csc_col_sum_by_group: field is not CSC (need gene-major)");
+    auto shape = m["shape"].get<std::vector<int64_t>>();
+    const int64_t nrows = shape[0], ncols = shape[1];
+    if ((int64_t)group_of_cell.size() != nrows)
+        throw std::runtime_error("stream_csc_col_sum_by_group: group length must equal nrows");
+    const double* depthp = (depth && !depth->empty()) ? depth->data() : nullptr;
+    if (depthp && (int64_t)depth->size() != nrows)
+        throw std::runtime_error("stream_csc_col_sum_by_group: depth length must equal nrows");
+    std::vector<int64_t> indptr = as_i64(read_array(field_group / "indptr"));
+    if (block <= 0) block = 4096;
+    std::vector<double> out((size_t)ngroups * (size_t)ncols, 0.0);
+    for (int64_t a = 0; a < ncols; a += block) {
+        const int64_t b = std::min(a + block, ncols);
+        const int64_t lo = indptr[a], hi = indptr[b];
+        NdArray dblk = read_array_range(field_group / "data", lo, hi);
+        std::vector<int64_t> idxblk = as_i64(read_array_range(field_group / "indices", lo, hi));
+        std::vector<int64_t> liptr((size_t)(b - a + 1));
+        for (int64_t j = 0; j <= b - a; ++j) liptr[(size_t)j] = indptr[a + j] - lo;
+        sum_by_group_block_dispatch(dblk, liptr.data(), b - a, a, idxblk.data(), ncols,
+                                    group_of_cell.data(), ngroups, lognorm, depthp, depthScale,
+                                    out.data(), n_threads);
+    }
+    return out;
+}
+
 // Subsample differential-expression ranker over a CSR submatrix (sampled cells x genes, cell-major):
 // `membership` (length nrows) labels each row 0 (group A), 1 (group B), or <0 (skip). `indices` are
 // gene ids, `indptr` is length nrows+1. Returns per-gene log1p group means + log-fold-change

@@ -27,6 +27,13 @@ extern "C" SEXP _lstar_lstar_cpp_stream_col_stats(SEXP path, SEXP field, SEXP bl
   END_CPP11
 }
 // lstar_cpp.cpp
+doubles lstar_cpp_stream_col_sum_by_group(std::string path, std::string field, integers group, int ngroups, bool lognorm, doubles depth, double depthScale, int block, int n_threads);
+extern "C" SEXP _lstar_lstar_cpp_stream_col_sum_by_group(SEXP path, SEXP field, SEXP group, SEXP ngroups, SEXP lognorm, SEXP depth, SEXP depthScale, SEXP block, SEXP n_threads) {
+  BEGIN_CPP11
+    return cpp11::as_sexp(lstar_cpp_stream_col_sum_by_group(cpp11::as_cpp<cpp11::decay_t<std::string>>(path), cpp11::as_cpp<cpp11::decay_t<std::string>>(field), cpp11::as_cpp<cpp11::decay_t<integers>>(group), cpp11::as_cpp<cpp11::decay_t<int>>(ngroups), cpp11::as_cpp<cpp11::decay_t<bool>>(lognorm), cpp11::as_cpp<cpp11::decay_t<doubles>>(depth), cpp11::as_cpp<cpp11::decay_t<double>>(depthScale), cpp11::as_cpp<cpp11::decay_t<int>>(block), cpp11::as_cpp<cpp11::decay_t<int>>(n_threads)));
+  END_CPP11
+}
+// lstar_cpp.cpp
 list lstar_cpp_read_csc_block(std::string path, std::string field, int g_lo, int g_hi);
 extern "C" SEXP _lstar_lstar_cpp_read_csc_block(SEXP path, SEXP field, SEXP g_lo, SEXP g_hi) {
   BEGIN_CPP11
@@ -58,13 +65,14 @@ extern "C" SEXP _lstar_lstar_cpp_write(SEXP ds, SEXP path, SEXP chunk_elems, SEX
 
 extern "C" {
 static const R_CallMethodDef CallEntries[] = {
-    {"_lstar_lstar_cpp_col_sum_by_group",  (DL_FUNC) &_lstar_lstar_cpp_col_sum_by_group,  8},
-    {"_lstar_lstar_cpp_read",              (DL_FUNC) &_lstar_lstar_cpp_read,              1},
-    {"_lstar_lstar_cpp_read_csc_block",    (DL_FUNC) &_lstar_lstar_cpp_read_csc_block,    4},
-    {"_lstar_lstar_cpp_read_csc_cols",     (DL_FUNC) &_lstar_lstar_cpp_read_csc_cols,     3},
-    {"_lstar_lstar_cpp_stream_col_stats",  (DL_FUNC) &_lstar_lstar_cpp_stream_col_stats,  8},
-    {"_lstar_lstar_cpp_subsample_de_rank", (DL_FUNC) &_lstar_lstar_cpp_subsample_de_rank, 7},
-    {"_lstar_lstar_cpp_write",             (DL_FUNC) &_lstar_lstar_cpp_write,             5},
+    {"_lstar_lstar_cpp_col_sum_by_group",        (DL_FUNC) &_lstar_lstar_cpp_col_sum_by_group,        8},
+    {"_lstar_lstar_cpp_read",                    (DL_FUNC) &_lstar_lstar_cpp_read,                    1},
+    {"_lstar_lstar_cpp_read_csc_block",          (DL_FUNC) &_lstar_lstar_cpp_read_csc_block,          4},
+    {"_lstar_lstar_cpp_read_csc_cols",           (DL_FUNC) &_lstar_lstar_cpp_read_csc_cols,           3},
+    {"_lstar_lstar_cpp_stream_col_stats",        (DL_FUNC) &_lstar_lstar_cpp_stream_col_stats,        8},
+    {"_lstar_lstar_cpp_stream_col_sum_by_group", (DL_FUNC) &_lstar_lstar_cpp_stream_col_sum_by_group, 9},
+    {"_lstar_lstar_cpp_subsample_de_rank",       (DL_FUNC) &_lstar_lstar_cpp_subsample_de_rank,       7},
+    {"_lstar_lstar_cpp_write",                   (DL_FUNC) &_lstar_lstar_cpp_write,                   5},
     {NULL, NULL, 0}
 };
 }
