@@ -41,6 +41,11 @@ echo "== blocked-reader conformance (R/C++ bounded col stats == full read) =="
 bash conformance/stream_reduce.sh >/tmp/lstar_sr.log 2>&1 \
   && pass "blocked col-stats reducer matches full read" || { echo "  FAIL stream_reduce"; tail -15 /tmp/lstar_sr.log; exit 1; }
 
+echo "== disk-backed targets (L* -> h5ad -> backed AnnData / Seurat+BPCells / SCE+HDF5Array) =="
+bash conformance/backed_targets.sh >/tmp/lstar_bt.log 2>&1 \
+  && { pass "disk-backed conversion targets"; grep "SKIP" /tmp/lstar_bt.log | sed 's/^/      /'; } \
+  || { echo "  FAIL backed_targets"; tail -15 /tmp/lstar_bt.log; exit 1; }
+
 echo "== JS/WASM (Emscripten kernels + zarrita reader + viewer API; skips if emsdk absent) =="
 LSTAR_EMCC_PYTHON="${LSTAR_EMCC_PYTHON:-}" bash conformance/js.sh 2>&1 | sed 's/^/  /'
 

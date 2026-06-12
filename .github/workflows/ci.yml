@@ -46,3 +46,5 @@ jobs:
         run: bash conformance/collection.sh
       - name: blocked-reader conformance (R/C++ bounded col stats == full read)
         run: bash conformance/stream_reduce.sh
+      - name: disk-backed targets (backed AnnData always; Seurat+BPCells / SCE+HDF5Array skip if absent)
+        run: bash conformance/backed_targets.sh

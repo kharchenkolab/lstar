@@ -143,12 +143,34 @@ and the result is byte-identical to the eager conversion. The same streaming app
 recompression/re-chunking: `lstar.write(lstar.read(src, lazy=True), dst, stream=True)` rewrites a
 store without ever holding it whole.
 
-Boundary: bounded-memory conversion works whenever **both ends are on-disk formats** (`.h5ad` ↔
-`.lstar.zarr` today). Converting all the way into an *in-memory* object — a Seurat `dgCMatrix` in an
-`.rds`, an in-memory AnnData `X` — still needs the matrix in RAM at the destination, *unless* that
-format is targeted as a *disk-backed* representation (AnnData `backed`, Seurat v5 **BPCells**, SCE
-`HDF5Array`), which lets the streamed `.h5ad` above be opened without a full load. Those disk-backed
-target adapters are the next step.
+### Disk-backed native targets (bounded all the way to a usable object)
+
+The streamed `.h5ad` above is itself a disk-backed representation, so the bounded path runs *all the
+way into a native object* — you never hold the matrix, even at the destination:
+
+| Target | Open the streamed `.h5ad` as | Backed by |
+|---|---|---|
+| **AnnData** (Python) | `anndata.read_h5ad(path, backed="r")` | h5ad on disk (`X` stays a `SparseDataset`) |
+| **Seurat v5** (R) | `read_seurat_backed(path)` | **BPCells** on-disk `IterableMatrix` |
+| **SingleCellExperiment** (R) | `read_sce_backed(path)` | **HDF5Array** `DelayedMatrix` |
+
+```r
+library(lstar)
+# after: python -c 'import lstar; lstar.convert_to_h5ad("atlas.lstar.zarr", "atlas.h5ad")'
+so  <- read_seurat_backed("atlas.h5ad")   # counts live on disk (BPCells); Seurat v5 ops stream off it
+sce <- read_sce_backed("atlas.h5ad")      # assay is an on-disk HDF5Array DelayedMatrix
+```
+
+On the 40,220 × 20,138 Marrow atlas (1.3 GB `.h5ad`), building either disk-backed object peaks at
+**~0.6 GB** of RSS — most of which is just loading R and the heavy packages — versus ~7 GB to read
+the matrix in. The matrix is never materialized; the object is fully usable, the data byte-for-byte
+identical. `BPCells` and `HDF5Array` are *optional* (R `Suggests`): each reader errors with a clear
+message if its package is absent, so lstar's required footprint stays small.
+
+Boundary: bounded-memory conversion works whenever **both ends are on-disk formats** — `.h5ad` ↔
+`.lstar.zarr`, and the disk-backed native objects above. Converting into a *fully in-memory* object
+(a Seurat `dgCMatrix` in an `.rds`, an in-memory AnnData `X`) still, by definition, needs the matrix
+in RAM at the destination.
 
 ## What is preserved, and what is not
 
