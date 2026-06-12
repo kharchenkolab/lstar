@@ -20,8 +20,11 @@ preserving the *meaning* of each piece and **reporting** anything a target can't
 dropping it silently.
 
 lstar is available in **Python, R, and C++** (sharing one fast C++ core), reads and writes a portable
-[Zarr](https://zarr.dev)-based format, and is built to scale — you can open a million-cell dataset over
-the network and read just the parts you need.
+[Zarr](https://zarr.dev)-based format, and is built to scale. Everything heavy can be **streamed in
+bounded memory** — convert a multi-gigabyte dataset, write a store, or compute per-gene statistics
+without ever loading the whole matrix, so work that needs a big machine today runs on a laptop (see
+[Large data: lazy reads and streaming](#large-data-lazy-reads-and-streaming)). You can also open a
+million-cell dataset over the network and read just the parts you need.
 
 > **Status:** early development, not yet released. Working today: read/write the same store from
 > Python, C++, and R; profiles for AnnData, Seurat (v3/v4/v5), SingleCellExperiment, and Conos; the
@@ -98,7 +101,7 @@ it is. A new kind of result is a new field with a role — never a change to the
 ## Two design choices worth knowing
 
 **Collections, not one big matrix.** A multi-sample study is stored as a `samples` axis plus
-*per-sample* `cells.<s>`/`genes.<s>` axes and measures (samples may differ in cells *and* genes), with a
+*per-sample* `cells.{s}`/`genes.{s}` axes and measures (samples may differ in cells *and* genes), with a
 *union* `cells` axis for the joint analysis (embedding, clusters, and the integration graph as a
 `relation`). The R package ingests a **Conos** object (`write_conos`) and a split **Seurat v5** assay
 this way — see [`examples/conos_collection_demo.R`](examples/conos_collection_demo.R).
@@ -108,11 +111,20 @@ the variant and adapt — Seurat v3/v4 `Assay` vs. v5 `Assay5` (with a fallback 
 pagoda2's `getRawCounts()` accessor vs. the legacy `$counts` slot, AnnData's `.raw` slot. The detected
 `<format>@<version>` is recorded, so a downstream reader knows what produced the data.
 
-## Reading large data efficiently
+## Large data: lazy reads and streaming
 
-Single-cell stores get big — a million cells, tens of thousands of genes. lstar is built so you don't
-have to load a whole dataset to use part of it.
+Single-cell stores get big — hundreds of thousands of cells, tens of thousands of genes. lstar is built
+so you never hold a whole dataset in memory to work with it: the heavy operations **stream** the matrix
+in blocks, so peak memory stays bounded and roughly *flat* as the data grows.
 
+![Streaming vs in-memory conversion: peak memory stays flat as the dataset grows, for a modest time cost](docs/img/streaming_scaling.png)
+
+<sub>*`h5ad → L*` conversion of the Tabula Muris Senis droplet atlas (subsampled from 25k to 245k cells, up to 502M nonzeros): the in-memory path's peak RAM grows with the matrix (to ~4 GB) while streaming stays ~flat (~0.3 GB, ~13× less at full size), for a small, roughly constant time premium. Reproduce with [`examples/streaming_scaling.py`](examples/streaming_scaling.py).*</sub>
+
+- **Convert and write in bounded memory.** `convert_anndata` (`h5ad → L*`) and `convert_to_h5ad`
+  (`L* → h5ad`) move data between formats with a backed read + block-by-block write, never materializing
+  the matrix; `lstar.write(..., stream=True)` does the same for any lazy/backed source. A multi-gigabyte
+  atlas converts in a few hundred MB.
 - **Open without downloading.** `lstar.read(path, lazy=True)` reads only the small manifest; the heavy
   arrays stay on disk (or on the server) until you touch them. Opening a 78-million-nonzero matrix this
   way costs a few megabytes of memory instead of hundreds.

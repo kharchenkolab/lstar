@@ -177,7 +177,7 @@ capability so older readers degrade rather than fail.
 ## 7. Collections in viewers
 
 The collection model (proposal §2, Appendix B.5; implemented for Conos + split Seurat) is what
-multi-dataset viewing rests on. A viewer reads: per-sample `counts.<s>` measures; the `samples` axis
+multi-dataset viewing rests on. A viewer reads: per-sample `counts.{s}` measures; the `samples` axis
 and a `sample` design label over the union `cells`; and joint embedding/clusters/graph. From these it
 does small-multiples (filter by sample — `O(cells)` bitset), composition (per-(sample × cluster) counts
 straight from labels), and condition DE (pseudobulk, §3). **Guidance:** don't add a separate "multi"

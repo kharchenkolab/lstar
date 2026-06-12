@@ -227,7 +227,7 @@ profiles convert it as such:
 ```r
 library(lstar)
 ds <- write_conos(conos_object)   # a Conos object -> an L* collection:
-#   a `samples` axis; per-sample cells.<s>/genes.<s> axes + counts.<s> measures;
+#   a `samples` axis; per-sample cells.{s}/genes.{s} axes + counts.{s} measures;
 #   a union `cells` axis with a `sample` label; the joint embedding, clusters, and integration graph.
 lstar_write(ds, "study.lstar.zarr")   # reads back identically in Python / C++ / the browser
 ```

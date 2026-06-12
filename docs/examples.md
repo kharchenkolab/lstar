@@ -192,8 +192,8 @@ browser readers read these chunked, compressed stores directly.
 ## 5. Build a collection (Python)
 
 **What this shows.** The model's signature feature: a *collection of heterogeneous samples* is **not**
-one aligned `cells × genes` matrix. Each sample keeps its **own** namespaced `cells.<s>` (and
-`genes.<s>`) axis and its own `counts.<s>` measure; the joint analysis lives over a *derived union*
+one aligned `cells × genes` matrix. Each sample keeps its **own** namespaced `cells.{s}` (and
+`genes.{s}`) axis and its own `counts.{s}` measure; the joint analysis lives over a *derived union*
 `cells` axis carrying a `sample` label and the integration graph as a `relation`. (Compare to the
 proposal's conos example, Appendix B.5.)
 
@@ -271,7 +271,7 @@ library(lstar); library(SeuratObject)
 obj$sample <- rep(c("donorA", "donorB"), length.out = ncol(obj))
 obj[["RNA"]] <- split(obj[["RNA"]], f = obj$sample)   # per-sample layers: counts.donorA, counts.donorB
 ds <- read_seurat(obj)
-stopifnot(ds$kind == "collection")                    # samples axis + per-sample cells.<s>/counts.<s>
+stopifnot(ds$kind == "collection")                    # samples axis + per-sample cells.{s}/counts.{s}
 ```
 
 Full script: [`examples/seurat_collection_demo.R`](../examples/seurat_collection_demo.R).
@@ -304,7 +304,7 @@ library(lstar)
 co <- readRDS("conos_two_sample.rds")     # a Conos R6 object (a collection of Pagoda2 samples)
 ds <- write_conos(co)                     # -> an L* collection:
 #   samples axis;
-#   per-sample cells.<s>/genes.<s> axes + counts.<s> measures + pca.<s> embeddings;
+#   per-sample cells.{s}/genes.{s} axes + counts.{s} measures + pca.{s} embeddings;
 #   a union `cells` axis; a `sample` design label;
 #   the joint embedding, joint leiden label, and integration graph as a (cells x cells) relation.
 print(ds)

@@ -221,7 +221,7 @@ share cells); across samples you keep a collection joined by a graph. A single P
 `sample` unit; a Conos object is the `collection` unit.
 
 > **Implemented today.** The R profiles ingest a **Conos** object and a split **Seurat v5** assay as
-> collections: a `samples` axis, per-sample `cells.<s>`/`genes.<s>` axes and `counts.<s>` measures, a
+> collections: a `samples` axis, per-sample `cells.{s}`/`genes.{s}` axes and `counts.{s}` measures, a
 > union `cells` axis, a `sample` design label, and the joint embedding / clusters / graph. The
 > orthology and inclusion relations and the four packaging modes (3.2) are specified but not yet
 > emitted. See [`examples.md` §9](examples.md#9-r-a-conos-collection).

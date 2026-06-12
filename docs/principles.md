@@ -57,7 +57,7 @@ donors, ages, conditions, sometimes different species or feature sets. Two ways 
 L★ takes the collection view as first-class. A `kind="collection"` dataset has:
 
 - a `samples` axis (the members),
-- per-sample `cells.<s>` and `genes.<s>` axes and `counts.<s>` measures — samples may genuinely
+- per-sample `cells.{s}` and `genes.{s}` axes and `counts.{s}` measures — samples may genuinely
   differ in cells *and* gene sets,
 - a union `cells` axis for the joint analysis layer, with a `sample` **design** label,
 - the joint `embedding`, joint cluster `label`s, and the integration **graph** as a `relation` over
@@ -68,7 +68,7 @@ collection joined by a graph. A single Pagoda2 object is the `sample` unit; a Co
 `collection` unit.
 
 > **Example.** A real two-sample Conos object (16,022 cells) ingests as a collection: two
-> `counts.<s>` measures with their own cell axes, a `sample` label, a joint UMAP, a joint Leiden
+> `counts.{s}` measures with their own cell axes, a `sample` label, a joint UMAP, a joint Leiden
 > labelling, and the integration graph as a 16,022² relation — and it reads back identically in
 > Python. Flattened to one matrix, all of that per-sample structure would be gone.
 
