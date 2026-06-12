@@ -2,6 +2,8 @@
 // Returns/accepts L* datasets as R lists; the R layer assembles Matrix/Seurat objects.
 #include <cpp11.hpp>
 
+#include <cmath>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -63,6 +65,24 @@ lstar::NdArray nd_from_doubles(const doubles& v, std::vector<int64_t> shape, con
   else if (dtype == "<i8") { auto p = a.as<int64_t>(); for (size_t i = 0; i < n; ++i) p[i] = (int64_t)v[i]; }
   else throw std::runtime_error("nd_from_doubles: unsupported dtype " + dtype);
   return a;
+}
+
+// Pick a compact on-disk dtype for an R numeric (always f64) data vector. Integer-valued data
+// (e.g. raw counts) becomes i4 — or i8 if out of int32 range — so it isn't stored as 8-byte floats;
+// otherwise keep f8 (R has no float32, so narrowing to f4 would lose source precision, not de-widen).
+static std::string pick_data_dtype(const doubles& v) {
+  bool all_int = true;
+  double mn = 0.0, mx = 0.0;
+  const R_xlen_t n = v.size();
+  for (R_xlen_t i = 0; i < n; ++i) {
+    const double x = v[i];
+    if (!std::isfinite(x) || x != std::trunc(x)) { all_int = false; break; }
+    if (x < mn) mn = x;
+    if (x > mx) mx = x;
+  }
+  if (!all_int) return "<f8";
+  if (mn >= -2147483648.0 && mx <= 2147483647.0) return "<i4";
+  return "<i8";
 }
 
 static writable::doubles vec_to_dbl(const std::vector<double>& v) {
@@ -182,7 +202,7 @@ void lstar_cpp_write(list ds, std::string path) {
       integers shp = f["shape"];
       for (R_xlen_t j = 0; j < shp.size(); ++j) fl.shape.push_back((int64_t)shp[j]);
       doubles dat = f["data"], ind = f["indices"], ptr = f["indptr"];
-      fl.data    = nd_from_doubles(dat, {(int64_t)dat.size()}, "<f8");
+      fl.data    = nd_from_doubles(dat, {(int64_t)dat.size()}, pick_data_dtype(dat));
       fl.indices = nd_from_doubles(ind, {(int64_t)ind.size()}, "<i4");
       fl.indptr  = nd_from_doubles(ptr, {(int64_t)ptr.size()}, "<i4");
     } else if (fl.encoding == "utf8") {
@@ -192,7 +212,7 @@ void lstar_cpp_write(list ds, std::string path) {
       std::vector<int64_t> sh;
       for (R_xlen_t j = 0; j < shp.size(); ++j) sh.push_back((int64_t)shp[j]);
       doubles dn = f["dense"];
-      fl.dense = nd_from_doubles(dn, sh, "<f8");
+      fl.dense = nd_from_doubles(dn, sh, pick_data_dtype(dn));
     }
     out.fields.push_back(std::move(fl));
   }
