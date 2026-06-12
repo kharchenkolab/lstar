@@ -5,8 +5,8 @@
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 EMSDK="${EMSDK:-$HOME/emsdk}"
-if [ ! -f "$EMSDK/emsdk_env.sh" ]; then
-  echo "  [skip] emsdk not found at $EMSDK — skipping JS/WASM conformance"
+if [ ! -f "$EMSDK/emsdk_env.sh" ] && ! command -v emcc >/dev/null 2>&1; then
+  echo "  [skip] no emcc (emsdk at $EMSDK absent and emcc not on PATH) — skipping JS/WASM conformance"
   exit 0
 fi
 if [ ! -d "$ROOT/js/node_modules/zarrita" ]; then

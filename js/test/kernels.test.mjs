@@ -43,6 +43,27 @@ function makeCSC(nrows, ncols, density) {
   return { data: new Float64Array(dat), indices: new Int32Array(ind), indptr, nrows, ncols };
 }
 
+// Dense reference for per-group sufficient stats over a CSC (indices are row=cell ids).
+function refColSumByGroup(data, indices, indptr, nrows, ncols, group, ngroups, lognorm) {
+  const sum = new Float64Array(ngroups * ncols), sumsq = new Float64Array(ngroups * ncols), ne = new Float64Array(ngroups * ncols);
+  for (let j = 0; j < ncols; j++) for (let k = indptr[j]; k < indptr[j + 1]; k++) {
+    const g = group[indices[k]]; if (g < 0 || g >= ngroups) continue;
+    let v = data[k]; if (lognorm) v = Math.log1p(v);
+    const idx = g * ncols + j; sum[idx] += v; sumsq[idx] += v * v; ne[idx] += 1;
+  }
+  return { sum, sumsq, n_expr: ne };
+}
+
+// Dense reference for the subsample DE ranker over a CSR (indices are gene ids; indptr over rows).
+function refSubsampleDeRank(data, indptr, indices, nrows, ngenes, membership, lognorm) {
+  const sumA = new Float64Array(ngenes), sumB = new Float64Array(ngenes); let nA = 0, nB = 0;
+  for (let r = 0; r < nrows; r++) { const m = membership[r]; if (m < 0) continue; if (m === 0) nA++; else nB++;
+    for (let k = indptr[r]; k < indptr[r + 1]; k++) { const g = indices[k]; let v = data[k]; if (lognorm) v = Math.log1p(v); (m === 0 ? sumA : sumB)[g] += v; } }
+  const meanA = new Float64Array(ngenes), meanB = new Float64Array(ngenes), lfc = new Float64Array(ngenes);
+  for (let g = 0; g < ngenes; g++) { const ma = sumA[g] / Math.max(nA, 1), mb = sumB[g] / Math.max(nB, 1); meanA[g] = ma; meanB[g] = mb; lfc[g] = ma - mb; }
+  return { meanA, meanB, lfc, nA, nB };
+}
+
 const M = await createLstarKernels();
 console.log("  module:", M.version());
 
@@ -89,6 +110,29 @@ for (const lognorm of [false, true]) {
     console.log(`  WASM vs Python lognorm=${lognorm}: ${ok ? "OK" : "MISMATCH"}`);
     if (!ok) failures++;
   }
+}
+
+// csc_col_sum_by_group: per-(group,gene) sum/sumsq/n_expr vs dense reference.
+{
+  const ngroups = 4; const group = new Int32Array(nrows); for (let i = 0; i < nrows; i++) group[i] = i % ngroups;
+  for (const lognorm of [false, true]) {
+    const got = M.colSumByGroup(data, indptr, indices, nrows, ncols, group, ngroups, lognorm);
+    const ref = refColSumByGroup(data, indices, indptr, nrows, ncols, group, ngroups, lognorm);
+    const ok = approx(got.sum, ref.sum, 1e-9) && approx(got.sumsq, ref.sumsq, 1e-7) && approx(got.n_expr, ref.n_expr) && got.ngenes === ncols;
+    console.log(`  colSumByGroup lognorm=${lognorm}: ${ok ? "OK" : "MISMATCH"}`);
+    if (!ok) failures++;
+  }
+}
+
+// subsample_de_rank: log1p group means + lfc vs dense reference (CSR via cscToCsr).
+{
+  const csr = M.cscToCsr(data, indices, indptr, nrows, ncols);   // rows=cells, cols=genes
+  const membership = new Int32Array(nrows); for (let i = 0; i < nrows; i++) membership[i] = i < nrows / 2 ? 0 : 1;
+  const got = M.subsampleDeRank(csr.data, csr.indptr, csr.indices, nrows, ncols, membership, true);
+  const ref = refSubsampleDeRank(csr.data, csr.indptr, csr.indices, nrows, ncols, membership, true);
+  const ok = approx(got.meanA, ref.meanA, 1e-9) && approx(got.meanB, ref.meanB, 1e-9) && approx(got.lfc, ref.lfc, 1e-9) && got.nA === ref.nA && got.nB === ref.nB;
+  console.log(`  subsampleDeRank: ${ok ? "OK" : "MISMATCH"} (nA=${got.nA}, nB=${got.nB})`);
+  if (!ok) failures++;
 }
 
 console.log(failures === 0 ? "\nWASM kernels OK: match dense reference + the Python kernel" : `\nFAIL: ${failures}`);
