@@ -14,9 +14,11 @@ export type Metadata =
   | { kind: "categorical"; codes: Int32Array; categories: string[]; mask?: Uint8Array }
   | { kind: "numeric"; values: Float32Array; mask?: Uint8Array };
 
-function toF64(a: any): Float64Array { return a instanceof Float64Array ? a : Float64Array.from(a); }
-function toI32(a: any): Int32Array { return a instanceof Int32Array ? a : Int32Array.from(a); }
-function toF32(a: any): Float32Array { return a instanceof Float32Array ? a : Float32Array.from(a); }
+// `Number` as the map fn makes these safe for BigInt64Array/BigUint64Array (int64 zarr arrays decode
+// to BigInt typed arrays, which can't be implicitly converted) as well as ordinary numeric arrays.
+function toF64(a: any): Float64Array { return a instanceof Float64Array ? a : Float64Array.from(a, Number); }
+function toI32(a: any): Int32Array { return a instanceof Int32Array ? a : Int32Array.from(a, Number); }
+function toF32(a: any): Float32Array { return a instanceof Float32Array ? a : Float32Array.from(a, Number); }
 
 export class LstarView {
   ds: LstarDataset;
