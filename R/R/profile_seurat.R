@@ -224,6 +224,11 @@ read_seurat <- function(so, assay = SeuratObject::DefaultAssay(so)) {
       add2(paste0(name_of(root), ".", sn), Matrix::t(m), "measure", c(ca, "genes"),
            state = state_of(root))
       samples_seen <- union(samples_seen, sn); sample_of_cell[lc] <- sn
+    } else if (nrow(m) != length(genes)) {
+      # a layer over a *feature subset* (real objects keep scale.data over variable features only, e.g.
+      # pbmc3k.final: 2000 HVGs of 13714). Partial coverage isn't typed yet -> record the loss rather
+      # than mis-span it over the full gene axis (which crashes write-back) or silently drop it.
+      ds$dropped <- c(ds$dropped, sprintf("layer/%s (%d of %d features)", L, nrow(m), length(genes)))
     } else {                                                    # a joined (aligned) layer
       add(name_of(L), Matrix::t(m), "measure", c("cells", "genes"), state = state_of(L))
     }
@@ -253,8 +258,13 @@ read_seurat <- function(so, assay = SeuratObject::DefaultAssay(so)) {
     sd <- tryCatch(SeuratObject::Stdev(dr), error = function(e) numeric(0))   # per-dim stdev -> measure
     if (length(sd) == ncol(emb)) add(paste0(rn, "_stdev"), as.numeric(sd), "measure", rn)
     ld <- SeuratObject::Loadings(dr)
-    if (length(ld) > 0 && nrow(ld) > 0)
-      add(paste0(rn, "_loadings"), unname(as.matrix(ld)), "loading", c("genes", rn))
+    if (length(ld) > 0 && nrow(ld) > 0) {
+      if (nrow(ld) == length(genes))                     # loadings over all genes -> a loading field
+        add(paste0(rn, "_loadings"), unname(as.matrix(ld)), "loading", c("genes", rn))
+      else                                               # real PCA loadings are over variable features
+        ds$dropped <- c(ds$dropped,                      # only (e.g. pbmc3k.final: 2000/13714) -> record
+                        sprintf("loadings/%s (%d of %d features)", rn, nrow(ld), length(genes)))
+    }
   }
 
   # active identity (Idents): the active-vs-stored distinction is otherwise lost. Capture it as a

@@ -58,6 +58,8 @@ jobs:
         run: bash conformance/seurat_versions.sh
       - name: SCE version variety (counts / +reducedDims / +altExps / +colData-rowData factors+metadata)
         run: bash conformance/sce_versions.sh
+      - name: local real Seurat/SCE corpus (skips in CI; SeuratData/scRNAseq not installed)
+        run: bash conformance/real_corpus_r.sh
       - name: collection conformance (collection of samples R -> L* -> Python)
         run: bash conformance/collection.sh
       - name: blocked-reader conformance (R/C++ bounded col stats == full read)

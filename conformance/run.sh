@@ -61,6 +61,9 @@ echo "== SCE version variety (counts / +reducedDims / +altExps / +colData-rowDat
 bash conformance/sce_versions.sh >/tmp/lstar_scev.log 2>&1 \
   && pass "SCE version variants round-trip + validate" || { echo "  FAIL sce_versions"; tail -20 /tmp/lstar_scev.log; exit 1; }
 
+echo "== LOCAL real Seurat/SCE corpus (real published objects; skips if SeuratData/scRNAseq absent) =="
+bash conformance/real_corpus_r.sh 2>&1 | sed "s/^/  /"
+
 echo "== collection conformance (R collection -> L* -> Python) =="
 bash conformance/collection.sh >/tmp/lstar_coll.log 2>&1 \
   && pass "collection of samples round-trips R->py" || { echo "  FAIL collection"; tail -15 /tmp/lstar_coll.log; exit 1; }
