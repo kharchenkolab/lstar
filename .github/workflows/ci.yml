@@ -12,12 +12,12 @@ jobs:
           python-version: "3.11"
       # NOTE: the Python reference impl currently targets the Zarr v2 API; the v3
       # port is pending (the C++ core targets v3). Pin zarr<3 until then.
-      - run: pip install numpy scipy "zarr<3" anndata scanpy
+      - run: pip install numpy scipy "zarr<3" anndata scanpy mudata
       - name: build libstar (C++ core)
         run: cmake -S core -B core/build -DCMAKE_BUILD_TYPE=Release && cmake --build core/build -j2
       - name: python tests + Python<->C++ cross-impl
         run: |
-          for t in test_roundtrip test_anndata_profile test_crossimpl test_validate test_versions test_lazy test_stream_write test_categorical test_induce test_nullable test_aux test_de test_tier1_promote test_real_atlas; do
+          for t in test_roundtrip test_anndata_profile test_crossimpl test_validate test_versions test_lazy test_stream_write test_categorical test_induce test_nullable test_aux test_de test_tier1_promote test_real_atlas test_mudata; do
             echo "== $t =="; PYTHONPATH=python/src python3 python/tests/$t.py
           done
       - name: chunked+gzip cross-impl (Python -> C++ -> Python) + transpose
@@ -30,7 +30,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install numpy scipy "zarr<3" anndata scanpy
+      - run: pip install numpy scipy "zarr<3" anndata scanpy mudata
       - uses: r-lib/actions/setup-r@v2
       - name: R dependencies (CRAN + Bioconductor)
         run: |

@@ -78,6 +78,49 @@ def marrow_backed():
         return None
 
 
+def synthetic_mudata():
+    """A small constructed real-CLASS MuData (RNA + ADT, CITE-seq shape) -- deterministic, no download,
+    so the multimodal path is always covered where `mudata` is installed. Returns None if mudata absent."""
+    try:
+        import anndata as ad
+        import mudata
+        import numpy as np
+        import pandas as pd
+        import scipy.sparse as sp
+    except Exception:
+        return None
+    rng = np.random.default_rng(0); n = 50
+    cells = [f"c{i}" for i in range(n)]
+    rna = ad.AnnData(sp.csr_matrix(rng.poisson(0.5, (n, 20)).astype("float32")),
+                     obs=pd.DataFrame({"leiden": pd.Categorical([str(i % 3) for i in range(n)])}, index=cells),
+                     var=pd.DataFrame(index=[f"g{j}" for j in range(20)]))
+    adt = ad.AnnData(sp.csr_matrix(rng.poisson(5, (n, 8)).astype("float32")),
+                     obs=pd.DataFrame(index=cells), var=pd.DataFrame(index=[f"ADT{j}" for j in range(8)]))
+    return mudata.MuData({"rna": rna, "prot": adt})
+
+
+def minipbcite():
+    """Real CITE-seq MuData (411 cells, RNA+ADT) -- downloaded + cached. Returns None if mudata absent
+    or the fetch fails."""
+    try:
+        import mudata
+    except Exception:
+        return None
+    os.makedirs(TESTDATA, exist_ok=True)
+    p = os.path.join(TESTDATA, "minipbcite.h5mu")
+    if not os.path.exists(p):
+        try:
+            import urllib.request
+            urllib.request.urlretrieve(
+                "https://github.com/gtca/h5xx-datasets/raw/main/datasets/minipbcite.h5mu", p)
+        except Exception as e:                     # pragma: no cover
+            print("  [corpus] minipbcite download failed:", e); return None
+    try:
+        return mudata.read_h5mu(p)
+    except Exception as e:                         # pragma: no cover
+        print("  [corpus] minipbcite read failed:", e); return None
+
+
 def pancreas_velocity():
     """A small **real scVelo output** (150 cells x 250 genes, subsampled from the pancreas dataset):
     real `spliced`/`unspliced` layers, `clusters`/`clusters_coarse` categoricals + `*_colors`, and a

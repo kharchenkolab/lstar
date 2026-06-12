@@ -12,10 +12,12 @@ from .kernels import col_sum_by_group
 from .de import markers, de_bundle, de_factors, pseudobulk
 from .profiles.anndata import (read_anndata, write_anndata, convert_anndata,
                                write_anndata_streamed, convert_to_h5ad)
+from .profiles.mudata import read_mudata, write_mudata, convert_h5mu
 
 __all__ = ["Dataset", "Axis", "Field", "Categorical", "read", "write", "validate", "OBSERVED", "DERIVED",
            "LazyDense", "LazyCSX", "stream_col_stats", "has_accel", "show_config",
            "col_sum_by_group", "markers", "de_bundle", "de_factors", "pseudobulk",
            "read_anndata", "write_anndata", "convert_anndata",
-           "write_anndata_streamed", "convert_to_h5ad"]
+           "write_anndata_streamed", "convert_to_h5ad",
+           "read_mudata", "write_mudata", "convert_h5mu"]
 __version__ = "0.0.1"
