@@ -44,7 +44,7 @@ jobs:
         run: bash conformance/categorical.sh
       - name: induction conformance (factor axis + induced_by round-trip + checkable consistency across Py/C++/R)
         run: bash conformance/induce.sh
-      - name: nullable conformance (validity mask: nullable Int/boolean/string round-trip across Py/C++/R)
+      - name: nullable conformance (validity-mask nullable Int/boolean/string round-trip across Py/C++/R)
         run: bash conformance/nullable.sh
       - name: aux passthrough conformance (uns/@misc subtree round-trips verbatim across Py/C++/R)
         run: bash conformance/aux.sh
