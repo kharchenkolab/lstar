@@ -20,10 +20,10 @@ extern "C" SEXP _lstar_lstar_cpp_subsample_de_rank(SEXP data, SEXP indptr, SEXP 
   END_CPP11
 }
 // lstar_cpp.cpp
-list lstar_cpp_stream_col_stats(std::string path, std::string field, int block, int n_threads, bool lognorm);
-extern "C" SEXP _lstar_lstar_cpp_stream_col_stats(SEXP path, SEXP field, SEXP block, SEXP n_threads, SEXP lognorm) {
+list lstar_cpp_stream_col_stats(std::string path, std::string field, int block, int n_threads, bool lognorm, doubles depth, double depthScale, bool population);
+extern "C" SEXP _lstar_lstar_cpp_stream_col_stats(SEXP path, SEXP field, SEXP block, SEXP n_threads, SEXP lognorm, SEXP depth, SEXP depthScale, SEXP population) {
   BEGIN_CPP11
-    return cpp11::as_sexp(lstar_cpp_stream_col_stats(cpp11::as_cpp<cpp11::decay_t<std::string>>(path), cpp11::as_cpp<cpp11::decay_t<std::string>>(field), cpp11::as_cpp<cpp11::decay_t<int>>(block), cpp11::as_cpp<cpp11::decay_t<int>>(n_threads), cpp11::as_cpp<cpp11::decay_t<bool>>(lognorm)));
+    return cpp11::as_sexp(lstar_cpp_stream_col_stats(cpp11::as_cpp<cpp11::decay_t<std::string>>(path), cpp11::as_cpp<cpp11::decay_t<std::string>>(field), cpp11::as_cpp<cpp11::decay_t<int>>(block), cpp11::as_cpp<cpp11::decay_t<int>>(n_threads), cpp11::as_cpp<cpp11::decay_t<bool>>(lognorm), cpp11::as_cpp<cpp11::decay_t<doubles>>(depth), cpp11::as_cpp<cpp11::decay_t<double>>(depthScale), cpp11::as_cpp<cpp11::decay_t<bool>>(population)));
   END_CPP11
 }
 // lstar_cpp.cpp
@@ -62,7 +62,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_lstar_lstar_cpp_read",              (DL_FUNC) &_lstar_lstar_cpp_read,              1},
     {"_lstar_lstar_cpp_read_csc_block",    (DL_FUNC) &_lstar_lstar_cpp_read_csc_block,    4},
     {"_lstar_lstar_cpp_read_csc_cols",     (DL_FUNC) &_lstar_lstar_cpp_read_csc_cols,     3},
-    {"_lstar_lstar_cpp_stream_col_stats",  (DL_FUNC) &_lstar_lstar_cpp_stream_col_stats,  5},
+    {"_lstar_lstar_cpp_stream_col_stats",  (DL_FUNC) &_lstar_lstar_cpp_stream_col_stats,  8},
     {"_lstar_lstar_cpp_subsample_de_rank", (DL_FUNC) &_lstar_lstar_cpp_subsample_de_rank, 7},
     {"_lstar_lstar_cpp_write",             (DL_FUNC) &_lstar_lstar_cpp_write,             5},
     {NULL, NULL, 0}

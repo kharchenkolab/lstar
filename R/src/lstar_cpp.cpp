@@ -128,9 +128,16 @@ list lstar_cpp_subsample_de_rank(doubles data, integers indptr, integers indices
 // matrix never lands in memory (the bounded-memory reduction; same libstar kernel as Python/WASM).
 [[cpp11::register]]
 list lstar_cpp_stream_col_stats(std::string path, std::string field, int block,
-                                int n_threads, bool lognorm) {
+                                int n_threads, bool lognorm, doubles depth,
+                                double depthScale, bool population) {
+  std::vector<double> dv;                          // empty -> no depth normalization
+  if (depth.size() > 0) {
+    dv.resize((size_t)depth.size());
+    for (R_xlen_t i = 0; i < depth.size(); ++i) dv[(size_t)i] = depth[i];
+  }
+  const std::vector<double>* dp = dv.empty() ? nullptr : &dv;
   lstar::ColStats s = lstar::stream_csc_col_mean_var(
-      path + "/fields/" + field, (int64_t)block, n_threads, lognorm);
+      path + "/fields/" + field, (int64_t)block, n_threads, lognorm, dp, depthScale, population);
   return writable::list({"mean"_nm = vec_to_dbl(s.mean), "var"_nm = vec_to_dbl(s.var),
                          "nnz"_nm = to_ints(s.nnz)});
 }

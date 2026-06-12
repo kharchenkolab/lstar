@@ -38,9 +38,19 @@ col_sum_by_group <- function(m, code, ngroups, lognorm = TRUE) {
 #' @param lognorm reduce over `log1p(x)` per nonzero, on the fly, without building the normalized
 #'   matrix (default `FALSE`).
 #' @return a list with `mean`, `var` (length `ngenes` numeric) and `nnz` (length `ngenes` integer).
+#' @param depth optional per-cell depth vector (length n cells, in store row order). When given, each
+#'   nonzero is normalized to `x * depthScale / depth[cell]` before the optional `log1p` -- i.e.
+#'   pagoda2's "plain" analysis view, computed in one streamed pass (the block's row `indices` are read
+#'   too). `NULL` (default) reduces the raw/log1p values.
+#' @param depthScale depth scaling factor (default 1) used with `depth`.
+#' @param population if `TRUE`, variance divides by `n` (population, pagoda2's convention) instead of
+#'   the sample `n-1` (default `FALSE`).
 #' @export
-stream_col_stats <- function(path, field, block = 4096L, n_threads = 1L, lognorm = FALSE) {
-  lstar_cpp_stream_col_stats(path, field, as.integer(block), as.integer(n_threads), isTRUE(lognorm))
+stream_col_stats <- function(path, field, block = 4096L, n_threads = 1L, lognorm = FALSE,
+                             depth = NULL, depthScale = 1, population = FALSE) {
+  lstar_cpp_stream_col_stats(path, field, as.integer(block), as.integer(n_threads), isTRUE(lognorm),
+                             if (is.null(depth)) numeric(0) else as.numeric(depth),
+                             as.numeric(depthScale), isTRUE(population))
 }
 
 #' Read a contiguous gene (column) range of a CSC measure from an L* store, bounded-memory.

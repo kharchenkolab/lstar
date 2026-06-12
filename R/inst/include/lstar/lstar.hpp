@@ -676,10 +676,18 @@ inline CsxArrays<T> csc_to_csr(const T* data, const int64_t* indices, const int6
 // AnnData/Seurat) is read in place -- no widening copy -- while sums accumulate in double, so the
 // kernel is memory-lean yet float64-accurate. n_threads is the explicit threading policy from the
 // caller: 1 = serial, N = N threads, <=0 = the OpenMP default. Results are thread-count invariant.
+// Optional per-cell depth normalization: when `depth` is given (length nrows, keyed by row index via
+// `indices`), each nonzero is normalized to `x * depthScale / depth[row]` *before* the optional log1p
+// -- i.e. the value of pagoda2's "plain" analysis view, computed straight off the raw store. With
+// `population=true` the variance divides by `nrows` (E[X^2]-E[X]^2 over all cells, pagoda2's
+// convention) rather than the sample `nrows-1`. Defaults (no depth, sample variance) are unchanged.
 template <class T>
 inline ColStats csc_col_mean_var(const T* data, const int64_t* indptr,
                                  int64_t ncols, int64_t nrows, int n_threads = 0,
-                                 bool lognorm = false) {
+                                 bool lognorm = false,
+                                 const int64_t* indices = nullptr,
+                                 const double* depth = nullptr, double depthScale = 1.0,
+                                 bool population = false) {
     ColStats s;
     s.mean.assign((size_t)ncols, 0.0);
     s.var.assign((size_t)ncols, 0.0);
@@ -693,19 +701,22 @@ inline ColStats csc_col_mean_var(const T* data, const int64_t* indptr,
         double sum = 0.0;
         for (int64_t k = a; k < b; ++k) {
             double x = static_cast<double>(data[k]);     // widen the scalar, not the array
+            if (depth) x = x * depthScale / depth[indices[k]];
             sum += lognorm ? std::log1p(x) : x;
         }
         double m = sum / (double)nrows;
         double ss = 0.0;
         for (int64_t k = a; k < b; ++k) {
             double x = static_cast<double>(data[k]);
+            if (depth) x = x * depthScale / depth[indices[k]];
             double v = lognorm ? std::log1p(x) : x;
             double d = v - m;
             ss += d * d;
         }
         ss += m * m * (double)(nrows - (b - a));  // contribution of the implicit zeros
+        const double denom = population ? (double)nrows : (double)(nrows - 1);
         s.mean[(size_t)j] = m;
-        s.var[(size_t)j] = (nrows > 1) ? ss / (double)(nrows - 1) : 0.0;
+        s.var[(size_t)j] = (denom > 0.0) ? ss / denom : 0.0;
         s.nnz[(size_t)j] = b - a;
     }
     return s;
@@ -714,12 +725,14 @@ inline ColStats csc_col_mean_var(const T* data, const int64_t* indptr,
 // Dispatch csc_col_mean_var on a block's stored value dtype, so a float32 measure is reduced in
 // place (no widening copy) -- the memory-lean path. `indptr` is the block-local pointer (int64).
 inline ColStats col_mean_var_dispatch(const NdArray& data, const int64_t* indptr,
-                                      int64_t ncols, int64_t nrows, int n_threads, bool lognorm) {
+                                      int64_t ncols, int64_t nrows, int n_threads, bool lognorm,
+                                      const int64_t* indices = nullptr, const double* depth = nullptr,
+                                      double depthScale = 1.0, bool population = false) {
     const std::string& dt = data.dtype;
-    if (dt == "<f8") return csc_col_mean_var(data.as<double>(),  indptr, ncols, nrows, n_threads, lognorm);
-    if (dt == "<f4") return csc_col_mean_var(data.as<float>(),   indptr, ncols, nrows, n_threads, lognorm);
-    if (dt == "<i4") return csc_col_mean_var(data.as<int32_t>(), indptr, ncols, nrows, n_threads, lognorm);
-    if (dt == "<i8") return csc_col_mean_var(data.as<int64_t>(), indptr, ncols, nrows, n_threads, lognorm);
+    if (dt == "<f8") return csc_col_mean_var(data.as<double>(),  indptr, ncols, nrows, n_threads, lognorm, indices, depth, depthScale, population);
+    if (dt == "<f4") return csc_col_mean_var(data.as<float>(),   indptr, ncols, nrows, n_threads, lognorm, indices, depth, depthScale, population);
+    if (dt == "<i4") return csc_col_mean_var(data.as<int32_t>(), indptr, ncols, nrows, n_threads, lognorm, indices, depth, depthScale, population);
+    if (dt == "<i8") return csc_col_mean_var(data.as<int64_t>(), indptr, ncols, nrows, n_threads, lognorm, indices, depth, depthScale, population);
     throw std::runtime_error("col_mean_var: unsupported data dtype " + dt);
 }
 
@@ -843,8 +856,14 @@ inline CscBlock read_csc_cols(const fs::path& field_group, const std::vector<int
 // in one block), so per-column results need no cross-block merge. Bounded memory requires a chunked
 // `data` array (a store written with chunk_elems set, e.g. by streamed conversion). n_threads is the
 // usual policy (1=serial, N=N threads, <=0=OpenMP default), applied within each block's reduction.
+// `depth` (optional, length nrows) + `depthScale` + `population` add pagoda2's "plain" view in the
+// same streamed pass: each nonzero becomes log1p(x*depthScale/depth[row]) and the variance divides by
+// nrows. When depth is given the block's `indices` are read too (to recover each nonzero's row/depth),
+// so a normalized pass moves ~2x the bytes of a raw one -- still bounded, still one streaming pass.
 inline ColStats stream_csc_col_mean_var(const fs::path& field_group, int64_t block = 4096,
-                                        int n_threads = 0, bool lognorm = false) {
+                                        int n_threads = 0, bool lognorm = false,
+                                        const std::vector<double>* depth = nullptr,
+                                        double depthScale = 1.0, bool population = false) {
     json m = read_json(field_group / ".zattrs")["lstar"];
     if (opt_str(m, "encoding") != "csc")
         throw std::runtime_error("stream_csc_col_mean_var: field is not CSC (need gene-major)");
@@ -852,6 +871,9 @@ inline ColStats stream_csc_col_mean_var(const fs::path& field_group, int64_t blo
     const int64_t nrows = shape[0], ncols = shape[1];
     std::vector<int64_t> indptr = as_i64(read_array(field_group / "indptr"));
     if (block <= 0) block = 4096;
+    const double* depthp = (depth && !depth->empty()) ? depth->data() : nullptr;
+    if (depthp && (int64_t)depth->size() != nrows)
+        throw std::runtime_error("stream_csc_col_mean_var: depth length must equal nrows");
     ColStats out;
     out.mean.assign((size_t)ncols, 0.0);
     out.var.assign((size_t)ncols, 0.0);
@@ -860,9 +882,13 @@ inline ColStats stream_csc_col_mean_var(const fs::path& field_group, int64_t blo
         const int64_t b = std::min(a + block, ncols);
         const int64_t lo = indptr[a], hi = indptr[b];
         NdArray dblk = read_array_range(field_group / "data", lo, hi);     // only this block's nonzeros
+        std::vector<int64_t> idxblk;
+        const int64_t* idxp = nullptr;
+        if (depthp) { idxblk = as_i64(read_array_range(field_group / "indices", lo, hi)); idxp = idxblk.data(); }
         std::vector<int64_t> liptr((size_t)(b - a + 1));
         for (int64_t j = 0; j <= b - a; ++j) liptr[(size_t)j] = indptr[a + j] - lo;
-        ColStats s = col_mean_var_dispatch(dblk, liptr.data(), b - a, nrows, n_threads, lognorm);
+        ColStats s = col_mean_var_dispatch(dblk, liptr.data(), b - a, nrows, n_threads, lognorm,
+                                           idxp, depthp, depthScale, population);
         std::copy(s.mean.begin(), s.mean.end(), out.mean.begin() + a);
         std::copy(s.var.begin(), s.var.end(), out.var.begin() + a);
         std::copy(s.nnz.begin(), s.nnz.end(), out.nnz.begin() + a);
