@@ -12,7 +12,8 @@
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RLIB="$ROOT/.Rlib"
-N="${1:-1}"
+N="${1:-1}"                         # how many times to loop through the R formats (any length is safe)
+# A local default dataset on the author's machine -- pass your own .h5ad as the 2nd argument to use it.
 H5AD="${2:-/home/pkharchenko/cacoa/age/tab.muris/tabula-muris-senis-droplet-processed-official-annotations-Marrow.h5ad}"
 S_ORIG=/tmp/xl_orig.lstar.zarr      # L* straight from the original AnnData (the reference)
 S_CUR=/tmp/xl_cur.lstar.zarr        # rolling store as it hops through R formats

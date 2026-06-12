@@ -1,15 +1,29 @@
 #!/usr/bin/env Rscript
-# Conos collection -> L* -> round-trip, on the real two-sample integration object.
+# Conos collection -> L* -> round-trip, on a real two-sample integration object.
 #
-# This is the headline test of the L* *collection* model: a Conos object holds two samples
-# with DIFFERENT gene sets, their own PCA, plus a joint embedding / clustering / graph. An
-# aligned cells x genes matrix cannot represent that without dropping the per-sample structure;
-# L* keeps it (samples axis + per-sample axes + a union cells axis for the joint layer).
+# This is the headline demonstration of the L* *collection* model. A Conos object holds several
+# samples, each with its OWN cells and possibly its OWN gene set, plus a joint embedding /
+# clustering / integration graph computed across them. An aligned cells x genes matrix cannot
+# represent that without flattening away the per-sample structure; L* keeps it as a collection:
+# a `samples` axis, per-sample cells.<s>/genes.<s> axes and counts.<s> measures, and a union
+# `cells` axis carrying the joint layer. We convert it, write it, read it back, and check the
+# heavy fields survived.
+#
+# Usage: conos_collection_demo.R [path/to/conos.rds]
+#   The default below is a local path on the author's machine -- pass your own Conos .rds to run it.
 
 suppressMessages({ library(Matrix); library(lstar) })
 
+args <- commandArgs(trailingOnly = TRUE)
+# A local default on the author's machine; override by passing your own Conos .rds as the 1st arg.
 RDS <- "/home/pkharchenko/p21/pagoda2/misc/conos_two_sample_integration/conos_two_sample.rds"
+if (length(args) >= 1) RDS <- args[[1]]
 OUT <- "/tmp/conos_collection.lstar.zarr"
+
+if (!file.exists(RDS)) {
+  cat(sprintf("Conos object not found: %s\n  Pass a path to a saved Conos R6 object as the first argument.\n", RDS))
+  quit(status = 0)
+}
 
 human <- function(n) { u <- c("B","KB","MB","GB"); i <- 1
   while (n >= 1024 && i < length(u)) { n <- n/1024; i <- i+1 }; sprintf("%.1f %s", n, u[i]) }
@@ -20,9 +34,12 @@ cat(sprintf("loaded Conos: %d samples (%s)  [%.1fs]\n",
             length(co$samples), paste(names(co$samples), collapse=", "),
             as.numeric(Sys.time()-t0, units="secs")))
 
+# write_conos applies the `conos` profile: each member sample becomes its own cells.<s>/genes.<s>
+# axes + a counts.<s> measure, and the joint analysis (embedding, clusters, integration graph)
+# becomes fields over a derived union `cells` axis. The result is one L* `collection` dataset.
 t0 <- Sys.time(); ds <- write_conos(co)
 cat(sprintf("\nwrite_conos -> L* collection  [%.1fs]\n", as.numeric(Sys.time()-t0, units="secs")))
-print(ds)
+print(ds)   # note the per-sample axes/fields alongside the joint `cells`, `embedding`, `graph`
 
 # Show the heterogeneity the collection preserves: per-sample gene sets differ.
 gene_axes <- grep("^genes\\.", names(ds$axes), value=TRUE)
@@ -40,7 +57,9 @@ cat(sprintf("\nlstar_write -> zarr  [%.1fs]  store=%s\n",
 t0 <- Sys.time(); ds2 <- lstar_read(OUT)
 cat(sprintf("lstar_read  <- zarr  [%.1fs]\n", as.numeric(Sys.time()-t0, units="secs")))
 
-# Fidelity: per-sample counts nnz + sums, joint graph edges, joint embedding shape.
+# Fidelity: confirm the heavy fields are byte-faithful after write + read. We compare the L*
+# dataset BEFORE writing (ds) to the one read back from disk (ds2): per-sample counts (nonzero
+# count and sum), the joint graph's edge count, the joint embedding shape, and the sample label.
 cat("\nfidelity (original -> round-trip):\n")
 ok <- TRUE
 for (sn in names(co$samples)) {

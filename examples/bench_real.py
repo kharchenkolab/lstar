@@ -5,11 +5,14 @@ Toy fixtures (100x50) prove correctness but say nothing about whether the
 ingest/serialize/round-trip paths hold up at scale. This drives a real h5ad
 through read_anndata -> zarr write -> zarr read -> validate and reports the
 timings, the on-disk store size, and that the heavy fields survive byte-faithfully.
+(For the lazy-open / streaming / compression performance story on the same data,
+see real_perf.py; this script is the basic ingest + round-trip benchmark.)
 
 Usage:
     python3 examples/bench_real.py [path/to/file.h5ad]
 
-Default dataset is Tabula Muris Senis (droplet) Marrow: 40,220 cells x 20,138 genes.
+The default below is a local path on the author's machine -- pass your own .h5ad to
+use it. It is Tabula Muris Senis (droplet) Marrow: 40,220 cells x 20,138 genes.
 """
 import os
 import sys
@@ -57,6 +60,8 @@ def main():
     xsum = float(X.sum())
     print(f"  X: nnz={nnz:,}  sum={xsum:.6g}  obsm={list(adata.obsm)}  obs cols={len(adata.obs.columns)}")
 
+    # Map the AnnData onto L* axes + fields (the `anndata` profile). This is just relabeling/wiring,
+    # not copying the matrix, so it should be fast even on a large object.
     t = time.time()
     ds = read_anndata(adata)
     print(f"\nread_anndata -> L*: {time.time()-t:.2f}s")

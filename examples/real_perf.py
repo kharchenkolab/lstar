@@ -21,9 +21,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python", "src"
 import lstar
 from lstar.lazy import stream_col_stats
 
+# A local path to a real dataset on the author's machine -- pass your own .h5ad as argv[1] to use it.
+# Tabula Muris Senis (droplet) Marrow: 40,220 cells x 20,138 genes, ~77.6M nonzeros.
 DEFAULT = "/home/pkharchenko/cacoa/age/tab.muris/" \
           "tabula-muris-senis-droplet-processed-official-annotations-Marrow.h5ad"
-OUT_GZIP = "/tmp/real_perf_gzip.lstar.zarr"   # consumed by test_chunked
+OUT_GZIP = "/tmp/real_perf_gzip.lstar.zarr"   # the chunked+gzip store; also read by core/test/test_chunked
 
 
 def dir_size(p):
@@ -35,7 +37,9 @@ def main():
     path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT
     t = time.time()
     adata = ad.read_h5ad(path)
-    X = sp.csc_matrix(adata.X)                 # gene-compressed for per-gene streaming
+    # Store the expression as CSC (gene-compressed) so a per-gene reduction can stream by column;
+    # carry the PCA as a small float32 embedding too.
+    X = sp.csc_matrix(adata.X)
     pca = np.asarray(adata.obsm["X_pca"], dtype="f4")
     print(f"loaded {os.path.basename(path)} in {time.time()-t:.1f}s: "
           f"{X.shape[0]:,} cells x {X.shape[1]:,} genes, {X.nnz:,} nonzeros\n")
@@ -61,6 +65,7 @@ def main():
           f"{dir_size(single)/dir_size(OUT_GZIP):.1f}x\n")
 
     # ---- lazy open vs eager, on the real gzip store ----
+    # Open the real 78M-nonzero store both ways; the gap (megabytes vs. ~a gigabyte) is the point.
     tracemalloc.start(); t = time.time(); de = lstar.read(OUT_GZIP); te = time.time() - t
     _, pe = tracemalloc.get_traced_memory(); tracemalloc.stop()
     tracemalloc.start(); t = time.time(); dl = lstar.read(OUT_GZIP, lazy=True); tl = time.time() - t

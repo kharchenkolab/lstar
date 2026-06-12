@@ -8,20 +8,29 @@
 suppressMessages({ library(lstar); library(SeuratObject); library(Matrix) })
 
 OUT <- "/tmp/seurat_collection.lstar.zarr"
+
+# Build a small Seurat object with three "donors" (a synthetic Poisson count matrix is enough to
+# show the mechanism). A normal object has a single joined assay.
 set.seed(1)
 ng <- 200; nc <- 600
 m <- matrix(rpois(ng * nc, 0.5), ng, nc, dimnames = list(paste0("g", 1:ng), paste0("c", 1:nc)))
 obj <- CreateSeuratObject(counts = as(m, "dgCMatrix"))
 obj$sample <- rep(c("donorA", "donorB", "donorC"), length.out = nc)
 
+# Seurat v5's integration workflow SPLITS the assay by sample, producing one layer per donor
+# (counts.donorA, ...). Each layer covers only its donor's cells -- i.e. the object now holds a
+# collection of samples, not one aligned matrix.
 cat("joined assay layers: ", paste(Layers(obj[["RNA"]]), collapse = ", "), "\n")
-obj[["RNA"]] <- split(obj[["RNA"]], f = obj$sample)         # -> a collection of per-sample layers
+obj[["RNA"]] <- split(obj[["RNA"]], f = obj$sample)
 cat("split  assay layers: ", paste(Layers(obj[["RNA"]]), collapse = ", "), "\n\n")
 
+# read_seurat recognizes the split assay and ingests it AS a collection: per-donor cells.<s> axes
+# and counts.<s> measures, a `samples` axis, and a `sample` label over the union cells.
 ds <- read_seurat(obj)
 cat("read_seurat -> L*:\n"); print(ds)
 stopifnot(ds$kind == "collection")
 
+# Round-trip through the on-disk format and confirm each donor's counts survived (nonzeros + sum).
 lstar_write(ds, OUT)
 ds2 <- lstar_read(OUT)
 ok <- TRUE
