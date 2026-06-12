@@ -27,10 +27,12 @@ lstar.write(ds, store, chunk_elems=5000)
 lstar.convert_to_h5ad(store, h5, chunk_elems=5000)          # streamed L* -> h5ad
 
 a = ad.read_h5ad(h5, backed="r")                            # AnnData disk-backed target
-assert a.isbacked and type(a.X).__name__ == "SparseDataset"
+# X must be a disk-backed proxy, not an in-memory matrix. (Don't assert the class *name*: anndata
+# renamed it SparseDataset -> CSRDataset/CSCDataset at 0.10, which is what broke this across versions.)
+assert a.isbacked and not isinstance(a.X, (np.ndarray, sp.spmatrix))
 assert (sp.csr_matrix(a.X[10:20]) != X[10:20]).nnz == 0     # a slice reads from disk, matches
 a.file.close()
-print("  [py] streamed L* -> h5ad; AnnData backed='r' target: X on disk (SparseDataset), slice OK")
+print("  [py] streamed L* -> h5ad; AnnData backed='r' target: X on disk (backed proxy), slice OK")
 PY
 
 # (2) R: open the same .h5ad as disk-backed Seurat v5 (BPCells) and SCE (HDF5Array); skip if absent.
