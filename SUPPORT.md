@@ -72,9 +72,12 @@ js}.sh`.
 
 ## AnnData (`.h5ad`) — Python
 
-**Versions:** legacy 0.7 (`h5sparse`) · 0.8 · ≥0.10 (incl. the `CSRDataset`/`CSCDataset` backed-class
-rename) — all ✓. Real grounding: `pbmc68k_reduced`, `pbmc3k_processed`, a local Tabula-Muris-Senis Marrow
-atlas (40 k × 20 k, read backed), real scVelo output.
+**Versions:** legacy < 0.7 (`h5sparse_format` on-disk) · 0.7+ (`encoding-type`) · 0.8 · ≥0.10 (incl. the
+`CSRDataset`/`CSCDataset` backed-class rename) — all ✓. The legacy vs modern on-disk sparse layout is
+distilled into a synthetic test (`test_legacy_format`, written with h5py — no old anndata needed), and CI
+runs the core suite on **old anndata 0.8** (the `pinned-old` matrix leg) as well as latest. Real
+grounding: `pbmc68k_reduced`, `pbmc3k_processed`, a local Tabula-Muris-Senis Marrow atlas (40 k × 20 k,
+read backed), real scVelo output.
 
 | case | status | real | CI (synth) | notes |
 |---|:---:|:---:|:---:|---|
@@ -134,6 +137,7 @@ PASS** SeuratData sweep (RNA, RNA+ADT, 4-modality ECCITE-seq, integration, HVG-s
 | `Neighbor` (nn.idx/dist) → weighted cell-cell relation | ✓ | — | ✓ | distance-weighted; was dropped |
 | `meta.data` factors / active `Idents` | ✓ | ✓ | ✓ | active identity captured + restored |
 | version tracking (per-assay class + object version) | ✓ | ✓ | ✓ | `assay@RNA:Assay5`, `object@5.4.0`, … |
+| very old serialized objects (Seurat v2, pre-`Assay`) | ◐ | — | — | recognized best-effort; can't be synthetically tested without the ancient Seurat 2.x package (won't co-install) — noted, not gated |
 | images (Visium/FOV) / `@commands` | ✗ | — | — | spatial tier / provenance not typed |
 
 > Heavy backends (full `Seurat` umbrella for SCTransform, `Signac` for ChromatinAssay, `BPCells`) are
