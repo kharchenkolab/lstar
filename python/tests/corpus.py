@@ -1,17 +1,30 @@
-"""Real example datasets the test suite is grounded in -- no hand-fabricated structures.
+"""Example datasets the test suite is grounded in -- the **two-tier corpus**.
 
-Small real datasets are *fetched* (downloaded) on demand and cached in the repo `testdata/` dir
-(gitignored); large/local-only datasets (a real Tabula Muris atlas) are used when present. Loaders
-return `None` only when a dataset is genuinely unavailable after a real fetch attempt (offline /
-restricted env) -- callers then print a SKIP note rather than silently passing. The point: every
-profile test runs against structures a real tool actually produced (categoricals, color palettes,
-`rank_genes_groups` from t-test/wilcoxon/logreg/pairwise, PCA variance, graphs), so we test reality.
+*Locally* (the default), these loaders fetch/derive **real** datasets (cached in the gitignored
+`testdata/` dir; large/local-only atlases used when present) so the profiles are exercised against
+structures a real tool actually produced -- categoricals, color palettes, `rank_genes_groups`
+(t-test/wilcoxon/logreg/pairwise), PCA variance, graphs, RNA+ADT modalities. The extensive real breadth
+lives in `conformance/sweep/`.
+
+*In CI* (`LSTAR_SYNTHETIC_CORPUS=1`), each loader instead returns a **synthetic-but-faithful** stand-in
+from `synth.py` -- synthetic counts run through the *real* scanpy/mudata pipeline, so the same library
+code produces the same structure (no real datasets committed to or downloaded by github, which are large
+and slow). Keeping the synthetic fixtures structurally representative of the real corpus is the explicit
+contract; the local real runs + the sweep are what verify it.
+
+Loaders return `None` only when a dataset is genuinely unavailable (offline / missing optional dep) --
+callers then print a SKIP note rather than silently passing.
 """
 import os
 import warnings
 
 TESTDATA = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "testdata"))
 FIXTURES = os.path.abspath(os.path.join(os.path.dirname(__file__), "fixtures"))
+
+# CI sets this -> serve the synthetic, download-free corpus (faithful to the real one, see synth.py).
+SYNTHETIC = os.environ.get("LSTAR_SYNTHETIC_CORPUS") == "1"
+if SYNTHETIC:
+    import synth
 
 
 def _sc():
@@ -27,6 +40,8 @@ def pbmc68k_reduced():
     """700x765 real PBMC, fully processed: obs categoricals (bulk_labels/phase/louvain), `*_colors`,
     `uns['pca']`, a real one-vs-rest `rank_genes_groups` (method=logreg -> names+scores only), and the
     `neighbors` OverloadedDict. Downloads ~ a few MB; cached."""
+    if SYNTHETIC:
+        return synth.pbmc68k_like()
     try:
         return _sc().datasets.pbmc68k_reduced()
     except Exception as e:                     # pragma: no cover - only on a genuine fetch failure
@@ -36,6 +51,8 @@ def pbmc68k_reduced():
 
 def pbmc3k_processed():
     """2638x1838 real PBMC, fully processed (louvain, `*_colors`, pca, neighbors, tsne/umap). ~23 MB."""
+    if SYNTHETIC:
+        return synth.pbmc3k_like()
     try:
         return _sc().datasets.pbmc3k_processed()
     except Exception as e:                     # pragma: no cover
@@ -78,25 +95,56 @@ def marrow_backed():
         return None
 
 
-CITESEQ = os.path.join(FIXTURES, "citeseq")
+CITESEQ = os.path.join(TESTDATA, "citeseq")     # local cache (gitignored), derived from real minipbcite
 
 
 def citeseq_matrices():
-    """The committed **real** CITE-seq fixture (80 cells × 27 genes + 29 proteins, subsampled from the
-    real minipbcite dataset) as language-agnostic Matrix-Market -- so the MuData (Python) and Seurat (R)
-    multimodal tests run on the *same real* RNA+ADT data, not a simulation. Returns
-    (rna, adt, cells, genes, proteins) or None if the fixture is absent."""
+    """CITE-seq RNA+ADT arrays (80 cells × 27 genes + 29 proteins) as language-agnostic Matrix-Market, so
+    the MuData (Python) and Seurat/SCE (R) multimodal tests share one source. CI: synthetic (`synth`).
+    Local: subsampled from the **real** downloaded minipbcite, cached under `testdata/citeseq/`. Returns
+    (rna, adt, cells, genes, proteins) or None."""
+    if SYNTHETIC:
+        return synth.citeseq_matrices()
     import scipy.io as sio
     if not os.path.exists(os.path.join(CITESEQ, "rna.mtx")):
-        return None
+        if _derive_real_citeseq(CITESEQ) is None:
+            return None
     rd = lambda f: open(os.path.join(CITESEQ, f)).read().split()
     rna = sio.mmread(os.path.join(CITESEQ, "rna.mtx")).tocsr().astype("float32")
     adt = sio.mmread(os.path.join(CITESEQ, "adt.mtx")).tocsr().astype("float32")
     return rna, adt, rd("cells.txt"), rd("genes.txt"), rd("proteins.txt")
 
 
+def _derive_real_citeseq(outdir):
+    """Subsample the real minipbcite (80 cells × 27 genes + 29 proteins) to Matrix-Market + label files
+    -- the local real source for the multimodal tests, replacing a committed fixture. None if unavailable."""
+    md = minipbcite()
+    if md is None:
+        return None
+    try:
+        import numpy as np
+        import scipy.io as sio
+        import scipy.sparse as sp
+        rna_a, adt_a = md.mod["rna"], md.mod["prot"]
+        ci = np.arange(min(80, md.n_obs)); gi = np.arange(min(27, rna_a.n_vars)); pi = np.arange(min(29, adt_a.n_vars))
+        dense = lambda X: X.toarray() if sp.issparse(X) else np.asarray(X)
+        rna = sp.csr_matrix(dense(rna_a.X)[np.ix_(ci, gi)].astype("float32"))
+        adt = sp.csr_matrix(dense(adt_a.X)[np.ix_(ci, pi)].astype("float32"))
+        os.makedirs(outdir, exist_ok=True)
+        sio.mmwrite(os.path.join(outdir, "rna.mtx"), rna)
+        sio.mmwrite(os.path.join(outdir, "adt.mtx"), adt)
+        for fn, items in (("cells.txt", md.obs_names[ci]), ("genes.txt", rna_a.var_names[gi]),
+                          ("proteins.txt", adt_a.var_names[pi])):
+            open(os.path.join(outdir, fn), "w").write("\n".join(map(str, items)) + "\n")
+        return outdir
+    except Exception as e:                         # pragma: no cover
+        print("  [corpus] could not derive real citeseq:", e); return None
+
+
 def citeseq_mudata():
-    """The real CITE-seq fixture as a MuData (RNA + ADT). None if mudata/fixture absent."""
+    """A CITE-seq MuData (RNA + ADT, 27 genes + 29 proteins). None if mudata absent."""
+    if SYNTHETIC:
+        return synth.citeseq_mudata()
     try:
         import anndata as ad
         import mudata
@@ -113,8 +161,10 @@ def citeseq_mudata():
 
 
 def minipbcite():
-    """Real CITE-seq MuData (411 cells, RNA+ADT) -- downloaded + cached. Returns None if mudata absent
-    or the fetch fails."""
+    """Real CITE-seq MuData (411 cells, RNA+ADT) -- downloaded + cached locally. CI: a richer synthetic
+    annotated MuData (`synth`). Returns None if mudata absent or the fetch fails."""
+    if SYNTHETIC:
+        return synth.citeseq_mudata_annotated()
     try:
         import mudata
     except Exception:
@@ -135,18 +185,28 @@ def minipbcite():
 
 
 def pancreas_velocity():
-    """A small **real scVelo output** (150 cells x 250 genes, subsampled from the pancreas dataset):
-    real `spliced`/`unspliced` layers, `clusters`/`clusters_coarse` categoricals + `*_colors`, and a
-    real `uns['velocity_graph']` (+ `_neg`) -- the canonical scVelo location (cell x cell, NOT obsp).
-    Committed under tests/fixtures (~0.8 MB) so it's available offline / in CI without scvelo.
-    Generated by running the scVelo pipeline (filter_and_normalize -> moments -> velocity ->
-    velocity_graph) on the upstream pancreas h5ad; see git history for the generation recipe."""
+    """RNA-velocity object: `spliced`/`unspliced` layers, a `clusters` categorical + `*_colors`, and a
+    `uns['velocity_graph']` (+ `_neg`) -- the canonical scVelo location (cell x cell, NOT obsp). CI:
+    synthetic (`synth`). Local: regenerated by running the **real** scVelo pipeline on scVelo's pancreas
+    dataset (subsampled), cached under `testdata/`. None if scvelo is unavailable."""
+    if SYNTHETIC:
+        return synth.velocity()
     import anndata as ad
-    p = os.path.join(FIXTURES, "pancreas_velocity_small.h5ad")
-    if not os.path.exists(p):
-        return None
-    try:
-        return ad.read_h5ad(p)
-    except Exception as e:                     # pragma: no cover
-        print("  [corpus] pancreas_velocity fixture unavailable:", e)
-        return None
+    p = os.path.join(TESTDATA, "pancreas_velocity_small.h5ad")
+    if os.path.exists(p):
+        try:
+            return ad.read_h5ad(p)
+        except Exception:                          # pragma: no cover
+            pass
+    try:                                           # regenerate from real scVelo (heavy; local only)
+        import numpy as np
+        import scvelo as scv
+        a = scv.datasets.pancreas()
+        a = a[np.random.default_rng(0).choice(a.n_obs, 150, replace=False)].copy()
+        scv.pp.filter_and_normalize(a, n_top_genes=250, min_shared_counts=0)
+        scv.pp.moments(a); scv.tl.velocity(a); scv.tl.velocity_graph(a)
+        os.makedirs(TESTDATA, exist_ok=True)
+        a.write_h5ad(p)
+        return a
+    except Exception as e:                         # pragma: no cover
+        print("  [corpus] pancreas_velocity unavailable (needs scvelo):", e); return None

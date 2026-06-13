@@ -5,6 +5,10 @@ on: [push, pull_request]
 jobs:
   python-cpp:
     runs-on: ubuntu-latest
+    # CI runs the synthetic-but-faithful corpus (synth.py) -- no real datasets are downloaded or
+    # committed (they're large/slow); the real corpus + sweep run locally. See python/tests/corpus.py.
+    env:
+      LSTAR_SYNTHETIC_CORPUS: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -25,6 +29,8 @@ jobs:
 
   r-cross-format:
     runs-on: ubuntu-latest
+    env:
+      LSTAR_SYNTHETIC_CORPUS: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

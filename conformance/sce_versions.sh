@@ -3,15 +3,20 @@
 # second feature space -> Tier-3, must be *recorded* in dropped); +colData/rowData factors + free-form
 # metadata (recorded). Constructed via SCE's own constructors (real class, deterministic), grounded in
 # an analysis of real SCEs; each round-trips through the profile + validates.
-set -e
+set -eo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RLIB="$ROOT/.Rlib"
 
+# Synthetic CITE-seq via the shared Python generator (same RNA+ADT as the Seurat/MuData tests); the real
+# breadth is local-only (sweep / real_corpus_r.sh). Nothing committed.
+CDIR="$ROOT/testdata/citeseq"
+python3 "$ROOT/python/tests/synth.py" citeseq "$CDIR" >/dev/null
+
 Rscript -e '.libPaths(c("'"$RLIB"'", .libPaths())); suppressMessages({library(SingleCellExperiment); library(SummarizedExperiment); library(S4Vectors); library(lstar)})
 set.seed(1)
-# REAL CITE-seq counts (the shared fixture, subsampled from minipbcite): real RNA as the base assay,
-# real ADT as the altExp. reducedDims / factors / metadata are constructed *structures* on the real base.
-cdir <- "'"$ROOT"'/python/tests/fixtures/citeseq"
+# Synthetic CITE-seq counts: synthetic RNA as the base assay, synthetic ADT as the altExp. reducedDims /
+# factors / metadata are constructed structures on top.
+cdir <- "'"$CDIR"'"
 ccells <- readLines(file.path(cdir, "cells.txt"))
 counts <- as.matrix(Matrix::t(Matrix::readMM(file.path(cdir, "rna.mtx"))))   # genes x cells
 dimnames(counts) <- list(readLines(file.path(cdir, "genes.txt")), ccells)
@@ -35,8 +40,8 @@ stores <- c(stores, rt("+logcounts +reducedDims", sce_b, function(ds, s2)
   setequal(assayNames(s2), c("counts","logcounts")) && setequal(reducedDimNames(s2), c("PCA","UMAP"))))
 
 sce_c <- sce_b
-altExp(sce_c, "ADT") <- SummarizedExperiment(assays = list(counts = adtm))   # REAL ADT (29 proteins)
-stores <- c(stores, rt("+altExps(ADT real)", sce_c, function(ds, s2)   # altExp captured as 2nd feature space
+altExp(sce_c, "ADT") <- SummarizedExperiment(assays = list(counts = adtm))   # synthetic ADT (29 proteins)
+stores <- c(stores, rt("+altExps(ADT synth)", sce_c, function(ds, s2)   # altExp captured as 2nd feature space
   "ADT" %in% names(ds$axes) && identical(ds$axes$ADT$role, "feature") && "ADT" %in% altExpNames(s2) &&
   length(ds$axes$ADT$labels) == 29))
 
@@ -48,7 +53,7 @@ stores <- c(stores, rt("+colData/rowData factors +metadata", sce_d, function(ds,
   identical(ds$axes$cluster$role, "factor") && identical(ds$axes$type$role, "factor") &&
   "metadata/study" %in% ds$dropped))
 cat(paste(stores, collapse="\n"), "\n", file = "/tmp/scev_stores.txt")
-' 2>&1 | grep -E "^  \[R\]"
+' 2>&1 | grep -E "^  \[R\]|Error|Execution halted|cannot|unable|no method"
 
 PYTHONPATH="$ROOT/python/src" python3 - <<'PY'
 import warnings; warnings.filterwarnings("ignore")
