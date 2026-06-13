@@ -148,7 +148,10 @@ write_seurat <- function(ds) {
       sdv <- if (!is.null(ds$fields[[sd_nm]])) as.numeric(ds$fields[[sd_nm]]$values) else numeric(0)
       if (!is.null(ds$fields[[load_nm]])) {
         L <- as.matrix(ds$fields[[load_nm]]$values)
-        rownames(L) <- genes
+        lspan <- as.character(ds$fields[[load_nm]]$span)      # loadings may be over a *subset* feature
+        lfeat <- if (lspan[1] == "genes" || is.null(ds$axes[[lspan[1]]])) genes   # axis (variable feats)
+                 else as.character(ds$axes[[lspan[1]]]$labels)
+        rownames(L) <- lfeat
         colnames(L) <- colnames(emb)
         dr <- SeuratObject::CreateDimReducObject(embeddings = emb, loadings = L,
                                                  key = key, assay = "RNA", stdev = sdv)
@@ -326,11 +329,22 @@ read_seurat <- function(so, assay = SeuratObject::DefaultAssay(so)) {
     if (length(sd) == ncol(emb)) add(paste0(rn, "_stdev"), as.numeric(sd), "measure", rn)
     ld <- SeuratObject::Loadings(dr)
     if (length(ld) > 0 && nrow(ld) > 0) {
-      if (nrow(ld) == length(genes))                     # loadings over all genes -> a loading field
+      if (nrow(ld) == length(genes)) {                   # loadings over all genes -> a loading field
         add(paste0(rn, "_loadings"), unname(as.matrix(ld)), "loading", c("genes", rn))
-      else                                               # real PCA loadings are over variable features
-        ds$dropped <- c(ds$dropped,                      # only (e.g. pbmc3k.final: 2000/13714) -> record
-                        sprintf("loadings/%s (%d of %d features)", rn, nrow(ld), length(genes)))
+      } else {
+        # Real PCA loadings are over the variable features only (e.g. pbmc3k.final: 2000 of 13714).
+        # Capture them faithfully over a *subset feature axis* (the HVG names) instead of dropping --
+        # the values are real and worth keeping. write_seurat reads the loading's own feature axis back.
+        hvg <- rownames(ld)
+        if (!is.null(hvg) && length(hvg) == nrow(ld)) {
+          fax <- paste0(rn, "_features")
+          ds$axes[[fax]] <- list(labels = as.character(hvg), origin = "derived", role = "feature")
+          add(paste0(rn, "_loadings"), unname(as.matrix(ld)), "loading", c(fax, rn))
+        } else {                                         # no feature names -> can't place it; record loss
+          ds$dropped <- c(ds$dropped,
+                          sprintf("loadings/%s (%d of %d features, unnamed)", rn, nrow(ld), length(genes)))
+        }
+      }
     }
   }
 

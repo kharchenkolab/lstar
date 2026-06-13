@@ -124,7 +124,8 @@ PASS** SeuratData sweep (RNA, RNA+ADT, 4-modality ECCITE-seq, integration, HVG-s
 | `ChromatinAssay` peaks + **genomic ranges** (seqnames/start/end) | ✓ | ✓ | — | real pbmcMultiome (108 k peaks); fragments **recorded** |
 | `SCTAssay` (residuals + `SCTModel`) | ◐ | ✓ | ◐ | data typed; SCTModel recorded. CI runs SCT only when full Seurat loads |
 | reductions: embeddings / loadings / **stdev** | ✓ | ✓ | ✓ | |
-| `scale.data` / loadings over **HVG subset** | ◐ | ✓ | — | partial coverage *recorded* (e.g. 2000/13714) |
+| loadings over **HVG subset** → subset feature axis | ✓ | ✓ | — | real pbmc3k.final (2000/13714) round-trips exactly; was dropped |
+| `scale.data` over **HVG subset** | ◐ | ✓ | — | recorded (a measure over a subset; re-routing pending) |
 | graphs (dgCMatrix) → relations | ✓ | ✓ | — | |
 | `Neighbor` (nn.idx/dist) | ✗ | — | — | not typed yet |
 | `meta.data` factors / active `Idents` | ✓ | ✓ | ✓ | active identity captured + restored |
