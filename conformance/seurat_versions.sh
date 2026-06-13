@@ -52,6 +52,16 @@ stores <- c(stores, rt("HVG-subset loadings", sosub, function(ds, so2)
   nrow(Loadings(so2[["pca"]])) == 60 &&
   isTRUE(all.equal(unname(Loadings(so2[["pca"]])), unname(Lsub), check.attributes = FALSE))))
 
+# scale.data over a GENE SUBSET (default ScaleData scales only variable features) -> a partial-coverage
+# measure over (cells, genes) keyed by an index into the gene axis; restored over its covered genes.
+sosd <- CreateSeuratObject(m)
+sdsub <- matrix(rnorm(60*nc), 60, nc, dimnames = list(paste0("Gene", 1:60), colnames(m)))
+LayerData(sosd[["RNA"]], "scale.data") <- sdsub
+stores <- c(stores, rt("scale.data subset (partial)", sosd, function(ds, so2)
+  identical(ds$fields[["scale.data"]]$coverage, "partial") &&
+  length(ds$fields[["scale.data"]]$index) == 60 && length(ds$dropped) == 0 &&
+  isTRUE(all.equal(unname(LayerData(so2[["RNA"]], "scale.data")), unname(sdsub), check.attributes = FALSE))))
+
 # Neighbor (FindNeighbors(return.neighbor=TRUE)): nn.idx/nn.dist -> a weighted cell-cell relation
 knn <- 5; nnidx <- t(sapply(1:nc, function(i) sample(setdiff(1:nc, i), knn)))
 nnobj <- methods::new("Neighbor", nn.idx = nnidx, nn.dist = matrix(runif(nc*knn), nc, knn),

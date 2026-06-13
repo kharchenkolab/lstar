@@ -23,7 +23,8 @@ if (have("SeuratData")) {
   if ("pbmc3k" %in% inst) {                      # real v3/v4 Assay object (triggers UpdateSeuratObject)
     suppressWarnings(suppressMessages(data("pbmc3k.final"))); so <- UpdateSeuratObject(pbmc3k.final)
     ds <- read_seurat(so); so2 <- write_seurat(ds)
-    stopifnot(any(grepl("^loadings/pca", ds$dropped)))      # HVG-subset loadings recorded, not a crash
+    stopifnot("pca_features" %in% names(ds$axes),          # HVG-subset PCA loadings now TYPED over a
+              identical(as.character(ds$fields[["pca_loadings"]]$span), c("pca_features", "pca")))  # subset axis (was dropped)
     chk("pbmc3k.final (v4)", ds, so2)
   }
   if ("cbmc" %in% inst) {                        # real CITE-seq: RNA + ADT (multimodal)

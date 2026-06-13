@@ -109,8 +109,10 @@ write_seurat <- function(ds) {
   }
 
   meas <- .fields_over(ds, c("cells", "genes"), role = "measure")
-  counts_nm <- .pick(ds, meas, prefer_state = "raw", prefer_name = "counts")
-  data_nm <- .pick(ds, meas, prefer_state = "lognorm", prefer_name = "X", exclude = counts_nm)
+  full_meas <- Filter(function(nm) is.null(ds$fields[[nm]]$index), meas)   # partial measures (subset
+  counts_nm <- .pick(ds, full_meas, prefer_state = "raw", prefer_name = "counts")  # scale.data) can't be
+  data_nm <- .pick(ds, full_meas, prefer_state = "lognorm", prefer_name = "X", exclude = counts_nm)  # the
+  # full primary/data layer -> restored separately below (scale.data) over their covered genes.
   if (is.null(counts_nm) && is.null(data_nm)) stop("no (cells x genes) measure to build an assay")
 
   gxc <- function(nm) {
@@ -123,6 +125,17 @@ write_seurat <- function(ds) {
   so <- SeuratObject::CreateSeuratObject(counts = gxc(primary), assay = "RNA")
   if (!is.null(counts_nm) && !is.null(data_nm)) {
     SeuratObject::LayerData(so, assay = "RNA", layer = "data") <- gxc(data_nm)
+  }
+  # scale.data (state "scaled"), possibly over a *gene subset* (partial coverage) -> restore the layer on
+  # its covered genes (real Seurat keeps scale.data over the variable features only).
+  scaled_nm <- NULL
+  for (nm in setdiff(meas, c(counts_nm, data_nm)))
+    if (identical(ds$fields[[nm]]$state, "scaled")) { scaled_nm <- nm; break }
+  if (!is.null(scaled_nm)) {
+    sf <- ds$fields[[scaled_nm]]
+    sgenes <- if (!is.null(sf$index)) genes[as.integer(sf$index) + 1L] else genes
+    sm <- Matrix::t(as.matrix(sf$values)); dimnames(sm) <- list(sgenes, cells)
+    SeuratObject::LayerData(so, assay = "RNA", layer = "scale.data") <- sm
   }
 
   # meta.data: arity-1 fields over cells
@@ -274,10 +287,17 @@ read_seurat <- function(so, assay = SeuratObject::DefaultAssay(so)) {
            state = state_of(root))
       samples_seen <- union(samples_seen, sn); sample_of_cell[lc] <- sn
     } else if (nrow(m) != length(genes)) {
-      # a layer over a *feature subset* (real objects keep scale.data over variable features only, e.g.
-      # pbmc3k.final: 2000 HVGs of 13714). Partial coverage isn't typed yet -> record the loss rather
-      # than mis-span it over the full gene axis (which crashes write-back) or silently drop it.
-      ds$dropped <- c(ds$dropped, sprintf("layer/%s (%d of %d features)", L, nrow(m), length(genes)))
+      # a layer over a *feature subset* (real objects keep scale.data over the variable features only,
+      # e.g. pbmc3k.final: 2000 HVGs of 13714) -> a typed **partial-coverage** measure over (cells, genes)
+      # keyed by an index into the gene axis (0-based), not dropped and not mis-spanned over all genes.
+      gi <- match(rownames(m), genes)
+      if (!anyNA(gi)) {
+        ds$fields[[name_of(L)]] <- list(role = "measure", span = c("cells", "genes"), state = state_of(L),
+                                        subtype = "", values = Matrix::t(m), coverage = "partial",
+                                        index = as.integer(gi - 1L), index_axis = "genes")
+      } else {                                                  # unnamed subset -> can't place it; record
+        ds$dropped <- c(ds$dropped, sprintf("layer/%s (%d of %d features)", L, nrow(m), length(genes)))
+      }
     } else {                                                    # a joined (aligned) layer
       add(name_of(L), Matrix::t(m), "measure", c("cells", "genes"), state = state_of(L))
     }
