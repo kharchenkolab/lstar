@@ -18,7 +18,15 @@ python3 "$ROOT/python/tests/synth.py" citeseq "$CDIR" >/dev/null
 # heavy runtime deps that install-but-fail-to-load on a minimal CI runner (the prior r-cross-format
 # failure: it died in ~3s on `library(Seurat)`). Everything here (Assay/Assay5, split layers, DimReduc,
 # Idents, CreateAssay5Object) lives in SeuratObject; only SCTransform needs full Seurat -> guarded below.
-Rscript -e '.libPaths(c("'"$RLIB"'", .libPaths())); suppressMessages({library(SeuratObject); library(lstar)})
+# This R program is large, so pass it as a FILE, NOT via `Rscript -e`: a big `-e` expression overflows
+# R's command-line buffer (~8KB once R re-encodes every space/newline to ~+~/~n~), after which R prints a
+# `WARNING: '-e ...'` and silently runs NOTHING (exit 0, no output) -- which then trips `set -o pipefail`
+# at the grep below for a confusing failure. A *quoted* heredoc keeps every `$` in the R code literal;
+# $RLIB/$CDIR arrive via commandArgs; </dev/null keeps R from blocking on the harness socket stdin.
+RSRC="$(mktemp --suffix=.R)"; trap 'rm -f "$RSRC"' EXIT
+cat > "$RSRC" <<'RSCRIPT'
+args <- commandArgs(trailingOnly = TRUE); RLIB <- args[1]; cdir <- args[2]
+.libPaths(c(RLIB, .libPaths())); suppressMessages({library(SeuratObject); library(lstar)})
 set.seed(1); ng <- 120; nc <- 60
 m <- matrix(rpois(ng*nc, 3), ng, nc, dimnames = list(paste0("Gene",1:ng), paste0("Cell",1:nc)))
 emb <- matrix(rnorm(nc*5), nc, 5, dimnames = list(colnames(m), paste0("PC_",1:5)))
@@ -86,7 +94,7 @@ if (!is.null(sct)) stores <- c(stores, rt("SCTAssay", sct, function(ds, so2) len
 
 # multimodal: synthetic CITE-seq (the same generated fixture the MuData/SCE tests use). The *real* RNA+ADT
 # breadth lives in the local corpus (real_corpus_r.sh / sweep). Matrix-Market is cells x features -> t().
-cdir <- "'"$CDIR"'"
+# cdir was set from commandArgs() at the top of this script
 crna <- Matrix::t(Matrix::readMM(file.path(cdir, "rna.mtx"))); cadt <- Matrix::t(Matrix::readMM(file.path(cdir, "adt.mtx")))
 ccells <- readLines(file.path(cdir, "cells.txt"))
 dimnames(crna) <- list(readLines(file.path(cdir, "genes.txt")), ccells)
@@ -130,7 +138,8 @@ stores <- c(stores, rt("spatial coords (FOV)", sosp, function(ds, so2)
   identical(ds$axes$spatial$role, "coordinate") && identical(ds$axes$spatial$origin, "observed") &&
   identical(ds$fields[["spatial"]]$subtype, "spatial") && any(grepl("image/fov/pixels", ds$dropped))))
 cat(paste(stores, collapse="\n"), "\n", file = "/tmp/sv_stores.txt")
-' 2>&1 | grep -E "^  \[R\]|Error|Execution halted|cannot|unable|no method"
+RSCRIPT
+Rscript "$RSRC" "$RLIB" "$CDIR" </dev/null 2>&1 | grep -E "^  \[R\]|Error|Execution halted|cannot|unable|no method"
 
 # every version fixture produced a store that validates in Python (cross-language)
 PYTHONPATH="$ROOT/python/src" python3 - <<'PY'
