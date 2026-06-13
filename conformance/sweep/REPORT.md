@@ -11,7 +11,7 @@ This is a living report — re-run the harnesses to refresh.
 | AnnData | scanpy.datasets + local atlases | 7 | 6 | 0 | 1 (moignard15: needs `openpyxl`) |
 | SCE | Bioconductor `scRNAseq` | **61** | **56** | **0** (after 3 fixes) | 4 load-dep + 1 segfault (dataset, not profile) |
 | Conos | local `.rds` (real research objects) | 2 | 2 | 0 | (acon.rds 8.7 GB skipped) |
-| Seurat | SeuratData / real_corpus | 2 (pbmc3k.final, cbmc) via `real_corpus_r.sh` | 2 | 0 | — |
+| Seurat | SeuratData (lazy datasets) | **10** objects (9 datasets) | **10** | **0** | 11 Azimuth *ref atlases (need the Azimuth loader) + pbmcMultiome (needs Signac) |
 | MuData | minipbcite + citeseq fixture | 2 | 2 | 0 | — |
 
 Plus the curated CI corpus (`CORPUS.md`) and the version-variety fixtures.
@@ -56,6 +56,34 @@ SKIP  moignard15         (needs openpyxl to load the xlsx — not a profile issu
 PASS  conI.rds  4 samples -> 16 axes / 13 fields   (84 MB; auto-upgraded an old igraph graph)
 PASS  con.rds   8 samples -> 29 axes / 22 fields   (664 MB)
 ```
+
+## Seurat detail (SeuratData)
+
+`sweep_seurat.R` enumerates each installed dataset's **lazy** `data()` objects (per-package
+`<d>.SeuratData`; the original bug enumerated the meta-package and found 0). **10/10 PASS, 0 profile
+bugs** — breadth covers RNA, RNA+ADT, 4-modality ECCITE-seq, integration, and HVG-subset loadings:
+
+```
+PASS  bmcite           RNA+ADT            Assay+Assay              spca loadings 2000 of 17009 feats
+PASS  cbmc             RNA+ADT            Assay+Assay
+PASS  celegans.embryo  RNA                Assay
+PASS  hcabm40k         RNA                Assay
+PASS  ifnb             RNA                Assay                    stim/ctrl integration
+PASS  panc8            RNA                Assay                    8 datasets / 5 technologies
+PASS  pbmc3k           RNA                Assay
+PASS  pbmc3k.final     RNA                Assay                    pca loadings 2000 of 13714 feats
+PASS  pbmcsca          RNA                Assay                    multi-method comparison
+PASS  thp1.eccite      RNA+ADT+HTO+GDO    Assay x4                 ECCITE-seq: 4 feature spaces
+```
+
+That 10/10 PASS with **zero** profile bugs across real RNA / CITE-seq / ECCITE-seq objects is the
+evidence that the synthetic CI fixtures (`synth.py` + `seurat_versions.sh`) faithfully represent the
+real Seurat structure — the sweep found nothing the synthetic fixtures don't already exercise.
+
+**Not swept (load-dep, NOT profile bugs):** the 11 Azimuth `*ref` atlases are SeuratData *disk* datasets
+whose reference objects need the **Azimuth** loader (`LoadData` reports "could not find dataset … check
+manifest"); `pbmcMultiome` (RNA+ATAC, a Signac `ChromatinAssay`) failed to install without **Signac**.
+Both are deferred dependency rabbit holes, not lstar profile gaps. `sweep_seurat_refs.R` records them.
 
 > The SCE sweep over `scRNAseq` (61 datasets available; ~45 attempted) runs in the background and writes
 > `/tmp/sweep_scrnaseq.tsv`; fold its final tally in here. It is the broadest single source — re-run after

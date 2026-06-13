@@ -16,9 +16,16 @@ fixtures faithfully represent real structure. The "real examples" counted below 
 
 The curated lists below are the *committed/CI* corpus. The real breadth comes from
 **`conformance/sweep/`** — harnesses that run the profiles against **tens–hundreds** of real datasets
-from the bulk repositories (Bioconductor `scRNAseq` ≈ 61 SCEs · SeuratData ≈ 24 · scanpy.datasets · local
-`Conos`/atlas objects) and report pass/fail. That sweep already caught a real bug no synthetic fixture
-had (SCE with NULL dimnames). See `conformance/sweep/REPORT.md`.
+from the bulk repositories and report pass/fail:
+- Bioconductor `scRNAseq`: **56/61 SCEs PASS** (0 profile bugs after 3 sweep-caught fixes).
+- SeuratData lazy datasets: **10/10 objects PASS, 0 profile bugs** (RNA, RNA+ADT, 4-modality ECCITE-seq,
+  integration, HVG-subset loadings); 11 Azimuth `*ref` atlases + `pbmcMultiome` are load-deps (need the
+  Azimuth loader / Signac), not profile gaps.
+- scanpy.datasets + local `Conos`/atlas objects.
+
+That sweep already caught real bugs no synthetic fixture had (SCE NULL dimnames, S4 Rle columns, SE-not-SCE
+accessors). The clean Seurat/SCE passes are the evidence the synthetic CI fixtures faithfully represent the
+real structure. See `conformance/sweep/REPORT.md`.
 
 ## Example counts (curated CI corpus)
 
