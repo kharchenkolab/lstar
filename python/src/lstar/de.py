@@ -76,6 +76,68 @@ def pseudobulk(ds, factor, field="counts", lognorm=False, add=True):
     return out
 
 
+def collection_pseudobulk(ds, factor, field="counts", lognorm=False, add=True, union_axis="cells"):
+    """Pseudobulk over a **collection**: aggregate the per-sample `<field>.<s>` measures into
+    `(factor-group x genes)`, grouped by `factor` — a categorical over the **union** `cells` axis (a joint
+    clustering over a Conos-style integration) — **streamed one sample at a time** so the joint matrix is
+    never materialized, with **float64 accumulation** over float32 storage. The collection generalization
+    of `pseudobulk()`: it walks the per-sample measures and accumulates into the induced factor axis.
+
+    Genes are aligned by label across samples (a gene absent from a sample contributes 0 there); the
+    result is `pb.<factor>.{mean,frac}` measures over `(factor, genes)`. Returns the `{stat: array}` dict.
+    """
+    import scipy.sparse as sp
+
+    from .model import as_categorical
+
+    cat = as_categorical(ds.field(factor).values)
+    groups = np.asarray(cat.categories, dtype=str); K = len(groups)
+    union_codes = np.asarray(cat.codes)                              # group index per union cell (-1 = none)
+    cell_pos = {c: i for i, c in enumerate(np.asarray(ds.axis(union_axis).labels, dtype=str))}
+
+    persamp = [(nm, f) for nm, f in ds.fields.items()               # `<field>.<sample>` over (cells.<s>, genes)
+               if f.role == "measure" and nm.startswith(field + ".")
+               and f.span and len(f.span) == 2 and f.span[0].startswith("cells.")]
+    if not persamp:
+        raise ValueError("no per-sample '%s.<sample>' measures over (cells.<sample>, genes)" % field)
+
+    gene_index, genes = {}, []                                       # canonical gene set (union, first-seen)
+    for _nm, f in persamp:
+        for g in np.asarray(ds.axis(f.span[1]).labels, dtype=str):
+            if g not in gene_index:
+                gene_index[g] = len(genes); genes.append(g)
+    ng = len(genes)
+
+    sum64 = np.zeros((K, ng), dtype=np.float64)                      # float64 accumulation
+    nz = np.zeros((K, ng), dtype=np.float64)
+    cnt = np.zeros(K, dtype=np.int64)
+    for _nm, f in persamp:                                           # bounded memory: one sample at a time
+        M = f.values; M = M.tocsr() if sp.issparse(M) else sp.csr_matrix(M)
+        if lognorm:
+            M = M.copy(); M.data = np.log1p(M.data)
+        gcols = np.array([gene_index[g] for g in np.asarray(ds.axis(f.span[1]).labels, dtype=str)])
+        rows_union = np.array([cell_pos[c] for c in np.asarray(ds.axis(f.span[0]).labels, dtype=str)])
+        grp = union_codes[rows_union]                               # group of each sample row
+        for k in range(K):
+            rows = np.nonzero(grp == k)[0]
+            if not len(rows):
+                continue
+            sub = M[rows]
+            sum64[k, gcols] += np.asarray(sub.sum(axis=0)).ravel()
+            nz[k, gcols] += np.asarray((sub > 0).sum(axis=0)).ravel()
+            cnt[k] += len(rows)
+    denom = np.where(cnt > 0, cnt, 1)[:, None]
+    out = {"mean": sum64 / denom, "frac": nz / denom}
+    if "genes" not in ds.axes:
+        ds.add_axis("genes", genes, origin="derived", role="feature")
+    if add:
+        for stat, arr in out.items():
+            ds.add_field("pb.%s.%s" % (factor, stat), arr, role="measure", span=[factor, "genes"],
+                         subtype="pseudobulk", state=("lognorm" if lognorm else None),
+                         provenance={"pb_factor": factor, "pb_stat": stat, "from": field, "collection": True})
+    return out
+
+
 def markers(ds, factor, top=None, sort_by="score", descending=True):
     """A tidy long-form marker table for `factor`: one row per (group, gene) with whichever of
     `score`/`lfc`/`pval`/`padj` the bundle carries. `top` keeps the top-N genes per group (by
