@@ -141,7 +141,8 @@ PASS** SeuratData sweep (RNA, RNA+ADT, 4-modality ECCITE-seq, integration, HVG-s
 | `meta.data` factors / active `Idents` | ✓ | ✓ | ✓ | active identity captured + restored |
 | version tracking (per-assay class + object version) | ✓ | ✓ | ✓ | `assay@RNA:Assay5`, `object@5.4.0`, … |
 | very old serialized objects (Seurat v2, pre-`Assay`) | ◐ | — | — | recognized best-effort; can't be synthetically tested without the ancient Seurat 2.x package (won't co-install) — noted, not gated |
-| images (Visium/FOV) / `@commands` | ✗ | — | — | spatial tier / provenance not typed |
+| spatial coords (`so@images` Visium/FOV/Slide-seq → `spatial` axis) | ✓ | — | ✓ | mirrors the AnnData path; multi-section uses partial coverage; was a silent loss |
+| image pixels / `@commands` | ✗ | — | — | deferred spatial tier / provenance not typed (pixels recorded in `dropped`) |
 
 > Heavy backends (full `Seurat` umbrella for SCTransform, `Signac` for ChromatinAssay, `BPCells`) are
 > optional: absent → the case degrades to a recorded SKIP, never a hard failure. CI loads the lightweight

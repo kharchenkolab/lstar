@@ -47,6 +47,27 @@ def test_plain_string_label_does_not_induce():
     print("plain string label stays utf8 -> no factor axis induced")
 
 
+def test_identifier_categorical_does_not_induce():
+    """An identifier-like categorical (near-unique levels -- a gene/cell id stored as a Categorical, e.g.
+    `var['ensembl_id']`) must NOT mint a degenerate factor axis the size of the data. It stays a
+    categorical label; an explicit induce() still works. (Caught on real sciPlex2: 58302 levels/genes.)"""
+    from lstar import Categorical
+    ds = lstar.Dataset(kind="sample")
+    ds.add_axis("genes", [f"g{i}" for i in range(300)])
+    ids = np.array([f"ENSG{i:05d}" for i in range(300)])                 # one level per gene -> an id
+    ds.add_field("ensembl_id", Categorical(np.arange(300), ids), span=["genes"])
+    assert "ensembl_id" not in ds.axes                                  # no degenerate 300-level factor axis
+    assert ds.field("ensembl_id").encoding == "categorical"             # but the field is preserved
+    assert not lstar.validate(ds)
+    # a normal factor (few levels relative to the data) still auto-induces
+    ds.add_axis("cells", [f"c{i}" for i in range(300)])
+    ds.add_field("ct", Categorical(np.arange(300) % 5, np.array(list("ABCDE"))), span=["cells"])
+    assert "ct" in ds.axes and ds.axis("ct").role == "factor"
+    # ...and an explicit induce() on the identifier is still honored if a caller really wants it
+    assert ds.induce("ensembl_id") == "ensembl_id" and "ensembl_id" in ds.axes
+    print("identifier categorical (near-unique levels) skips auto-induction; normal factor still induces")
+
+
 def test_induced_axis_roundtrips():
     ds = lstar.Dataset(kind="sample")
     ds.add_axis("cells", [f"c{i}" for i in range(5)])
@@ -129,6 +150,7 @@ if __name__ == "__main__":
     test_induction_on_real_categoricals()
     test_auto_induce_creates_factor_axis()
     test_plain_string_label_does_not_induce()
+    test_identifier_categorical_does_not_induce()
     test_induced_axis_roundtrips()
     test_canonical_identity_reuse_and_collision()
     test_validate_catches_induced_axis_drift()

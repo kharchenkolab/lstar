@@ -120,6 +120,15 @@ if (requireNamespace("Signac", quietly = TRUE)) {
     "ATAC" %in% names(ds$axes) && identical(ds$axes$ATAC$role, "feature") &&
     "ATAC_seqnames" %in% names(ds$fields) && identical(ds$fields[["ATAC_start"]]$role, "measure")))
 } else cat("  [R] ChromatinAssay (synthetic)   SKIP (Signac unavailable)\n")
+
+# spatial coordinates (Visium/FOV) live in so@images, NOT Reductions -> captured as a `spatial` observed
+# coordinate axis (mirrors the AnnData spatial-obsm path); the pixel images are recorded (deferred tier).
+# This was a silent loss (real stxBrain/Visium). CreateFOV is in SeuratObject -> runs in CI, no Signac.
+spc <- data.frame(x = runif(nc), y = runif(nc), row.names = colnames(m))
+sosp <- CreateSeuratObject(m); sosp[["fov"]] <- SeuratObject::CreateFOV(spc, type = "centroids", assay = "RNA")
+stores <- c(stores, rt("spatial coords (FOV)", sosp, function(ds, so2)
+  identical(ds$axes$spatial$role, "coordinate") && identical(ds$axes$spatial$origin, "observed") &&
+  identical(ds$fields[["spatial"]]$subtype, "spatial") && any(grepl("image/fov/pixels", ds$dropped))))
 cat(paste(stores, collapse="\n"), "\n", file = "/tmp/sv_stores.txt")
 ' 2>&1 | grep -E "^  \[R\]|Error|Execution halted|cannot|unable|no method"
 

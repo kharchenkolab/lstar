@@ -184,7 +184,18 @@ class Dataset:
     def _auto_induce(self, field_name):
         """Eager auto-induce on `add_field` of a categorical: create the factor axis, but never abort a
         field add over a name clash -- a genuine clash (a categorical named like an existing axis with
-        different labels) is left for `validate()` to surface rather than raised here."""
+        different labels) is left for `validate()` to surface rather than raised here.
+
+        Skip auto-induction for an **identifier-like** categorical -- near-unique levels (a gene/cell id
+        stored as a Categorical, e.g. `var['ensembl_id']` with one level per gene). That's not a grouping;
+        inducing it would mint a degenerate factor axis the size of the data. The field is still kept as a
+        categorical label (nothing lost); an explicit `induce()` still works if a caller really wants it.
+        """
+        cat = getattr(self.fields.get(field_name), "values", None)
+        n = len(cat) if cat is not None else 0
+        k = len(getattr(cat, "categories", []))
+        if k and n and k > 0.5 * n and k > 100:     # near-unique -> an identifier, not a factor
+            return
         try:
             self.induce(field_name)
         except ValueError:

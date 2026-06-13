@@ -150,6 +150,7 @@ write_seurat <- function(ds) {
   # reductions: embedding fields over (cells, <coord>), with loadings if present
   for (nm in names(ds$fields)) {
     f <- ds$fields[[nm]]
+    if (identical(f$subtype, "spatial")) next        # spatial coords aren't a DimReduc (and may be partial)
     if (identical(f$role, "embedding") && length(f$span) == 2 && f$span[[1]] == "cells") {
       coord <- f$span[[2]]
       emb <- as.matrix(f$values)
@@ -380,6 +381,35 @@ read_seurat <- function(so, assay = SeuratObject::DefaultAssay(so)) {
     m <- Matrix::sparseMatrix(i = rep(seq_len(nrow(idx)), times = ncol(idx)), j = as.integer(idx),
                               x = x, dims = c(length(cells), length(cells)))
     add(paste0("nn_", nn_nm), m, "relation", c("cells", "cells"))
+  }
+
+  # Spatial images (Visium / Slide-seq / FOV): tissue coordinates live in `so@images`, NOT in Reductions,
+  # so without this they'd be silently lost. Capture each image's coordinates as a `spatial` *observed*
+  # coordinate axis (mirroring the AnnData obsm['spatial'] path); coordinates over a cell *subset* (a
+  # multi-section object) use partial coverage. Conceptual spatial support only -- the pixel images
+  # themselves are a deferred tier and recorded in `dropped`, not typed.
+  imgs <- tryCatch(SeuratObject::Images(so), error = function(e) character(0))
+  for (img in imgs) {
+    co <- tryCatch(as.data.frame(SeuratObject::GetTissueCoordinates(so[[img]])), error = function(e) NULL)
+    if (is.null(co) || !nrow(co)) { ds$dropped <- c(ds$dropped, paste0("image/", img, " (coords unreadable)")); next }
+    cc <- intersect(c("cell", "cells", "barcode"), colnames(co))
+    icells <- if (length(cc)) as.character(co[[cc[1]]]) else rownames(co)
+    xy <- as.matrix(co[, vapply(co, is.numeric, logical(1)), drop = FALSE])     # x / y (/ z) numeric cols
+    pos <- match(icells, cells)
+    if (is.null(icells) || ncol(xy) == 0 || anyNA(pos)) {
+      ds$dropped <- c(ds$dropped, paste0("image/", img, " (coords unmapped)")); next
+    }
+    sax <- if (length(imgs) > 1) paste0("spatial.", img) else "spatial"
+    ds$axes[[sax]] <- list(labels = paste0(sax, seq_len(ncol(xy))), origin = "observed", role = "coordinate")
+    fld <- if (length(imgs) > 1) paste0("spatial_", img) else "spatial"
+    if (length(icells) == length(cells) && all(pos == seq_along(cells))) {
+      add2(fld, unname(xy), "embedding", c("cells", sax), subtype = "spatial")
+    } else {                                                                     # subset -> partial coverage
+      ds$fields[[fld]] <- list(role = "embedding", span = c("cells", sax), state = "", subtype = "spatial",
+                               values = unname(xy), coverage = "partial",
+                               index = as.integer(pos - 1L), index_axis = "cells")
+    }
+    ds$dropped <- c(ds$dropped, paste0("image/", img, "/pixels (deferred spatial tier)"))   # images not typed
   }
 
   # active identity (Idents): the active-vs-stored distinction is otherwise lost. Capture it as a
