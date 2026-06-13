@@ -153,7 +153,7 @@ segfault, not profile bugs) after 3 sweep-caught fixes; plus real `ZeiselBrain`.
 | **NULL dimnames** (cells keyed by `Barcode` colData) | ✓ | ✓ | — | labels synthesized (sweep-caught) |
 | plain `SummarizedExperiment` (no reducedDims/altExps) | ✓ | ✓ | — | guarded accessors (sweep-caught) |
 | `metadata` (free-form) | ◐ | ✓ | ✓ | recorded |
-| `colPairs` / `rowPairs` | ✗ | — | — | not typed yet |
+| `colPairs` / `rowPairs` (cell-cell / gene-gene graphs) | ✓ | — | ✓ | → relations over (cells,cells)/(genes,genes); round-trip nnz+values |
 
 ## Conos / pagoda2 — R
 
@@ -177,11 +177,11 @@ Prioritized, with **where** the gap is (profile / real corpus / synthetic fixtur
    `cells.<mod>` axis) but no real partial-overlap / multiome `.h5mu` is in the corpus; ties to the
    lstar partial-coverage `index` arrays being spec'd-but-not-yet-implemented.
 3. **Seurat `Neighbor`** (nn graphs) and **`@commands`** provenance — *profile gap*.
-4. **Faithful partial coverage** — *profile refinement*: subset `scale.data`/loadings and SCT residuals
-   are currently *recorded as losses* (`◐`) rather than typed.
-5. **SCE `colPairs`/`rowPairs`** — *profile gap*.
-6. **Real pagoda2 object** in the corpus, and a **real ATAC `.h5mu`** — *corpus gaps*.
-7. **Azimuth reference atlases** (SeuratData `*ref`) — *corpus/tooling gap*: need the Azimuth loader to
+4. **Faithful partial coverage** — *profile refinement*: subset PCA **loadings are now typed** (over a
+   `<reduction>_features` subset axis); subset `scale.data` and SCT residuals are still *recorded as
+   losses* (`◐`) rather than typed.
+5. **Real pagoda2 object** in the corpus, and a **real ATAC `.h5mu`** — *corpus gaps*.
+6. **Azimuth reference atlases** (SeuratData `*ref`) — *corpus/tooling gap*: need the Azimuth loader to
    read them (they're disk datasets); would add SCTAssay breadth.
 
 ## Where the evidence lives

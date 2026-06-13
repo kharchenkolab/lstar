@@ -72,6 +72,16 @@ write_sce <- function(ds) {
     if (length(aas)) SingleCellExperiment::altExp(sce, fax) <-
       SummarizedExperiment::SummarizedExperiment(assays = aas)
   }
+
+  # colPairs/rowPairs (cell-cell / gene-gene graphs) reconstructed from relation fields
+  for (nm in names(ds$fields)) {
+    f <- ds$fields[[nm]]; sp <- as.character(f$span)
+    if (!identical(f$role, "relation") || length(sp) != 2) next
+    if (sp[1] == "cells" && sp[2] == "cells" && startsWith(nm, "colpair_"))
+      SingleCellExperiment::colPair(sce, sub("^colpair_", "", nm)) <- as(f$values, "CsparseMatrix")
+    else if (sp[1] == "genes" && sp[2] == "genes" && startsWith(nm, "rowpair_"))
+      SingleCellExperiment::rowPair(sce, sub("^rowpair_", "", nm)) <- as(f$values, "CsparseMatrix")
+  }
   sce
 }
 
@@ -150,6 +160,20 @@ read_sce <- function(sce) {
     for (an in SummarizedExperiment::assayNames(asce))
       add(paste0(ae, ".", an), Matrix::t(as(SummarizedExperiment::assay(asce, an), "CsparseMatrix")),
           "measure", c("cells", ae), state = state_of(an))
+  }
+  # colPairs/rowPairs (cell-cell SNN/kNN graph, gene-gene graph -- e.g. scran::buildSNNGraph) are the SCE
+  # analogue of AnnData obsp/varp -> type as relations over (cells,cells)/(genes,genes), not dropped.
+  for (cp in tryCatch(SingleCellExperiment::colPairNames(sce), error = function(e) character(0))) {
+    m <- tryCatch(SingleCellExperiment::colPair(sce, cp, asSparse = TRUE), error = function(e) NULL)
+    if (!is.null(m) && all(dim(m) == length(cells)))
+      add(paste0("colpair_", cp), as(m, "CsparseMatrix"), "relation", c("cells", "cells"))
+    else ds$dropped <- c(ds$dropped, paste0("colPair/", cp))
+  }
+  for (rp in tryCatch(SingleCellExperiment::rowPairNames(sce), error = function(e) character(0))) {
+    m <- tryCatch(SingleCellExperiment::rowPair(sce, rp, asSparse = TRUE), error = function(e) NULL)
+    if (!is.null(m) && all(dim(m) == length(genes)))
+      add(paste0("rowpair_", rp), as(m, "CsparseMatrix"), "relation", c("genes", "genes"))
+    else ds$dropped <- c(ds$dropped, paste0("rowPair/", rp))
   }
   md <- names(S4Vectors::metadata(sce))                    # free-form study-level list: not typed -> record
   if (length(md)) ds$dropped <- c(ds$dropped, paste0("metadata/", md))

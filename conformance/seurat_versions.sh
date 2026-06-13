@@ -40,6 +40,18 @@ stores <- c(stores, rt("v5 Assay5", withpca(CreateSeuratObject(m)), function(ds,
   inherits(so2[["RNA"]], "Assay5") && "pca" %in% Reductions(so2) &&
   any(grepl("assay@RNA:Assay5", ds$profiles))))         # version tracked: v5 Assay5 class recorded
 
+# HVG-subset loadings: real PCA loadings cover only the variable features (e.g. pbmc3k.final 2000/13714).
+# A reduction whose feature.loadings span a gene SUBSET must be captured over a `<reduction>_features`
+# subset axis (not dropped) and restored on write-back -- exercise that here with loadings over 60/120 genes.
+Lsub <- matrix(rnorm(60*5), 60, 5, dimnames = list(paste0("Gene", 1:60), paste0("PC_", 1:5)))
+sosub <- CreateSeuratObject(m)
+sosub[["pca"]] <- CreateDimReducObject(emb, loadings = Lsub, key = "PC_", assay = "RNA")
+stores <- c(stores, rt("HVG-subset loadings", sosub, function(ds, so2)
+  identical(as.character(ds$fields[["pca_loadings"]]$span), c("pca_features", "pca")) &&
+  length(ds$axes[["pca_features"]]$labels) == 60 && length(ds$dropped) == 0 &&
+  nrow(Loadings(so2[["pca"]])) == 60 &&
+  isTRUE(all.equal(unname(Loadings(so2[["pca"]])), unname(Lsub), check.attributes = FALSE))))
+
 so5 <- CreateSeuratObject(m); so5$samp <- rep(c("s1","s2"), each = nc/2)
 so5[["RNA"]] <- split(so5[["RNA"]], f = so5$samp)
 stores <- c(stores, rt("v5 split (collection)", so5, function(ds, so2)

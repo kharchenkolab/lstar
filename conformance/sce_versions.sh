@@ -52,6 +52,18 @@ metadata(sce_d)$study <- "demo"
 stores <- c(stores, rt("+colData/rowData factors +metadata", sce_d, function(ds, s2)
   identical(ds$axes$cluster$role, "factor") && identical(ds$axes$type$role, "factor") &&
   "metadata/study" %in% ds$dropped))
+
+# colPairs/rowPairs (cell-cell SNN / gene-gene graph) -> relations over (cells,cells)/(genes,genes)
+sce_e <- sce_b
+SingleCellExperiment::colPair(sce_e, "knn") <- Matrix::sparseMatrix(
+  i = rep(1:nc, each = 2), j = ((seq_len(2*nc)) %% nc) + 1, x = 1, dims = c(nc, nc))
+SingleCellExperiment::rowPair(sce_e, "corr") <- Matrix::sparseMatrix(
+  i = rep(1:ng, each = 2), j = ((seq_len(2*ng)) %% ng) + 1, x = 1, dims = c(ng, ng))
+stores <- c(stores, rt("+colPairs/rowPairs (graphs)", sce_e, function(ds, s2)
+  identical(as.character(ds$fields[["colpair_knn"]]$span), c("cells","cells")) &&
+  identical(ds$fields[["colpair_knn"]]$role, "relation") &&
+  setequal(SingleCellExperiment::colPairNames(s2), "knn") &&
+  setequal(SingleCellExperiment::rowPairNames(s2), "corr")))
 cat(paste(stores, collapse="\n"), "\n", file = "/tmp/scev_stores.txt")
 ' 2>&1 | grep -E "^  \[R\]|Error|Execution halted|cannot|unable|no method"
 
