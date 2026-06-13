@@ -53,6 +53,7 @@ the cross-language conformance suite ([`conformance/`](conformance/)).
 | Nullable validity mask (Int/bool/string) | ✓ | ✓ | ✓ | ✓ |
 | Factor-axis **induction** (`induced_by` round-trip) | ✓ | ✓ | ✓ | ✓ |
 | **Partial coverage** (a field on a subset of a span axis, via an `index`) | ✓ | ✓ | ✓ | — |
+| **Arity-3 fields** (CCC `sender×receiver×lr_pair`, eQTL `celltype×gene×variant`) | ✓ | ✓ | ✓ | — |
 | chunked + gzip | ✓ | ✓ | ✓ | ✓ (read) |
 | Lazy / partial / over-network reads | ✓ | ✓ | ✓ | ✓ |
 | Bounded-memory **streaming write** | ✓ | ✓ | ✓ | — |
