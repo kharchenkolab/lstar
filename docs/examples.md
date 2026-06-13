@@ -255,8 +255,8 @@ lstar_write(ds1, "pbmc.from_seurat.lstar.zarr")
 field_value(ds, "leiden")      # accessor: a field's values (a vector / matrix / Matrix)
 ```
 
-**What to notice.** `read_seurat` *detects the Seurat version* (v3/v4 `Assay` vs. v5 `Assay5`) and
-adapts — it doesn't assume one object layout.
+**What to notice.** `read_seurat` *detects the Seurat version* (a legacy v2 pre-`Assay` `seurat` object,
+v3/v4 `Assay`, or v5 `Assay5`) and adapts — it doesn't assume one object layout.
 
 ---
 

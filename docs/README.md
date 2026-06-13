@@ -46,7 +46,7 @@ ds2 = lstar.read("sample.lstar.zarr")
 1. **A collection of heterogeneous samples is a collection, not one aligned `cells × genes` tensor.**
 2. **Lossless, recorded conversion** — round-trips return to the original format; what can't be
    carried is recorded in `dropped`, never silently lost.
-3. **Recognize versions gracefully** — adapt to Seurat v3/v4/v5, pagoda2 accessor-vs-slot, AnnData
+3. **Recognize versions gracefully** — adapt to Seurat legacy v2 → v5, pagoda2 accessor-vs-slot, AnnData
    `.raw`/uns layouts, rather than assuming one object shape.
 4. **Fast by default, memory-lean** — the same store reads from three languages; a compiled C++ core
    accelerates Python automatically; float32 stays float32 with float64 accumulation.

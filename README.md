@@ -28,7 +28,7 @@ without ever loading the whole matrix, so work that needs a big machine today ru
 million-cell dataset over the network and read just the parts you need.
 
 > **Status:** early development, not yet released. Working today: read/write the same store from
-> Python, C++, and R; profiles for AnnData, Seurat (v3/v4/v5), SingleCellExperiment, and Conos; the
+> Python, C++, and R; profiles for AnnData, Seurat (legacy v2 → v5), SingleCellExperiment, and Conos; the
 > collection model; lazy/streaming reads; a browser/WebAssembly data layer.
 
 ---
@@ -108,7 +108,8 @@ it is. A new kind of result is a new field with a role — never a change to the
 this way — see [`examples/conos_collection_demo.R`](examples/conos_collection_demo.R).
 
 **Versions are recognized, not assumed.** Formats change shape across releases, so the readers detect
-the variant and adapt — Seurat v3/v4 `Assay` vs. v5 `Assay5` (with a fallback for SeuratObject < 5),
+the variant and adapt — even a legacy **v2** `seurat` object (the pre-`Assay` S4 class, read via its raw
+slots) through v3/v4 `Assay` vs. v5 `Assay5` (with a fallback for SeuratObject < 5),
 pagoda2's `getRawCounts()` accessor vs. the legacy `$counts` slot, AnnData's `.raw` slot. The detected
 `<format>@<version>` is recorded, so a downstream reader knows what produced the data.
 

@@ -44,7 +44,7 @@ You only need a handful. The reader/writer for each format:
 | Format | Read into L★ | Write from L★ | Language | Package |
 |---|---|---|---|---|
 | **AnnData** (`.h5ad`/`.zarr`) | `read_anndata(adata)` | `write_anndata(ds)` | Python | `lstar.profiles.anndata` |
-| **Seurat** (v3/v4/v5) | `read_seurat(so)` | `write_seurat(ds)` | R | `lstar` |
+| **Seurat** (legacy v2 → v5) | `read_seurat(so)` | `write_seurat(ds)` | R | `lstar` |
 | **SingleCellExperiment** | `read_sce(sce)` | `write_sce(ds)` | R | `lstar` |
 | **Conos** (a collection) | `write_conos(co)` → L★ | *(read-back deferred)* | R | `lstar` |
 | **pagoda2** | *(via Conos members; standalone reader planned)* | | R | `lstar` |

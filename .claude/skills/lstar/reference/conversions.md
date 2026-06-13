@@ -9,7 +9,7 @@ intermediate.
 | Format | read → L★ | L★ → write | Lang | Import |
 |---|---|---|---|---|
 | AnnData (`.h5ad`/`.zarr`) | `read_anndata(adata)` | `write_anndata(ds)` | Py | `from lstar.profiles.anndata import read_anndata, write_anndata` |
-| Seurat (v3/v4/v5) | `read_seurat(so[, assay])` | `write_seurat(ds)` | R | `library(lstar)` |
+| Seurat (legacy v2 → v5) | `read_seurat(so[, assay])` | `write_seurat(ds)` | R | `library(lstar)` |
 | SingleCellExperiment | `read_sce(sce)` | `write_sce(ds)` | R | `library(lstar)` |
 | Conos (collection) | `write_conos(co)` → L★ | *(read-back deferred)* | R | `library(lstar)` |
 | L★ store | `lstar.read(p)` / `lstar_read(p)` | `lstar.write(ds,p)` / `lstar_write(ds,p)` | Py/R | — |
@@ -55,7 +55,8 @@ Rule: keep the L★ store to lose nothing; convert to a native format to keep it
   `counts.<s>` + `pca.<s>`, union `cells`, `sample` design label, joint embedding/clusters/graph.
 
 ## Version recognition (don't assume one layout)
-Seurat v3/v4 `Assay` vs v5 `Assay5` (+ `GetAssayData` fallback for SeuratObject<5; split v5 →
+Seurat legacy **v2** (pre-`Assay` lowercase `seurat` class, slots via `attr()`) / v3/v4 `Assay` vs v5
+`Assay5` (+ `GetAssayData` fallback for SeuratObject<5; split v5 →
 collection); pagoda2 `getRawCounts()` vs `$counts`; AnnData lib version + `.raw`. Detected
 `<format>@<version>` recorded in `ds.profiles`; unrepresentable → `dropped`.
 

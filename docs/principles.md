@@ -95,8 +95,9 @@ without losing your analysis. The dedicated guide is **[conversions.md](conversi
 External formats change shape across releases, and a glue library that assumes one layout breaks the
 day a user upgrades. L★ **detects** the version and adapts:
 
-- Seurat v3/v4 (`Assay`, fixed slots) vs v5 (`Assay5`, layers), with a `GetAssayData` fallback for
-  older SeuratObject that lacks the `Layers()` API;
+- a legacy Seurat **v2** object (the pre-`Assay` lowercase `seurat` S4 class — slots read via `attr()`,
+  so the ancient class need not be defined) through v3/v4 (`Assay`, fixed slots) vs v5 (`Assay5`,
+  layers), with a `GetAssayData` fallback for older SeuratObject that lacks the `Layers()` API;
 - pagoda2's removed `$counts` slot vs the `getRawCounts()` accessor;
 - AnnData's `.raw` (kept on its own gene axis when it diverges) and the `uns['neighbors']` → `obsp`
   migration.

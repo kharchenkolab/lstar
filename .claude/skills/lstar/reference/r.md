@@ -30,7 +30,7 @@ profiles transpose with `Matrix::t`. A `dgCMatrix` (CSC) maps directly to L★ `
 ## Profiles
 
 ```r
-# Seurat (v3/v4 Assay and v5 Assay5; a split assay -> an L* collection)
+# Seurat (legacy v2 pre-Assay 'seurat' class, v3/v4 Assay, v5 Assay5; a split assay -> an L* collection)
 so  <- write_seurat(ds)                 # L* -> Seurat (measures->layers, embeddings->DimReduc, fields->meta.data)
 ds  <- read_seurat(so, assay = "RNA")   # Seurat -> L*; records SeuratObject@<v> + assay@<v3|v5>
 

@@ -89,7 +89,7 @@ lstar.show_config()                                       # is the C++ accelerat
 ```r
 library(lstar)
 ds  <- lstar_read("a.lstar.zarr")
-so  <- write_seurat(ds);  ds1 <- read_seurat(so)     # Seurat v3/v4/v5; split assay -> collection
+so  <- write_seurat(ds);  ds1 <- read_seurat(so)     # Seurat legacy v2 -> v5; split assay -> collection
 sce <- write_sce(ds);     ds2 <- read_sce(sce)
 dsc <- write_conos(conos_obj)                        # a Conos collection -> L*
 lstar_write(ds2, "out.lstar.zarr")
@@ -111,7 +111,7 @@ auto s  = lstar::csc_col_mean_var(f->data.as<float>(), ip.data(),
   collection (see `reference/model.md`).
 - **Memory-lean.** Don't widen stored dtypes; float32 measures stay float32, accumulate moments in
   float64. (`reference/python.md`, `reference/cpp.md`)
-- **Recognize versions gracefully.** Detect Seurat v3/v4/v5, pagoda2 accessor-vs-slot, AnnData
+- **Recognize versions gracefully.** Detect Seurat legacy v2 → v5, pagoda2 accessor-vs-slot, AnnData
   `.raw`/uns layout; record `<format>@<version>`; route the unrepresentable to `dropped`, never
   silently lose it. (`reference/conversions.md`, `reference/r.md`)
 - **Fast by default.** Python auto-uses the compiled C++ accelerator when present and falls back to
