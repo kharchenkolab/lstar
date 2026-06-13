@@ -140,7 +140,7 @@ PASS** SeuratData sweep (RNA, RNA+ADT, 4-modality ECCITE-seq, integration, HVG-s
 | `Neighbor` (nn.idx/dist) → weighted cell-cell relation | ✓ | — | ✓ | distance-weighted; was dropped |
 | `meta.data` factors / active `Idents` | ✓ | ✓ | ✓ | active identity captured + restored |
 | version tracking (per-assay class + object version) | ✓ | ✓ | ✓ | `assay@RNA:Assay5`, `object@5.4.0`, … |
-| very old serialized objects (Seurat v2, pre-`Assay`) | ◐ | — | — | recognized best-effort; can't be synthetically tested without the ancient Seurat 2.x package (won't co-install) — noted, not gated |
+| very old serialized objects (Seurat v2, pre-`Assay`) | ✓ | — | ✓ | dedicated **read path** for the legacy lowercase `seurat` S4 class (slots read via `attr()`, so the ancient class needn't be defined); old→new on write-back. CI fixture is built from Seurat 2.3.4's **authoritative** class defs (slot-exact vs the source) and read back with the class *undefined* — the real scenario. No `real` cell: a genuine full ancient-Seurat install is infeasible on the available toolchain (its shiny/plotly/hdf5r stack won't compile on R 3.6.2) |
 | spatial coords (`so@images` Visium/FOV/Slide-seq → `spatial` axis) | ✓ | — | ✓ | mirrors the AnnData path; multi-section uses partial coverage; was a silent loss |
 | image pixels / `@commands` | ✗ | — | — | deferred spatial tier / provenance not typed (pixels recorded in `dropped`) |
 

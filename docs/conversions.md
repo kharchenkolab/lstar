@@ -220,7 +220,12 @@ couldn't carry. If you keep the data in L★, even the off-vocabulary pieces are
 The readers detect the version/variant of the object they're given and adapt, rather than assuming one
 layout — so conversions don't break when a collaborator is on a different release:
 
-- **Seurat**: v3/v4 (`Assay`, fixed `counts`/`data`/`scale.data` slots) vs. v5 (`Assay5`, layers); a
+- **Seurat**: a **very old v2** object — the lowercase `seurat` S4 class that predates `Assay`/
+  `SeuratObject` entirely — is detected (class `seurat`, not `Seurat`) and read through a dedicated path
+  that pulls its fixed slots (`raw.data`/`data`/`scale.data`, the `dr` list of `dim.reduction`s,
+  `meta.data`, `ident`, `snn`, multimodal `assay` list) via `attr()`, so the ancient class need not be
+  defined in the running R; write-back emits a modern object (old→new is the point). Then v3/v4
+  (`Assay`, fixed `counts`/`data`/`scale.data` slots) vs. v5 (`Assay5`, layers); a
   fallback covers SeuratObject < 5. Per-assay class is recorded — `SCTAssay` (SCTransform residuals),
   `ChromatinAssay` (Signac scATAC: peaks + genomic ranges). A **split v5 assay**
   (`split(assay, f = sample)`) is recognized as a **collection**. A `scale.data` over the variable

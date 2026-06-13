@@ -63,6 +63,10 @@ echo "== Seurat version variety (v3 Assay / v5 Assay5 / v5 split / SCTAssay / mu
 bash conformance/seurat_versions.sh >/tmp/lstar_sv.log 2>&1 \
   && pass "Seurat version variants round-trip + validate" || { echo "  FAIL seurat_versions"; tail -20 /tmp/lstar_sv.log; exit 1; }
 
+echo "== Seurat v2 (pre-Assay legacy 'seurat' class -> read + old-to-new conversion) =="
+bash conformance/seurat_v2.sh >/tmp/lstar_sv2.log 2>&1 \
+  && pass "Seurat v2 pre-Assay object read + validate" || { echo "  FAIL seurat_v2"; tail -20 /tmp/lstar_sv2.log; exit 1; }
+
 echo "== SCE version variety (counts / +reducedDims / +altExps / +colData-rowData factors+metadata) =="
 bash conformance/sce_versions.sh >/tmp/lstar_scev.log 2>&1 \
   && pass "SCE version variants round-trip + validate" || { echo "  FAIL sce_versions"; tail -20 /tmp/lstar_scev.log; exit 1; }

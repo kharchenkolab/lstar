@@ -208,6 +208,145 @@ write_seurat <- function(ds) {
   so
 }
 
+# ---- Seurat v2 (pre-Assay) ---------------------------------------------------------------------------
+# A "very old" serialized Seurat object is the lowercase S4 class `seurat` (NOT `Seurat`): it predates the
+# Assay/Assay5 classes and the SeuratObject package, so none of the SeuratObject accessors work on it. Its
+# data live in fixed slots -- genes x cells matrices `raw.data`/`data`/`scale.data`, a `dr` list of
+# `dim.reduction` objects (each `cell.embeddings`/`gene.loadings`/`sdev`/`key`), `meta.data`, an `ident`
+# factor, an `snn` graph, an `assay` list for multimodal -- read here via attr() because S4 slots ARE
+# stored as attributes, so they survive `readRDS()` even when the ancient `seurat` class isn't defined in a
+# modern R. Read-only: write_seurat always emits a modern object (converting old -> new is the whole point).
+.is_seurat_v2 <- function(so) inherits(so, "seurat") && !inherits(so, "Seurat")
+
+.read_seurat_v2 <- function(so) {
+  S <- function(nm) tryCatch(attr(so, nm), error = function(e) NULL)
+  raw <- S("raw.data"); dat <- S("data"); scl <- S("scale.data")
+  ref <- if (!is.null(dat) && length(dat)) dat else if (!is.null(raw) && length(raw)) raw else scl
+  if (is.null(ref)) stop("read_seurat: Seurat v2 object carries no raw.data/data/scale.data matrix")
+  cells <- S("cell.names"); if (is.null(cells) || !length(cells)) cells <- colnames(ref)
+  cells <- as.character(cells); genes <- as.character(rownames(ref))
+  ver <- tryCatch(as.character(S("version")), error = function(e) NA_character_)
+  if (length(ver) != 1 || is.na(ver)) ver <- "2"
+  ds <- list(kind = "sample", spec_version = "0.1",
+             profiles = c("seurat@0.1", "object@seurat", paste0("Seurat_pkg@", ver)),
+             dropped = character(0), axes = list(), fields = list())
+  ds$axes$cells <- list(labels = cells, origin = "observed", role = "observation")
+  ds$axes$genes <- list(labels = genes, origin = "observed", role = "feature")
+
+  add <- function(nm, values, role, span, state = "", subtype = "") {
+    ds$fields[[nm]] <<- list(role = role, span = span, state = state, subtype = subtype, values = values)
+  }
+  add_factor <- function(nm, v, span) {
+    v <- as.factor(v)
+    ds$fields[[nm]] <<- list(role = "label", span = span, state = "", subtype = "",
+                             encoding = "categorical", values = v)
+    if (is.null(ds$axes[[nm]]))
+      ds$axes[[nm]] <<- list(labels = levels(v), origin = "derived", role = "factor", induced_by = nm)
+  }
+  # a genes x cells measure -> (cells, genes); a gene SUBSET (scale.data over var.genes only) is kept as a
+  # typed partial-coverage measure (index into the gene axis), mirroring the v3/v5 scale.data path.
+  add_measure <- function(nm, m, state) {
+    if (is.null(m) || !length(m) || !nrow(m)) return(invisible())
+    if (nrow(m) == length(genes)) {
+      add(nm, Matrix::t(m), "measure", c("cells", "genes"), state = state)
+    } else {
+      gi <- match(as.character(rownames(m)), genes)
+      if (!anyNA(gi)) {
+        ds$fields[[nm]] <<- list(role = "measure", span = c("cells", "genes"), state = state, subtype = "",
+                                 values = Matrix::t(m), coverage = "partial",
+                                 index = as.integer(gi - 1L), index_axis = "genes")
+      } else ds$dropped <<- c(ds$dropped, sprintf("%s (%d of %d genes, unnamed)", nm, nrow(m), length(genes)))
+    }
+  }
+  add_measure("counts", raw, "raw")
+  add_measure("X", dat, "lognorm")
+  add_measure("scale.data", scl, "scaled")
+
+  # dr: a named list of `dim.reduction` (pca/tsne/umap/ica/...) -> an embedding axis + scores, the per-dim
+  # stdev as a measure, and gene loadings (over all genes, or over a subset feature axis like real v2 PCA).
+  dr <- S("dr")
+  if (is.list(dr)) for (rn in names(dr)) {
+    d <- dr[[rn]]
+    emb <- tryCatch(attr(d, "cell.embeddings"), error = function(e) NULL)
+    if (is.null(emb) || !nrow(emb)) next
+    emb <- as.matrix(emb); dimn <- colnames(emb)
+    if (is.null(dimn)) dimn <- paste0(toupper(rn), seq_len(ncol(emb)))
+    er <- rownames(emb); ord <- if (!is.null(er) && setequal(er, cells)) match(cells, er) else seq_len(nrow(emb))
+    ds$axes[[rn]] <- list(labels = dimn, origin = "derived", role = "coordinate")
+    add(rn, unname(emb[ord, , drop = FALSE]), "embedding", c("cells", rn))
+    sdv <- tryCatch(as.numeric(attr(d, "sdev")), error = function(e) numeric(0))
+    if (length(sdv) == ncol(emb)) add(paste0(rn, "_stdev"), sdv, "measure", rn)
+    ld <- tryCatch(attr(d, "gene.loadings"), error = function(e) NULL)
+    if (!is.null(ld) && nrow(ld) > 0 && ncol(ld) == ncol(emb)) {
+      ld <- as.matrix(ld)
+      if (nrow(ld) == length(genes)) {
+        add(paste0(rn, "_loadings"), unname(ld), "loading", c("genes", rn))
+      } else {
+        hvg <- rownames(ld)
+        if (!is.null(hvg) && length(hvg) == nrow(ld)) {
+          fax <- paste0(rn, "_features")
+          ds$axes[[fax]] <- list(labels = as.character(hvg), origin = "derived", role = "feature")
+          add(paste0(rn, "_loadings"), unname(ld), "loading", c(fax, rn))
+        } else ds$dropped <- c(ds$dropped, sprintf("loadings/%s (%d features, unnamed)", rn, nrow(ld)))
+      }
+    }
+  }
+
+  # meta.data (cells x columns): numeric -> measure, factor -> categorical (induces a factor axis), else label
+  md <- S("meta.data")
+  if (is.data.frame(md) && nrow(md)) {
+    mdr <- rownames(md); ord <- if (!is.null(mdr) && setequal(mdr, cells)) match(cells, mdr) else seq_len(nrow(md))
+    for (col in colnames(md)) {
+      v <- md[[col]][ord]
+      if (is.numeric(v)) add(col, as.numeric(v), "measure", "cells")
+      else if (is.factor(v)) add_factor(col, v, "cells")
+      else add(col, as.character(v), "label", "cells")
+    }
+  }
+
+  # ident: the active identity (a factor over cells) -> a categorical `ident` label, flagged active_ident
+  id <- S("ident")
+  if (!is.null(id) && length(id)) {
+    idr <- names(id); ord <- if (!is.null(idr) && setequal(idr, cells)) match(cells, idr) else seq_along(id)
+    idf <- droplevels(as.factor(id[ord]))
+    if (length(idf) == length(cells)) {
+      ds$fields[["ident"]] <- list(role = "label", span = "cells", state = "", subtype = "active_ident",
+                                   encoding = "categorical", values = idf)
+      if (is.null(ds$axes[["ident"]]))
+        ds$axes[["ident"]] <- list(labels = levels(idf), origin = "derived", role = "factor", induced_by = "ident")
+    }
+  }
+
+  # snn (dgCMatrix, cells x cells) -> a cell-cell relation; var.genes -> a per-gene 0/1 measure
+  snn <- S("snn")
+  if (!is.null(snn) && length(dim(snn)) == 2 && all(dim(snn) == length(cells)))
+    add("snn", snn, "relation", c("cells", "cells"))
+  vg <- S("var.genes")
+  if (!is.null(vg) && length(vg)) add("variable_features", as.numeric(genes %in% as.character(vg)), "measure", "genes")
+
+  # multimodal: an `assay` list (each a v2 `assay` object: raw.data/data over its own features) -> a second
+  # feature space over the shared cells axis (the v2 analogue of a CITE-seq ADT assay).
+  asy <- S("assay")
+  if (is.list(asy)) for (an in names(asy)) {
+    a <- asy[[an]]
+    araw <- tryCatch(attr(a, "raw.data"), error = function(e) NULL)
+    adat <- tryCatch(attr(a, "data"), error = function(e) NULL)
+    aref <- if (!is.null(adat) && length(adat)) adat else araw
+    if (is.null(aref) || !nrow(aref)) next
+    if (an %in% names(ds$axes)) { ds$dropped <- c(ds$dropped, paste0("assay/", an, " (axis-name clash)")); next }
+    ds$axes[[an]] <- list(labels = as.character(rownames(aref)), origin = "observed", role = "feature")
+    if (!is.null(araw) && nrow(araw) == nrow(aref)) add(paste0(an, ".counts"), Matrix::t(araw), "measure", c("cells", an), state = "raw")
+    if (!is.null(adat) && nrow(adat) == nrow(aref)) add(paste0(an, ".data"), Matrix::t(adat), "measure", c("cells", an), state = "lognorm")
+  }
+
+  # analysis cruft with no cross-format home -> recorded in `dropped`, never silently lost
+  for (slt in c("cluster.tree", "calc.params", "kmeans", "hvg.info", "imputed", "spatial", "misc"))
+    if (length(S(slt))) ds$dropped <- c(ds$dropped, paste0("seurat-v2/", slt))
+
+  class(ds) <- "lstar_dataset"
+  ds
+}
+
 #' Read a Seurat object into an L* dataset.
 #'
 #' Handles Seurat v3/v4 (`Assay`) and v5 (`Assay5`); a v5 assay split by sample
@@ -220,6 +359,7 @@ write_seurat <- function(ds) {
 #' @seealso [write_seurat()]
 #' @export
 read_seurat <- function(so, assay = SeuratObject::DefaultAssay(so)) {
+  if (.is_seurat_v2(so)) return(.read_seurat_v2(so))   # pre-Assay v2 `seurat` class -> dedicated slot reader
   cells <- colnames(so)
   genes <- rownames(so[[assay]])
   ds <- list(kind = "sample", spec_version = "0.1",
