@@ -122,16 +122,18 @@ round-trips to `obsm['spatial']`; `uns['spatial']` (images/scalefactors) stays i
 > the lossless passthrough (verified identical after `write_anndata`); the spatial neighbor graph survives
 > as a cells×cells relation. **Not silently lost** — `ds.dropped` is empty for all 13.
 
-## Spatial — Seurat (`sweep_spatial.R`) — 5/5 load, **coords dropped (gap)**
+## Spatial — Seurat (`sweep_spatial.R`) — 5/5 load, **coords captured (fix #6)**
 
 | real dataset | classes | exercises | CI synthetic |
 |---|---|---|---|
-| `stxBrain` anterior1/2 + posterior1/2 | `Assay5` + `VisiumV2` image | 4 Visium sections = a multi-section collection; coords in `so@images` (`GetTissueCoordinates` + `ScaleFactors`) | (**gap** — and the profile currently **drops** these coords silently; see REPORT bug #6) |
-| `ssHippo` | `Assay` + `SlideSeq` image | high-res Slide-seqV2 (53,173 beads); coords in `so@images` | (**gap** — coords dropped) |
+| `stxBrain` anterior1/2 + posterior1/2 | `Assay5` + `VisiumV2` image | 4 Visium sections = a multi-section collection; coords in `so@images` (`GetTissueCoordinates` + `ScaleFactors`) | `seurat_versions.sh` spatial-coords (FOV) case — coords → `spatial` axis, pixels → `dropped` (fix #6) |
+| `ssHippo` | `Assay` + `SlideSeq` image | high-res Slide-seqV2 (53,173 beads); coords in `so@images` | covered by the same FOV synthetic case |
 
-> Unlike the AnnData path, the Seurat profile has **no `so@images` entry point**, so the Visium/Slide-seq
-> coordinates are not captured AND not recorded in `ds$dropped`. The synthetic-fixture gap is moot until
-> the profile captures the coords (a Seurat-side `spatial` coord axis) — tracked as bug #6.
+> **Fixed** (REPORT bug #6, `14b0225`): `read_seurat` now mirrors the AnnData path — `so@images`
+> coordinates (`GetTissueCoordinates()`) become a `spatial` **observed coordinate axis** (subtype
+> `spatial`; multi-section subsets use partial coverage), and the pixel images are recorded in
+> `ds$dropped` (no longer silent). The CI synthetic is the `CreateFOV` spatial-coords case in
+> `seurat_versions.sh`; images themselves stay deferred, as on the AnnData side.
 
 ## Perturbation (`sweep_perturbation.py`) — **3/3 PASS**
 
@@ -142,13 +144,14 @@ perturbation/guide → derived factor axis) + bounded-memory backed-read round-t
 | real dataset | source/format | exercises | CI synthetic |
 |---|---|---|---|
 | `NormanWeissman2019_filtered` | scPerturb `.h5ad` (111k cells) | **high-cardinality factor induction**: `perturbation`=**237** (single+combo CRISPRa) + `guide_id`=290; `nperts` combo arity; backed read → `write(stream=True)` | `synth.py` factor-axis path covers induction; a **237-level / combinatorial** factor axis at this scale is **sweep-only** (gap — a synth obs categorical with hundreds of levels would guard induction at cardinality) |
-| `SrivatsanTrapnell2020_sciplex2` | scPerturb `.h5ad` (24k cells) | **dose as ordered factor** (`dose_value`=8) × drug (`perturbation`=5); also surfaced finding #7 (categorical `var['ensembl_id']` → 58,302-level degenerate factor axis) | (**gap** — ordered-dose factor + the categorical-identifier degenerate-induction case have no synth fixture) |
+| `SrivatsanTrapnell2020_sciplex2` | scPerturb `.h5ad` (24k cells) | **dose as ordered factor** (`dose_value`=8) × drug (`perturbation`=5); also surfaced finding #7 (categorical `var['ensembl_id']` → 58,302-level degenerate factor axis) | the identifier-induction case is now guarded + covered by `test_induce.py`'s near-unique case (fix #7); ordered-dose factor synth fixture still a **gap** |
 | `DatlingerBock2021` | scPerturb `.h5ad` (39k cells) | combo 2nd-guide column (`perturbation_2`); 384-level `sample`; scifi-RNA-seq guide layout | (induction covered generically; multi-perturbation-column layout is sweep-only) |
 
 > Induction is dtype-driven (a categorical column auto-induces); these objects confirm it holds for
 > hundreds–thousands of levels and that the heavy count matrix round-trips with bounded memory from a
-> backed read. The **degenerate-factor-from-identifier** behavior (finding #7) is a candidate to guard or
-> gate with a cardinality heuristic (model.py).
+> backed read. The **degenerate-factor-from-identifier** behavior (finding #7) is now **guarded** in
+> `model.py` (`14b0225`): auto-induction skips a categorical whose levels are near-unique relative to its
+> span, so an identifier column no longer mints a giant factor axis (an explicit `induce()` still works).
 
 ## Conos / pagoda2 (`sweep_conos.R`)
 

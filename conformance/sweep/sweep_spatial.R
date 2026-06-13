@@ -1,19 +1,19 @@
 # Sweep REAL 10x Visium Seurat spatial objects (SeuratData::stxBrain, 4 sections) through
-# read_seurat -> lstar_write -> write_seurat, and -- importantly -- RECORD what spatial structure
-# survives vs is (currently) dropped on the Seurat side.
+# read_seurat -> lstar_write -> write_seurat, and RECORD what spatial structure survives on the
+# Seurat side.
 #
 # stxBrain ships 4 sections (anterior1/2, posterior1/2) = a multi-section spatial COLLECTION. Each is a
 # Seurat object whose Visium coordinates + tissue images live in `so@images[[<slice>]]` (a VisiumV1/V2
 # SpatialImage object: GetTissueCoordinates() x/y + ScaleFactors() spot/fiducial/hires/lowres), NOT in
-# `so@reductions`. The lstar Seurat profile reads assays / reductions / graphs / neighbors but (as of
-# this sweep) has no `so@images` entry point -- so unlike the AnnData path (where obsm['spatial'] becomes
-# a typed observed coordinate axis), the Seurat-side spatial coordinates are NOT captured.
+# `so@reductions`.
 #
-# This sweep is therefore a GAP DETECTOR: it loads each section, records whether a `spatial` coordinate
-# axis / coordinate field appears in the dataset, and whether the round-trip Seurat object retains its
-# image. The expected current result is that coords are dropped (deferred tier); the sweep makes that
-# loss VISIBLE rather than silent. If/when the profile gains `so@images` support, this sweep flips to
-# asserting the coordinates round-trip.
+# As of fix #6 (14b0225), the lstar Seurat profile reads `so@images` and -- mirroring the AnnData path
+# (obsm['spatial'] -> typed observed coordinate axis) -- captures the coordinates as a `spatial` observed
+# coordinate axis (subtype `spatial`; multi-section subsets use partial coverage), recording the pixel
+# images in `ds$dropped`. This sweep CONFIRMS that capture on real objects: it loads each section and
+# records that a `spatial` coordinate axis / field appears in the dataset and that the image loss is
+# recorded (not silent). (Before #6 the Seurat side silently dropped these coords; this sweep was the
+# gap detector that surfaced it.)
 #
 # Datasets are SeuratData packages (installed into .Rlib, local-only -- not committed, not in CI).
 # Run:  R_LIBS=.Rlib Rscript conformance/sweep/sweep_spatial.R   (writes /tmp/sweep_spatial_seurat.tsv)

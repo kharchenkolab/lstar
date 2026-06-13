@@ -189,6 +189,7 @@ them:
 | clustering / cell type | a `label` over `(cells)` | an `obs` column | `Idents` / a `meta.data` column | a `colData` column |
 | a second modality (ADT/ATAC) | a measure over `(cells, proteins/peaks)` — a second **feature axis** | a MuData modality | a second assay | an `altExp` |
 | cell–cell / gene–gene graph | a `relation` over `(cells,cells)` / `(genes,genes)` | `obsp` / `varp` | a `Graph` / `Neighbor` | `colPairs` / `rowPairs` |
+| spatial coordinates | `spatial` : embedding over an **observed** coordinate axis (`subtype=spatial`) | `obsm['spatial']` | `so@images` (Visium/FOV/Slide-seq centroids) | — (SpatialExperiment `spatialCoords`: planned) |
 
 The PCA-loadings row is the concrete payoff: a direct AnnData→Seurat conversion usually discards the
 gene loadings, but because L★ keeps the scores and loadings on one shared `pca` axis, they ride through.
@@ -223,7 +224,10 @@ layout — so conversions don't break when a collaborator is on a different rele
   fallback covers SeuratObject < 5. Per-assay class is recorded — `SCTAssay` (SCTransform residuals),
   `ChromatinAssay` (Signac scATAC: peaks + genomic ranges). A **split v5 assay**
   (`split(assay, f = sample)`) is recognized as a **collection**. A `scale.data` over the variable
-  features only is kept as **partial coverage**.
+  features only is kept as **partial coverage**. **Spatial coordinates** (Visium/FOV/Slide-seq) live in
+  `so@images`, *not* in `Reductions` — they are captured as a `spatial` observed coordinate axis
+  (mirroring the AnnData `obsm['spatial']` path; multi-section subsets use partial coverage), with the
+  pixel images recorded in `dropped`. This was previously a silent loss.
 - **SingleCellExperiment**: full SCE vs. a plain `SummarizedExperiment` (SCE-only accessors are
   guarded); S4 `Rle` columns are unpacked; cells keyed by a `Barcode` colData column (NULL dimnames)
   get synthesized labels.

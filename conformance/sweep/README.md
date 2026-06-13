@@ -21,7 +21,7 @@ SeuratData caches) — these are NOT in CI. CI runs the small committed fixtures
 | `sweep_seurat.R` / `install_and_sweep_seurat.R` | SeuratData (per-package enumeration) | `read_seurat`→`write_seurat` (installs are heavy) |
 | `sweep_seurat_refs.R` | SeuratData Azimuth `*ref` atlases | records load-skip (need Azimuth loader) |
 | `sweep_spatial.py` (+ `sweep_spatial_fetch*.py`) | 10x Visium (`visium_sge`, 9 samples) + squidpy imaging (merfish/seqfish/slideseqv2/imc) | `read_anndata`→`validate`→`write`→`write_anndata`; asserts the `spatial` observed coord axis + `uns['spatial']` passthrough round-trip; subprocess-isolated per dataset |
-| `sweep_spatial.R` | SeuratData stxBrain (4 Visium sections) + ssHippo (Slide-seqV2) | `read_seurat`→`lstar_write`→`write_seurat`; **records** whether `so@images` coords survive (currently dropped — see REPORT bug #6) |
+| `sweep_spatial.R` | SeuratData stxBrain (4 Visium sections) + ssHippo (Slide-seqV2) | `read_seurat`→`lstar_write`→`write_seurat`; checks `so@images` coords survive as a `spatial` observed coord axis (now captured — REPORT bug #6 fixed in `14b0225`) |
 | `sweep_perturbation.py` | scPerturb `.h5ad` (Datlinger / sciPlex2 / Norman2019) | backed `read_anndata`→`validate`→`write(stream=True)`; checks perturbation/guide categoricals induce factor axes (Norman: 237/290 levels); subprocess-isolated per dataset |
 
 How to acquire the local datasets (all cached under the **gitignored** `testdata/`, never committed):

@@ -149,7 +149,11 @@ downstream results are ordinary fields rather than special cases:
 > **automatically** (induction is data-driven: it keys on the value's type, not on a profile listing
 > it). Identity is canonical — a label's bare name + its ordered label set — so independent results over
 > the same clustering land on **one** axis and align; a name clash with *different* labels is an error,
-> never a silent merge. The axis carries `induced_by` back to its field, and `validate()` checks the
+> never a silent merge. Auto-induction is **guarded**: a categorical whose levels are near-unique — an
+*identifier* stored as a categorical, e.g. `var['ensembl_id']` with one level per gene — does **not**
+mint a degenerate `factor` axis the size of the data; it stays a plain categorical (an explicit
+`induce()` is still honored if a caller truly wants one). The axis carries `induced_by` back to its
+field, and `validate()` checks the
 > axis labels still equal the field's categories, so induction is *checkable*, not merely conventional.
 > Coordinate (rule 1) and union (rule 3) axes are still created by the profiles directly. See
 > [`format.md`](format.md) for the on-disk `categorical` encoding.

@@ -18,7 +18,7 @@ This is a living report — re-run the harnesses to refresh.
 | Integration (collections) | SeuratData ifnb/panc8/pbmcsca **split into per-sample collections** | **3** | **3** | 0 | — |
 | MuData | minipbcite + 10x CITE-seq `.h5mu` + 10x multiome `.h5mu` | **3** | **3** | **0** (after 1 fix) | — |
 | Spatial (AnnData) | scanpy `visium_sge` (9 Visium) + squidpy imaging (merfish/seqfish/slideseqv2/imc) | **13** | **13** | 0 | — |
-| Spatial (Seurat) | SeuratData stxBrain (4 Visium sections) + ssHippo (Slide-seqV2) | **5** | **5** | **0** loaded; **coords dropped** (see below) | — |
+| Spatial (Seurat) | SeuratData stxBrain (4 Visium sections) + ssHippo (Slide-seqV2) | **5** | **5** | **0**; **coords now captured** (fix #6) | — |
 | Perturbation | scPerturb `.h5ad` (Datlinger / sciPlex2 / Norman2019) — Zenodo 7041848 | **3** | **3** | 0 | — |
 
 Plus the curated CI corpus (`CORPUS.md`) and the version-variety fixtures.
@@ -79,18 +79,19 @@ synthetic fixtures had them** (they always set dimnames + use plain-vector colum
    the 10x-built `.h5mu` carry no per-modality loadings.
 
 6. **Seurat-side spatial coordinates SILENTLY DROPPED** (real **stxBrain** 4 Visium sections + **ssHippo**
-   Slide-seqV2, `sweep_spatial.R`) — **profile gap, reported not fixed** (`profiles/seurat.R` is owned by
-   another worker). A Visium/Slide-seq Seurat object keeps its coordinates + tissue images in
+   Slide-seqV2, `sweep_spatial.R`) — **Fixed** (`14b0225`); described below. A Visium/Slide-seq Seurat object keeps its coordinates + tissue images in
    `so@images[[<slice>]]` (a `VisiumV2`/`SlideSeq` SpatialImage: `GetTissueCoordinates()` x/y +
    `ScaleFactors()` spot/fiducial/hires/lowres) — **not** in `so@reductions`. `read_seurat` iterates
    `Reductions(so)` / graphs / neighbors but has **no `so@images` entry point**, so all 5 objects load and
    round-trip with status PASS while the spatial coordinates vanish: no `spatial` coordinate axis is created,
    `Images(write_seurat(ds))` is empty, and — crucially — **nothing is recorded in `ds$dropped`** (the loss
    is silent). This is the Seurat-side asymmetry with the AnnData path, where `obsm['spatial']` correctly
-   becomes a typed observed coordinate axis. **Minimum fix:** record the `so@images` loss in `ds$dropped`.
-   **Better:** mirror the AnnData path — read `GetTissueCoordinates()` into a `spatial` observed coordinate
-   axis (subtype `spatial`) and stash scalefactors/image refs in a passthrough, so Visium/Slide-seq coords
-   round-trip on the Seurat side too. (Images themselves stay deferred, as on the AnnData side.)
+   becomes a typed observed coordinate axis. **Fix applied** (`14b0225`, `profiles/seurat.R`): `read_seurat`
+   now mirrors the AnnData path — `so@images` coordinates (`GetTissueCoordinates()`) become a `spatial`
+   **observed coordinate axis** (subtype `spatial`; multi-section subsets use partial coverage), and the pixel
+   images are recorded in `ds$dropped` (no longer silent). `write_seurat` skips `subtype=spatial` embeddings so
+   they don't re-emit as DimReducs. Images themselves stay deferred, as on the AnnData side. Guarded by the
+   `seurat_versions` spatial-coords (FOV) conformance case.
 
 7. **Categorical identifier columns induce degenerate (near-unique) factor axes** (real **sciPlex2**,
    `sweep_perturbation.py`) — *behavioral edge case, no error/loss.* sciPlex2 stores `var['ensembl_id']`
@@ -101,9 +102,11 @@ synthetic fixtures had them** (they always set dimnames + use plain-vector colum
    reason a drug-response object with only 5 drugs × 8 doses shows `max_factor=58302`. The other two
    perturbation objects store `ensembl_id`/IDs as object/string (not categorical) and do **not** induce
    this axis. Worth noting because importers that happen to receive identifier columns as categoricals
-   (gene IDs, cell barcodes) will mint giant useless factor axes; a cardinality heuristic (e.g. skip
-   auto-induction when n_levels approaches the axis length) would avoid it. Not fixed (model.py owned
-   centrally) — recorded for a decision.
+   (gene IDs, cell barcodes) will mint giant useless factor axes. **Fixed** (`14b0225`, `model.py`):
+   `_auto_induce` now skips minting a factor axis when a categorical's level count approaches its span
+   length (near-unique ⇒ an identifier, not a grouping) — the column stays a plain categorical `label`,
+   and an explicit `induce()` is still honored if a caller really wants the axis. Guarded by
+   `test_induce.py`'s identifier case (and `validate` stays clean either way).
 
 **Final across all 61** (subprocess-isolated via `sweep_scrnaseq_driver.sh`): **56 PASS / 0 profile-FAIL
 / 4 load-dep-skip / 1 dataset-segfault**. So after 3 sweep-caught fixes the SCE profile handles 56 of 61
@@ -270,7 +273,10 @@ PASS  sq_imc         ( 4668,   34)   IMC (protein spatial)  34-marker protein pa
   (round-trips), though it is really a composition matrix — a generic-obsm-typing limitation, not spatial.
 - `ds.dropped` is **empty** for every spatial dataset — nothing silently lost on the AnnData side.
 
-### Seurat spatial (`sweep_spatial.R`) — 5/5 loaded, **coordinates dropped (gap #6)**
+### Seurat spatial (`sweep_spatial.R`) — 5/5 loaded; coordinates **now captured (fix #6)**
+
+Original gap-detector output (PRE-fix `14b0225`) — this is what surfaced the bug; re-running the sweep
+now reports `spatial coords captured` for each:
 
 ```
 PASS-load  stxBrain anterior1   31053x2696   VisiumV2     coords in so@images NOT captured (SILENTLY)
@@ -280,8 +286,10 @@ PASS-load  stxBrain posterior2  31053x3293   VisiumV2     "  (the 4 = a multi-se
 PASS-load  ssHippo              23264x53173  SlideSeq     "  (high-res Slide-seqV2 bead array)
 ```
 
-All load + round-trip without error, but the Visium/Slide-seq coordinates (in `so@images`) are **silently
-dropped** — see bug/finding #6 above. This is the one real Seurat-side spatial gap.
+All load + round-trip without error. At the time of the sweep the Visium/Slide-seq coordinates (in
+`so@images`) were **silently dropped**; finding #6 (above) fixed that — `read_seurat` now captures them as
+a `spatial` observed coordinate axis and records the pixel images in `ds$dropped`. The synthetic
+`CreateFOV` case in `seurat_versions.sh` guards it in CI.
 
 ## Perturbation detail (`sweep_perturbation.py`) — **3/3 PASS**
 
