@@ -83,7 +83,7 @@ real structure. See `conformance/sweep/REPORT.md`.
 | `Assay` (v3/v4) | ✓ | synth v3 + real pbmc3k.final |
 | `Assay5` (v5) | ✓ | synth v5 |
 | `SCTAssay` (residuals + SCTModel.list) | ◐ (data typed; SCTModel recorded) | synth SCT |
-| `ChromatinAssay` (Signac scATAC) | ✗ (Signac not installed) | — (ranges/fragments → recorded) |
+| `ChromatinAssay` (Signac scATAC) | ✓ peaks + **typed ranges** (seqnames/start/end); fragments recorded | real `pbmcMultiome` pbmc.atac (108377 peaks; sweep-caught the default-ATAC range-loss bug) |
 | v5 **split**/integration (per-sample layers → collection) | ✓ | synth split; write-back re-splits |
 | multimodal RNA+ADT / RNA+ATAC | ✓ | synth RNA+ADT + real cbmc |
 | reductions: embeddings / loadings / **stdev** | ✓ | synth + real |

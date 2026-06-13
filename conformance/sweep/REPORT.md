@@ -33,6 +33,14 @@ synthetic fixtures had them** (they always set dimnames + use plain-vector colum
    SCE) → `reducedDimNames`/`altExpNames` "unable to find an inherited method." **Fixed**: guard with
    `is(sce, "SingleCellExperiment")` + tryCatch (degrade gracefully — assays/colData/rowData only).
 
+4. **Silent loss of Signac `ChromatinAssay` peak ranges** (`pbmcMultiome`'s `pbmc.atac`, a *pure-ATAC*
+   object where the ChromatinAssay is the **default** assay): the genomic ranges (108,377 peak
+   coordinates) + fragments recording only ran in the *other-assay* path, so a default ATAC assay lost
+   its ranges with **nothing recorded** (`dropped` empty). **Fixed**: `read_seurat` now types peak ranges
+   as feature fields (`<axis>_seqnames` factor + `_start`/`_end` measures) over the peak axis for *any*
+   ChromatinAssay (default or other), and records the external fragment file(s). No synthetic fixture had
+   a ChromatinAssay — only the real multiome surfaced it.
+
 **Final across all 61** (subprocess-isolated via `sweep_scrnaseq_driver.sh`): **56 PASS / 0 profile-FAIL
 / 4 load-dep-skip / 1 dataset-segfault**. So after 3 sweep-caught fixes the SCE profile handles 56 of 61
 real Bioconductor datasets; the 5 non-passes are not profile bugs (missing loader packages or a dataset
@@ -80,10 +88,16 @@ That 10/10 PASS with **zero** profile bugs across real RNA / CITE-seq / ECCITE-s
 evidence that the synthetic CI fixtures (`synth.py` + `seurat_versions.sh`) faithfully represent the
 real Seurat structure — the sweep found nothing the synthetic fixtures don't already exercise.
 
-**Not swept (load-dep, NOT profile bugs):** the 11 Azimuth `*ref` atlases are SeuratData *disk* datasets
-whose reference objects need the **Azimuth** loader (`LoadData` reports "could not find dataset … check
-manifest"); `pbmcMultiome` (RNA+ATAC, a Signac `ChromatinAssay`) failed to install without **Signac**.
-Both are deferred dependency rabbit holes, not lstar profile gaps. `sweep_seurat_refs.R` records them.
+**RNA+ATAC multiome (Signac `ChromatinAssay`)** — `sweep_multiome.R`, after installing Signac 1.17.1:
+
+```
+PASS  pbmc.atac   ATAC   ChromatinAssay   108377 peaks   ranges typed (seqnames/start/end); fragments recorded
+PASS  pbmc.rna    RNA    Assay             36601 genes
+```
+
+This sweep **caught a real bug** (see below). Not swept: the 11 Azimuth `*ref` atlases are SeuratData
+*disk* datasets whose reference objects need the **Azimuth** loader (`LoadData` reports "could not find
+dataset … check manifest") — a deferred dependency, not a profile gap (`sweep_seurat_refs.R` records them).
 
 > The SCE sweep over `scRNAseq` (61 datasets available; ~45 attempted) runs in the background and writes
 > `/tmp/sweep_scrnaseq.tsv`; fold its final tally in here. It is the broadest single source — re-run after

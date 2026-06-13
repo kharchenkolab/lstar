@@ -228,6 +228,30 @@ read_seurat <- function(so, assay = SeuratObject::DefaultAssay(so)) {
     if (is.null(ds$axes[[nm]]))                           # don't clobber an existing axis of that name
       ds$axes[[nm]] <<- list(labels = levels(v), origin = "derived", role = "factor", induced_by = nm)
   }
+  # A Signac ChromatinAssay (scATAC) carries the defining peak **genomic ranges** (a GRanges over its
+  # features) plus external **fragment** files. Type the ranges as arity-1 feature fields over the peak
+  # axis (chromosome -> factor; start/end -> measures) so the coordinates survive the round-trip, and
+  # record the fragment files (external, can't inline). Without this they're silently lost -- a real
+  # corpus bug (a pure-ATAC object, where the ChromatinAssay is the *default* assay, never hit the
+  # other-assay recording path). Slot-accessed + tryCatch so the profile never hard-depends on Signac.
+  capture_chromatin <- function(a_name, axis, n) {
+    a <- tryCatch(so[[a_name]], error = function(e) NULL)
+    if (is.null(a) || !methods::is(a, "ChromatinAssay")) return(invisible())
+    gr <- tryCatch(methods::slot(a, "ranges"), error = function(e) NULL)
+    got <- FALSE
+    if (!is.null(gr) && length(gr) == n && requireNamespace("GenomicRanges", quietly = TRUE)) {
+      sn <- tryCatch(as.character(GenomicRanges::seqnames(gr)), error = function(e) NULL)
+      st <- tryCatch(as.numeric(GenomicRanges::start(gr)), error = function(e) NULL)
+      en <- tryCatch(as.numeric(GenomicRanges::end(gr)), error = function(e) NULL)
+      if (length(sn) == n) { add_factor(paste0(axis, "_seqnames"), sn, axis); got <- TRUE }
+      if (length(st) == n) add2(paste0(axis, "_start"), st, "measure", axis, subtype = "genomic_pos")
+      if (length(en) == n) add2(paste0(axis, "_end"), en, "measure", axis, subtype = "genomic_pos")
+    }
+    if (!got) ds$dropped <<- c(ds$dropped, sprintf("assay/%s/ranges (Signac ChromatinAssay; uncaptured)", a_name))
+    frag <- tryCatch(methods::slot(a, "fragments"), error = function(e) list())
+    if (length(frag)) ds$dropped <<- c(ds$dropped,
+      sprintf("assay/%s/fragments (%d external file(s), not inlined)", a_name, length(frag)))
+  }
   state_of <- function(L) switch(L, counts = "raw", data = "lognorm", scale.data = "scaled", "")
   name_of <- function(L) switch(L, counts = "counts", data = "X", L)
   # A Seurat v5 assay split for integration (split(assay, f = sample)) holds a *collection*:
@@ -255,6 +279,7 @@ read_seurat <- function(so, assay = SeuratObject::DefaultAssay(so)) {
       add(name_of(L), Matrix::t(m), "measure", c("cells", "genes"), state = state_of(L))
     }
   }
+  capture_chromatin(assay, "genes", length(genes))              # default assay may itself be ATAC (peaks)
 
   # Multimodal: every *other* assay is its own feature space over the shared `cells` axis (CITE-seq
   # RNA+ADT, 10x multiome RNA+ATAC). Capture it as a feature axis named after the assay + measures
@@ -273,8 +298,7 @@ read_seurat <- function(so, assay = SeuratObject::DefaultAssay(so)) {
       }
       add(paste0(a, ".", L), Matrix::t(m), "measure", c("cells", a), state = state_of(L))
     }
-    if (inherits(so[[a]], "ChromatinAssay"))
-      ds$dropped <- c(ds$dropped, paste0("assay/", a, "/ranges+fragments (Signac, not typed)"))
+    capture_chromatin(a, a, length(feats))                      # ATAC as a non-default assay (peaks axis)
   }
 
   md <- so[[]]
