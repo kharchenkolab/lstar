@@ -162,6 +162,46 @@ def test_joint_method_storage_shapes():
           "(one shared factor axis: scores embedding + per-mod loadings) typed; round-trips to MuData")
 
 
+def test_per_modality_pca_different_dim():
+    """Regression for the sweep-caught minipbcite bug: two modalities each carry `varm['PCs']` but with
+    DIFFERENT widths (rna 50 comps, prot 31). Naming the loadings' coordinate axis by the bare key (`PCs`)
+    made the second modality span a length-mismatched axis -> validate error + lost loadings. The fix: a
+    same-named coordinate axis is reused ONLY when the length matches (the genuine MOFA shared-factor case,
+    test_joint_method_storage_shapes); a different length namespaces the axis per modality. The synthetic
+    MOFA case uses EQUAL widths, so it can't guard this -- hence this distinct case."""
+    try:
+        import anndata as ad
+        import mudata
+        import pandas as pd
+    except Exception:
+        print("  SKIP test_per_modality_pca_different_dim (mudata unavailable)"); return
+    rng = np.random.default_rng(3)
+    n, ng, npr, k_rna, k_prot = 60, 40, 12, 50, 31      # DIFFERENT PCA widths per modality
+    arna = ad.AnnData(rng.random((n, ng)).astype("float32"),
+                      obs=pd.DataFrame(index=["c%d" % i for i in range(n)]),
+                      var=pd.DataFrame(index=["g%d" % i for i in range(ng)]))
+    aprot = ad.AnnData(rng.random((n, npr)).astype("float32"),
+                       obs=pd.DataFrame(index=["c%d" % i for i in range(n)]),
+                       var=pd.DataFrame(index=["p%d" % i for i in range(npr)]))
+    arna.varm["PCs"] = rng.random((ng, k_rna)).astype("float32")
+    aprot.varm["PCs"] = rng.random((npr, k_prot)).astype("float32")
+    md = mudata.MuData({"rna": arna, "prot": aprot})
+    ds = lstar.read_mudata(md)
+    assert not lstar.validate(ds), lstar.validate(ds)    # the bug: validate flagged the length mismatch
+    rl = ds.field("rna_PCs_loadings"); pl = ds.field("prot_PCs_loadings")
+    # the two PCAs must NOT share one coordinate axis (different widths)
+    assert rl.span[0] == "genes" and pl.span[0] == "proteins"
+    assert rl.span[1] != pl.span[1], (rl.span, pl.span)
+    assert len(ds.axis(rl.span[1])) == k_rna and len(ds.axis(pl.span[1])) == k_prot
+    ds2 = lstar.read(_w(ds))                             # survives the store
+    assert not lstar.validate(ds2)
+    md2 = lstar.write_mudata(ds2)                        # and back to a MuData with both PCs intact
+    assert md2.mod["rna"].varm["PCs"].shape == (ng, k_rna)
+    assert md2.mod["prot"].varm["PCs"].shape == (npr, k_prot)
+    print("per-modality PCA (rna 50 / prot 31, same `varm['PCs']` key): namespaced to distinct coordinate "
+          "axes (no collision); round-trips both loadings -- regression for the minipbcite sweep bug")
+
+
 def _w(ds):
     p = _store(); lstar.write(ds, p); return p
 
@@ -171,3 +211,4 @@ if __name__ == "__main__":
     test_real_minipbcite()
     test_partial_overlap_mudata()
     test_joint_method_storage_shapes()
+    test_per_modality_pca_different_dim()

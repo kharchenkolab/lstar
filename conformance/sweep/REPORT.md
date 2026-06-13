@@ -8,13 +8,26 @@ This is a living report — re-run the harnesses to refresh.
 
 | corpus | source | swept | PASS | profile-FAIL | load-skip |
 |---|---|---|---|---|---|
-| AnnData | scanpy.datasets + local atlases | 7 | 6 | 0 | 1 (moignard15: needs `openpyxl`) |
+| AnnData | scanpy.datasets + local atlases + **4 scVelo velocity** + **3 10x CITE-seq** | **14** | **13** | 0 | 1 (moignard15: needs `openpyxl`) |
+| AnnData velocity | scVelo `dentategyrus`/`gastrulation_erythroid`/`bonemarrow`/`pancreas` | **4** | **4** | 0 | — |
 | SCE | Bioconductor `scRNAseq` | **61** | **56** | **0** (after 3 fixes) | 4 load-dep + 1 segfault (dataset, not profile) |
 | Conos | local `.rds` (real research objects) | 2 | 2 | 0 | (acon.rds 8.7 GB skipped) |
-| Seurat | SeuratData (lazy datasets) | **10** objects (9 datasets) | **10** | **0** | 11 Azimuth *ref atlases (need the Azimuth loader) + pbmcMultiome (needs Signac) |
-| MuData | minipbcite + citeseq fixture | 2 | 2 | 0 | — |
+| Seurat | SeuratData (lazy datasets) | **10** objects (9 datasets) | **10** | **0** | 11 Azimuth *ref atlases (need the Azimuth loader) |
+| Seurat CITE-seq (10x) | 10x public `.h5` → RNA Assay + ADT Assay (5k/1k PBMC, 10k MALT) | **3** | **3** | 0 | — |
+| Seurat multiome (10x) | 10x public `.h5` → RNA Assay + Signac ChromatinAssay (PBMC 3k, brain 3k) | **2** | **2** | 0 | — |
+| Integration (collections) | SeuratData ifnb/panc8/pbmcsca **split into per-sample collections** | **3** | **3** | 0 | — |
+| MuData | minipbcite + 10x CITE-seq `.h5mu` + 10x multiome `.h5mu` | **3** | **3** | **0** (after 1 fix) | — |
 
 Plus the curated CI corpus (`CORPUS.md`) and the version-variety fixtures.
+
+**CITE-seq (RNA+ADT) breadth: 7 real examples** — cbmc + bmcite (SeuratData) · 5k/1k PBMC + 10k MALT
+(10x, via Seurat) · minipbcite + 5k PBMC (10x, via MuData) · plus the committed `citeseq` mtx fixture.
+**Multiome (RNA+ATAC): 4 real examples** — pbmcMultiome (SeuratData ChromatinAssay) · PBMC 3k + brain 3k
+(10x, via Seurat ChromatinAssay) · PBMC 3k (10x, via MuData `peaks` axis).
+**Velocity/trajectory: 4 real** (mouse hippocampus / mouse gastrulation erythroid / human bone marrow /
+mouse pancreas). **Integration collections: 3 real** (ctrl/stim · 8-dataset / 5-tech · 9-method).
+**Version variety:** legacy-format vs anndata-0.11 (encoding-version 0.1.0/0.2.0) `.h5ad` both read by
+anndata 0.8 + profile, *and* by the streaming `convert_anndata` off-disk path (graceful recognition).
 
 ## Bugs the sweep found (and fixed)
 
@@ -40,6 +53,21 @@ synthetic fixtures had them** (they always set dimnames + use plain-vector colum
    as feature fields (`<axis>_seqnames` factor + `_start`/`_end` measures) over the peak axis for *any*
    ChromatinAssay (default or other), and records the external fragment file(s). No synthetic fixture had
    a ChromatinAssay — only the real multiome surfaced it.
+
+5. **MuData per-modality `varm` loadings collide on a same-named, different-length coordinate axis**
+   (real **minipbcite.h5mu**, the *annotated* version): both modalities carry `varm['PCs']` — `rna` is
+   (27 genes × **50** PCs), `prot` is (29 proteins × **31** PCs). `read_mudata` named the loadings'
+   coordinate axis by the bare `varm` key (`PCs`), so the modality processed first (prot) created `PCs`
+   at length 31 and the second (rna, 50 cols) was spanned over that length-31 axis → `validate`:
+   *"field 'rna_PCs_loadings' dim 1 (50) != axis 'PCs' length 31"* → and the round-trip dropped/mis-shaped
+   the loadings. Root cause: `_coord_axis(ds, base, ncol)` reuses an existing same-named axis **without a
+   length check** — correct for a *shared* factor model (MOFA/totalVI factors load from several modalities
+   onto ONE axis) but wrong for *per-modality* reductions that merely share the bare key (`PCs`). **Fixed**
+   (`profiles/mudata.py`): reuse the bare coordinate axis only when its length matches; otherwise namespace
+   it per-modality (`<mod>_<key>`). The MOFA shared-factor path (equal lengths) still lands on one axis —
+   verified by `test_mudata.py`'s synthetic MOFA case, which keeps passing. **Only the real annotated
+   minipbcite (two per-modality PCAs of different dimensionality) surfaced it**; the citeseq fixture and
+   the 10x-built `.h5mu` carry no per-modality loadings.
 
 **Final across all 61** (subprocess-isolated via `sweep_scrnaseq_driver.sh`): **56 PASS / 0 profile-FAIL
 / 4 load-dep-skip / 1 dataset-segfault**. So after 3 sweep-caught fixes the SCE profile handles 56 of 61
@@ -102,3 +130,73 @@ dataset … check manifest") — a deferred dependency, not a profile gap (`swee
 > The SCE sweep over `scRNAseq` (61 datasets available; ~45 attempted) runs in the background and writes
 > `/tmp/sweep_scrnaseq.tsv`; fold its final tally in here. It is the broadest single source — re-run after
 > the NULL-dimnames fix to confirm the previously-failed datasets now pass.
+
+## Velocity / trajectory detail (`sweep_velocity.py`)
+
+Real scVelo datasets (spliced/unspliced ride the generic measure paths; `clusters`/celltype induce
+factor axes). Varied organism + tissue + size:
+
+```
+PASS  bonemarrow              (5780, 14319)   human bone marrow      layers=spliced+unspliced            f=7  a=4
+PASS  dentategyrus            (2930, 13913)   mouse hippocampus      layers=ambiguous+spliced+unspliced  f=9  a=6
+PASS  gastrulation_erythroid  (9815, 53801)   mouse gastrulation     layers=spliced+unspliced            f=19 a=11
+PASS  pancreas_full           (3696, 27998)   mouse pancreas         layers=spliced+unspliced            f=16 a=7
+```
+
+These also feed `sweep_anndata.py` (as `velocity:*`), and a small subsample with the **velocity_graph**
+in `uns` is the committed CI fixture `pancreas_velocity_small.h5ad` (`test_tier1_promote.py`).
+
+## CITE-seq / multiome detail (10x public `.h5`)
+
+**`sweep_citeseq_10x.R`** — public 10x feature-barcode output → Seurat RNA `Assay5` + ADT `Assay`:
+
+```
+PASS  pbmc_5k_protein    RNA+ADT   Assay5+Assay   33538 genes + 32 antibodies
+PASS  pbmc_1k_protein    RNA+ADT   Assay5+Assay   33538 genes + 17 antibodies
+PASS  malt_10k_protein   RNA+ADT   Assay5+Assay   33538 genes + 17 antibodies   (MALT lymphoma, non-PBMC tissue)
+```
+
+**`sweep_multiome_10x.R`** — public 10x Cell Ranger ARC output → Seurat RNA `Assay5` + Signac
+`ChromatinAssay` (peak ranges parsed from `chr:start-end` feature names; exercises the same range-typing
+path as `pbmcMultiome`, on a different peak set + a non-PBMC tissue):
+
+```
+PASS  pbmc_granulocyte_3k   RNA+ATAC   Assay5+ChromatinAssay   36601 genes +  98319 peaks
+PASS  human_brain_3k        RNA+ATAC   Assay5+ChromatinAssay   36601 genes + 134030 peaks   (brain tissue)
+```
+
+## MuData detail (`sweep_mudata.py`)
+
+Real `.h5mu`; each modality → a canonical feature axis (`genes`/`proteins`/`peaks`) over one shared
+`cells` axis. `read_mudata`→`write`→`write_mudata` (full round-trip back to MuData):
+
+```
+PASS  minipbcite         RNA(27g)+ADT(29p)      proteins+genes   411 cells, per-mod PCA loadings (the bug-5 fix)
+PASS  5k_pbmc_protein    RNA(33538g)+ADT(32p)   genes+proteins   10x CITE-seq, built by splitting feature_types
+PASS  pbmc_multiome_3k   RNA(36601g)+ATAC(98319pk)  genes+peaks  10x multiome -> a `peaks` feature axis from MuData
+```
+
+The multiome `.h5mu` is the **first `peaks` feature axis arriving from MuData** (not Signac) — the peak
+coordinate labels (`chr1:9768-10660`) survive as the feature axis labels; the ATAC counts span `(cells, peaks)`.
+
+## Integration as collections detail (`sweep_integration.R`)
+
+Real SeuratData integration objects **split by their sample column into a heterogeneous collection**
+(per-sample `cells.<s>`/`genes.<s>` axes — genuinely different gene sets after dropping all-zero genes —
++ `counts.<s>` measures + a `samples` axis + a union `cells` axis with a `sample` label), then
+`lstar_write`→`lstar_read`. This is the integration scenario read **AS a collection, not flattened** —
+the same model the Conos profile builds:
+
+```
+PASS  ifnb     by stim     2 samples (ctrl/stim)            13999 cells
+PASS  panc8    by dataset  8 samples (5 technologies)       14890 cells
+PASS  pbmcsca  by Method   9 samples (multi-method)         31021 cells
+```
+
+## Version variety
+
+The same `dentategyrus` data written by **anndata 0.11.4** (top encoding-version 0.1.0, `dataframe`
+encoding 0.2.0, `csr_matrix` X) AND in the **legacy** pre-0.7 on-disk format (no encoding-version attr)
+both read cleanly via **anndata 0.8 + `read_anndata`** *and* via the streaming **`convert_anndata`**
+off-disk path → identical L* structure, no errors. Seurat v3/v4 `Assay` and v5 `Assay5` variety is
+covered by the SeuratData sweep + `seurat_versions.sh`. ([[feedback-graceful-version-recognition]].)

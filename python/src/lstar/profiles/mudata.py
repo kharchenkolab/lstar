@@ -89,6 +89,13 @@ def read_mudata(md, kind="sample"):
             if v.ndim != 2:                          # factor coord is shared (same stripped name as the
                 continue                             # global factor scores' obsm), they land on ONE axis.
             base = k[2:] if str(k).startswith("X_") else str(k)
+            # Reuse a same-named coordinate axis only when its length matches (the genuine shared-factor
+            # case: MOFA/totalVI factors load from several modalities onto ONE axis). If a same-named axis
+            # exists with a DIFFERENT length, this is a per-modality reduction (e.g. each modality's own
+            # `PCs`: rna 50 comps, prot 31) -- namespace it so the two don't collide on a length-mismatched
+            # axis (else the loadings span a wrong-length axis -> validate error). Caught on real minipbcite.
+            if base in ds.axes and len(ds.axes[base]) != v.shape[1]:
+                base = "%s_%s" % (m, base)
             cname = _coord_axis(ds, base, v.shape[1])    # reuses the factor axis if scores already made it
             ds.add_field(_uniq(ds, "%s_%s_loadings" % (m, k), fax), v, role="loading", span=[fax, cname],
                          provenance={"mudata": "%s/varm/%s" % (m, k)})
