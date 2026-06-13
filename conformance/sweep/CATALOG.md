@@ -102,6 +102,54 @@ Real SeuratData integration objects split by their sample column into a heteroge
 > + `samples` axis + union `cells`), reached from Seurat integration objects rather than a Conos `.rds` —
 > i.e. a second, format-independent producer of the collection shape, all round-tripping.
 
+## Spatial — AnnData (`sweep_spatial.py`) — **13/13 PASS**
+
+Conceptual spatial support (Tier 3): `obsm['spatial']` → observed coordinate axis (subtype `spatial`),
+round-trips to `obsm['spatial']`; `uns['spatial']` (images/scalefactors) stays in the lossless passthrough
+(deferred from typing, but byte-for-byte preserved). Local-only `.h5ad` under `testdata/spatial/`.
+
+| real dataset | source/format | exercises | CI synthetic |
+|---|---|---|---|
+| `V1_*` Visium (9) | scanpy `visium_sge` `.h5ad` | `obsm['spatial']` → observed coord axis (subtype `spatial`); `uns['spatial']` scalefactors+images survive in passthrough; human+mouse; breast/heart/lymph/kidney/brain | (**gap** — no synthetic spatial fixture: a synth AnnData with `obsm['spatial']` + a `uns['spatial']` scalefactors/image stub would lock in the observed-coord-axis + passthrough behavior) |
+| `Targeted_/Parent_…Cerebellum` | Visium targeted-vs-parent pair | panel restriction (1186 vs 36601 genes) over the same spots/coords | (**gap** — same spatial fixture; the panel-restriction is just a gene-axis subset) |
+| `V1_Mouse_Brain_Sagittal_Posterior` (+ `_Section_2`) | Visium multi-section pair | two slices of one experiment = a spatial **collection** (each its own object/coords) | `collection.sh` (collection shape) + the spatial **gap** for the per-slice coords |
+| `sq_merfish` | squidpy MERFISH `.h5ad` | imaging-based; **`spatial` + `spatial3d`** (3-D coords; 3d kept but untyped-as-spatial); 150-gene panel | (**gap** — spatial fixture; a *second/3-D* coordinate set untyped-as-spatial is a recorded behavior, not yet synth) |
+| `sq_seqfish` | squidpy seqFISH `.h5ad` | imaging-based mouse embryo; `spatial` + `X_umap` | (spatial **gap**) |
+| `sq_slideseqv2` | squidpy Slide-seqV2 `.h5ad` | bead array (41k); **spatial neighbor graph** (`spatial_connectivities`/`_distances` obsp → relation, round-trips); `deconvolution_results` (composition kept as embedding) | spatial-graph → `obsp`-relation path is covered by graph fixtures; spatial coords are the **gap** |
+| `sq_imc` | squidpy IMC `.h5ad` | **protein** spatial (34-marker panel), no `uns['spatial']` | (spatial **gap**; protein-as-genes-axis is encoding-irrelevant here) |
+
+> **Deferred-and-recorded (correct), not lost:** Visium tissue images + scalefactors survive verbatim in
+> the lossless passthrough (verified identical after `write_anndata`); the spatial neighbor graph survives
+> as a cells×cells relation. **Not silently lost** — `ds.dropped` is empty for all 13.
+
+## Spatial — Seurat (`sweep_spatial.R`) — 5/5 load, **coords dropped (gap)**
+
+| real dataset | classes | exercises | CI synthetic |
+|---|---|---|---|
+| `stxBrain` anterior1/2 + posterior1/2 | `Assay5` + `VisiumV2` image | 4 Visium sections = a multi-section collection; coords in `so@images` (`GetTissueCoordinates` + `ScaleFactors`) | (**gap** — and the profile currently **drops** these coords silently; see REPORT bug #6) |
+| `ssHippo` | `Assay` + `SlideSeq` image | high-res Slide-seqV2 (53,173 beads); coords in `so@images` | (**gap** — coords dropped) |
+
+> Unlike the AnnData path, the Seurat profile has **no `so@images` entry point**, so the Visium/Slide-seq
+> coordinates are not captured AND not recorded in `ds$dropped`. The synthetic-fixture gap is moot until
+> the profile captures the coords (a Seurat-side `spatial` coord axis) — tracked as bug #6.
+
+## Perturbation (`sweep_perturbation.py`) — **3/3 PASS**
+
+scPerturb harmonized `.h5ad` (Zenodo 7041848). Exercises FACTOR-AXIS induction at scale (categorical
+perturbation/guide → derived factor axis) + bounded-memory backed-read round-trip. Local-only under
+`testdata/perturbation/`.
+
+| real dataset | source/format | exercises | CI synthetic |
+|---|---|---|---|
+| `NormanWeissman2019_filtered` | scPerturb `.h5ad` (111k cells) | **high-cardinality factor induction**: `perturbation`=**237** (single+combo CRISPRa) + `guide_id`=290; `nperts` combo arity; backed read → `write(stream=True)` | `synth.py` factor-axis path covers induction; a **237-level / combinatorial** factor axis at this scale is **sweep-only** (gap — a synth obs categorical with hundreds of levels would guard induction at cardinality) |
+| `SrivatsanTrapnell2020_sciplex2` | scPerturb `.h5ad` (24k cells) | **dose as ordered factor** (`dose_value`=8) × drug (`perturbation`=5); also surfaced finding #7 (categorical `var['ensembl_id']` → 58,302-level degenerate factor axis) | (**gap** — ordered-dose factor + the categorical-identifier degenerate-induction case have no synth fixture) |
+| `DatlingerBock2021` | scPerturb `.h5ad` (39k cells) | combo 2nd-guide column (`perturbation_2`); 384-level `sample`; scifi-RNA-seq guide layout | (induction covered generically; multi-perturbation-column layout is sweep-only) |
+
+> Induction is dtype-driven (a categorical column auto-induces); these objects confirm it holds for
+> hundreds–thousands of levels and that the heavy count matrix round-trips with bounded memory from a
+> backed read. The **degenerate-factor-from-identifier** behavior (finding #7) is a candidate to guard or
+> gate with a cardinality heuristic (model.py).
+
 ## Conos / pagoda2 (`sweep_conos.R`)
 
 | real object | exercises | CI synthetic |
@@ -130,3 +178,13 @@ can't guard them against regression — prioritized to add as small synthetic ca
    prot 31 PCs both keyed `varm['PCs']`) — `test_mudata.py`'s MOFA case shares one *equal-length* factor
    axis, so it does NOT guard the unequal-length namespacing fix. Add a synthetic two-modality case whose
    `varm['PCs']` differ in width to lock in the fix against regression.
+6. **Spatial coordinate axis + `uns['spatial']` passthrough** — no synthetic AnnData fixture carries
+   `obsm['spatial']` + a `uns['spatial']` (scalefactors/image stub). Add a small synth case to guard the
+   observed-coord-axis (subtype `spatial`) + lossless-passthrough behavior the 13 real spatial objects pass.
+7. **Seurat `so@images` (Visium/Slide-seq coords)** — currently a profile *gap* (REPORT bug #6: coords
+   silently dropped), not just a fixture gap. Once the Seurat profile captures `GetTissueCoordinates()` into
+   a `spatial` coord axis, add a synthetic Seurat spatial object to guard it.
+8. **High-cardinality + combinatorial factor induction** — Norman2019's `perturbation` (237 single+combo
+   levels) / `guide_id` (290) are sweep-only; a synth obs categorical with hundreds of levels (incl. combo
+   "A+B" labels) would guard induction at cardinality. Pairs with finding #7 (degenerate factor from a
+   categorical *identifier* column — decide a cardinality heuristic in model.py before adding a fixture).

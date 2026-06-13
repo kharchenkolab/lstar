@@ -17,6 +17,9 @@ This is a living report — re-run the harnesses to refresh.
 | Seurat multiome (10x) | 10x public `.h5` → RNA Assay + Signac ChromatinAssay (PBMC 3k, brain 3k) | **2** | **2** | 0 | — |
 | Integration (collections) | SeuratData ifnb/panc8/pbmcsca **split into per-sample collections** | **3** | **3** | 0 | — |
 | MuData | minipbcite + 10x CITE-seq `.h5mu` + 10x multiome `.h5mu` | **3** | **3** | **0** (after 1 fix) | — |
+| Spatial (AnnData) | scanpy `visium_sge` (9 Visium) + squidpy imaging (merfish/seqfish/slideseqv2/imc) | **13** | **13** | 0 | — |
+| Spatial (Seurat) | SeuratData stxBrain (4 Visium sections) + ssHippo (Slide-seqV2) | **5** | **5** | **0** loaded; **coords dropped** (see below) | — |
+| Perturbation | scPerturb `.h5ad` (Datlinger / sciPlex2 / Norman2019) — Zenodo 7041848 | **3** | **3** | 0 | — |
 
 Plus the curated CI corpus (`CORPUS.md`) and the version-variety fixtures.
 
@@ -28,6 +31,12 @@ Plus the curated CI corpus (`CORPUS.md`) and the version-variety fixtures.
 mouse pancreas). **Integration collections: 3 real** (ctrl/stim · 8-dataset / 5-tech · 9-method).
 **Version variety:** legacy-format vs anndata-0.11 (encoding-version 0.1.0/0.2.0) `.h5ad` both read by
 anndata 0.8 + profile, *and* by the streaming `convert_anndata` off-disk path (graceful recognition).
+**Spatial breadth: 18 real objects** — 9 Visium (`visium_sge`: breast/heart/lymph/kidney/brain, human+mouse,
+a multi-section posterior pair, a targeted-vs-parent cerebellum pair) + 4 squidpy imaging (MERFISH 73k /
+seqFISH 19k / Slide-seqV2 41k / IMC protein) on the AnnData side; 4 Visium sections (stxBrain) + 1
+Slide-seqV2 (ssHippo) on the Seurat side. **Perturbation: 3 real** (scifi-CRISPR 39k / sci-Plex
+drug×dose 24k / combinatorial CRISPRa Norman2019 111k — `perturbation` factor of **237** levels, `guide_id`
+of 290; a high-cardinality factor-induction stressor, round-tripped bounded-memory from a backed read).
 
 ## Bugs the sweep found (and fixed)
 
@@ -68,6 +77,33 @@ synthetic fixtures had them** (they always set dimnames + use plain-vector colum
    verified by `test_mudata.py`'s synthetic MOFA case, which keeps passing. **Only the real annotated
    minipbcite (two per-modality PCAs of different dimensionality) surfaced it**; the citeseq fixture and
    the 10x-built `.h5mu` carry no per-modality loadings.
+
+6. **Seurat-side spatial coordinates SILENTLY DROPPED** (real **stxBrain** 4 Visium sections + **ssHippo**
+   Slide-seqV2, `sweep_spatial.R`) — **profile gap, reported not fixed** (`profiles/seurat.R` is owned by
+   another worker). A Visium/Slide-seq Seurat object keeps its coordinates + tissue images in
+   `so@images[[<slice>]]` (a `VisiumV2`/`SlideSeq` SpatialImage: `GetTissueCoordinates()` x/y +
+   `ScaleFactors()` spot/fiducial/hires/lowres) — **not** in `so@reductions`. `read_seurat` iterates
+   `Reductions(so)` / graphs / neighbors but has **no `so@images` entry point**, so all 5 objects load and
+   round-trip with status PASS while the spatial coordinates vanish: no `spatial` coordinate axis is created,
+   `Images(write_seurat(ds))` is empty, and — crucially — **nothing is recorded in `ds$dropped`** (the loss
+   is silent). This is the Seurat-side asymmetry with the AnnData path, where `obsm['spatial']` correctly
+   becomes a typed observed coordinate axis. **Minimum fix:** record the `so@images` loss in `ds$dropped`.
+   **Better:** mirror the AnnData path — read `GetTissueCoordinates()` into a `spatial` observed coordinate
+   axis (subtype `spatial`) and stash scalefactors/image refs in a passthrough, so Visium/Slide-seq coords
+   round-trip on the Seurat side too. (Images themselves stay deferred, as on the AnnData side.)
+
+7. **Categorical identifier columns induce degenerate (near-unique) factor axes** (real **sciPlex2**,
+   `sweep_perturbation.py`) — *behavioral edge case, no error/loss.* sciPlex2 stores `var['ensembl_id']`
+   as a pandas **Categorical** with 58,302 near-unique levels (one per gene of 58,347). Auto-induction
+   (`model.py _auto_induce`, dtype-driven) therefore creates a **58,302-level derived factor axis**
+   `ensembl_id` from what is really a gene *identifier*, not a grouping. It round-trips and `validate` is
+   clean (the column also stays a `label` field over `genes`), so this is not a bug — but it is the
+   reason a drug-response object with only 5 drugs × 8 doses shows `max_factor=58302`. The other two
+   perturbation objects store `ensembl_id`/IDs as object/string (not categorical) and do **not** induce
+   this axis. Worth noting because importers that happen to receive identifier columns as categoricals
+   (gene IDs, cell barcodes) will mint giant useless factor axes; a cardinality heuristic (e.g. skip
+   auto-induction when n_levels approaches the axis length) would avoid it. Not fixed (model.py owned
+   centrally) — recorded for a decision.
 
 **Final across all 61** (subprocess-isolated via `sweep_scrnaseq_driver.sh`): **56 PASS / 0 profile-FAIL
 / 4 load-dep-skip / 1 dataset-segfault**. So after 3 sweep-caught fixes the SCE profile handles 56 of 61
@@ -192,6 +228,83 @@ PASS  ifnb     by stim     2 samples (ctrl/stim)            13999 cells
 PASS  panc8    by dataset  8 samples (5 technologies)       14890 cells
 PASS  pbmcsca  by Method   9 samples (multi-method)         31021 cells
 ```
+
+## Spatial detail
+
+### AnnData spatial (`sweep_spatial.py`) — **13/13 PASS**
+
+lstar's spatial support is **conceptual** (deliberate, `misc/format_coverage.md` Tier 3): `obsm['spatial']`
+→ a **named observed coordinate axis** `spatial` (subtype `spatial`) round-tripping back to `obsm['spatial']`;
+`uns['spatial']` (images/scalefactors/metadata) rides the **lossless passthrough** (`aux/anndata.uns`), not
+typed. The sweep asserts (1) the axis is observed+coordinate, (2) the field is subtype `spatial`, (3) the
+coords round-trip exactly through `write_anndata`, (4) `uns['spatial']` survives, (5) `validate` clean.
+
+```
+PASS  V1_Breast_Cancer_Block_A_Section_1   (3798, 36601)   Visium human breast    spatial axis observed; uns passthrough; 2 imgs deferred
+PASS  V1_Human_Heart                       (4247, 36601)   Visium human heart     scalefactors survive verbatim
+PASS  V1_Human_Lymph_Node                  (4035, 36601)   Visium human lymph
+PASS  V1_Mouse_Kidney                      (1438, 32285)   Visium mouse kidney
+PASS  V1_Adult_Mouse_Brain                 (2702, 32285)   Visium mouse brain
+PASS  V1_Mouse_Brain_Sagittal_Posterior        (3355, 32285)  Visium  multi-section pair (1 of 2)
+PASS  V1_Mouse_Brain_Sagittal_Posterior_Sec2   (3289, 32285)  Visium  multi-section pair (2 of 2)
+PASS  Targeted_Visium_Human_Cerebellum     (4992,  1186)   Visium targeted panel  panel-restriction (1186 genes)
+PASS  Parent_Visium_Human_Cerebellum       (4992, 36601)   Visium parent          the unrestricted parent (36601 genes)
+PASS  sq_merfish     (73655,  161)   MERFISH hypothalamus   spatial + spatial3d (3-D); 150-gene panel
+PASS  sq_seqfish     (19416,  351)   seqFISH mouse embryo   spatial + X_umap
+PASS  sq_slideseqv2  (41786, 4000)   Slide-seqV2 hippocampus  spatial + spatial_neighbors graph + deconvolution_results
+PASS  sq_imc         ( 4668,   34)   IMC (protein spatial)  34-marker protein panel, no uns['spatial']
+```
+
+**What is (correctly) deferred-and-recorded vs what survives** — the key audit:
+- **Visium tissue images** (`uns['spatial'][lib]['images']['hires'|'lowres']`, float32 RGB arrays):
+  NOT typed into the model (deferred image tier), but they **DO survive byte-for-byte in the lossless
+  passthrough** and reappear at `uns['spatial']` after `write_anndata` — verified hires (2000×2000×3) +
+  scalefactors + metadata identical after round-trip. So images are *deferred-from-typing*, not *lost*.
+- **scalefactors** (`tissue_hires_scalef`, `spot_diameter_fullres`, …): survive verbatim in the passthrough.
+- **MERFISH `obsm['spatial3d']`** (3-D coords): survives as its own `spatial3d` embedding over a *derived*
+  coordinate axis (round-trips exact), but is **not** marked subtype `spatial` — only the literal `spatial`
+  key is recognized as spatial. A second/3-D coordinate set is kept but untyped-as-spatial (recorded here).
+- **Slide-seqV2 `spatial_connectivities`/`spatial_distances`** (squidpy's spatial neighbor graph in `obsp`):
+  correctly typed as **`relation` (cells×cells)** and round-trips — the spatial graph is NOT lost.
+- **Slide-seqV2 `deconvolution_results`** (per-bead celltype proportions): kept as an embedding field
+  (round-trips), though it is really a composition matrix — a generic-obsm-typing limitation, not spatial.
+- `ds.dropped` is **empty** for every spatial dataset — nothing silently lost on the AnnData side.
+
+### Seurat spatial (`sweep_spatial.R`) — 5/5 loaded, **coordinates dropped (gap #6)**
+
+```
+PASS-load  stxBrain anterior1   31053x2696   VisiumV2     coords in so@images NOT captured (SILENTLY)
+PASS-load  stxBrain anterior2   31053x2825   VisiumV2     "
+PASS-load  stxBrain posterior1  31053x3353   VisiumV2     "
+PASS-load  stxBrain posterior2  31053x3293   VisiumV2     "  (the 4 = a multi-section spatial collection)
+PASS-load  ssHippo              23264x53173  SlideSeq     "  (high-res Slide-seqV2 bead array)
+```
+
+All load + round-trip without error, but the Visium/Slide-seq coordinates (in `so@images`) are **silently
+dropped** — see bug/finding #6 above. This is the one real Seurat-side spatial gap.
+
+## Perturbation detail (`sweep_perturbation.py`) — **3/3 PASS**
+
+scPerturb harmonized `.h5ad` (Zenodo 7041848). The test is FACTOR-AXIS induction: a categorical `obs`
+column auto-induces a derived factor axis, and Perturb-seq objects carry perturbation/guide categoricals
+with hundreds of levels. Read **backed**, round-tripped with `write(stream=True)` (bounded memory:
+parent-process peak RSS ~210 MB for all three including the 111k×33k Norman object).
+
+```
+PASS  DatlingerBock2021              (39194, 25904)  scifi-CRISPR    perturbation=41, perturbation_2=2 (combo), sample=384
+PASS  SrivatsanTrapnell2020_sciplex2 (24262, 58347)  sci-Plex drug   perturbation=5 drugs, dose_value=8 (ordered dose)
+PASS  NormanWeissman2019_filtered    (111445, 33694) CRISPRa combos  perturbation=237 (single+combo), guide_id=290
+```
+
+- **Norman2019** is the high-cardinality induction stressor: `perturbation` induces a **237-level** factor
+  axis (single + combinatorial CRISPRa targets), `guide_id` a **290-level** one; `nperts` (1/2/3) records
+  the combo arity. Induction is correct (axis labels = category set, `origin=derived`, `role=factor`,
+  `induced_by`), `validate` clean, bounded-memory round-trip OK.
+- **sciPlex2** exercises **dose as an ordered factor** (`dose_value`, 8 levels) × drug (`perturbation`, 5).
+  It also surfaced finding #7 (a categorical `var['ensembl_id']` minting a 58,302-level degenerate factor
+  axis — harmless, recorded above).
+- **Datlinger2021** has a second guide column (`perturbation_2`) — a combo/second-knockout layout — plus a
+  384-level `sample` factor. All round-trip; `ds.dropped` empty for all three.
 
 ## Version variety
 
