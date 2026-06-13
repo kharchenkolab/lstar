@@ -243,7 +243,10 @@ def citeseq_mudata_annotated(seed=12):
     names = np.array(["CD4+", "CD8+", "B", "NK", "Mono"])
     md.obs["celltype"] = pd.Categorical(names[labels])                       # global obs -> factor axis
     md.obs["leiden"] = pd.Categorical([str(l) for l in labels])
-    md.obsm["X_wnn_umap"] = (arna.obsm["X_pca"][:, :2]).astype(np.float32)   # global joint embedding
+    md.obsm["X_wnn_umap"] = (arna.obsm["X_pca"][:, :2]).astype(np.float32)   # global joint embedding (WNN)
+    import scipy.sparse as sp
+    rng = np.random.default_rng(seed + 2)                                    # global WNN joint graph (obsp)
+    md.obsp["connectivities"] = sp.random(n_obs, n_obs, density=0.02, format="csr", random_state=seed + 2).astype(np.float32)
     return md
 
 

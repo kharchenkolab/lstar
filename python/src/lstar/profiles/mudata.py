@@ -84,6 +84,14 @@ def read_mudata(md, kind="sample"):
             _coord_axis(ds, cname, v.shape[1])
             ds.add_field(_uniq(ds, "%s_%s" % (m, k), fax), v, role="embedding", span=[cax, cname],
                          index=midx, index_axis=iax, provenance={"mudata": "%s/obsm/%s" % (m, k)})
+        for k in list(am.varm.keys()):               # per-modality loadings (MOFA LFs, totalVI, ...): a
+            v = np.asarray(am.varm[k])               # loading over (feature axis, factor coord). When the
+            if v.ndim != 2:                          # factor coord is shared (same stripped name as the
+                continue                             # global factor scores' obsm), they land on ONE axis.
+            base = k[2:] if str(k).startswith("X_") else str(k)
+            cname = _coord_axis(ds, base, v.shape[1])    # reuses the factor axis if scores already made it
+            ds.add_field(_uniq(ds, "%s_%s_loadings" % (m, k), fax), v, role="loading", span=[fax, cname],
+                         provenance={"mudata": "%s/varm/%s" % (m, k)})
         uns = {k: v for k, v in am.uns.items() if not str(k).startswith("lstar/")}
         if uns:
             ds.aux["mudata.%s.uns" % m] = uns
@@ -101,6 +109,11 @@ def read_mudata(md, kind="sample"):
         _coord_axis(ds, cname, v.shape[1])
         ds.add_field(_uniq(ds, str(k), "cells"), v, role="embedding", span=["cells", cname],
                      provenance={"mudata": "obsm/%s" % k})
+    for k in list(getattr(md, "obsp", {}) or {}):    # global joint graph (WNN connectivities) -> relation
+        mm = md.obsp[k]
+        if sp.issparse(mm) and mm.shape == (len(cells), len(cells)):
+            ds.add_field(_uniq(ds, str(k), "cells"), mm, role="relation", span=["cells", "cells"],
+                         directed=False, weighted=True, provenance={"mudata": "obsp/%s" % k})
     guns = {k: v for k, v in md.uns.items() if not str(k).startswith("lstar/")}
     if guns:
         ds.aux["mudata.uns"] = guns
@@ -154,15 +167,26 @@ def write_mudata(ds):
                 var[key] = _to_pandas_col(f)
         am = ad.AnnData(X=primary.values, var=pd.DataFrame(var, index=feats) if var else pd.DataFrame(index=feats),
                         obs=pd.DataFrame(index=mod_cells), layers=layers or None)
-        mods[prov_mod or mname] = am
+        mod = prov_mod or mname
+        for n, f in ds.fields.items():               # per-mod embeddings -> obsm, per-mod loadings -> varm
+            prov = str((f.provenance or {}).get("mudata", ""))
+            if f.role == "embedding" and prov.startswith(mod + "/obsm/"):
+                am.obsm[prov.split("/", 2)[2]] = np.asarray(f.values)
+            elif f.role == "loading" and prov.startswith(mod + "/varm/"):
+                am.varm[prov.split("/", 2)[2]] = np.asarray(f.values)
+        mods[mod] = am
 
     md = mudata.MuData(mods)
-    # global obs (cell fields over `cells` with no modality provenance) + obsm
+    # global products: obs (cell fields, no modality provenance), obsm (joint embeddings), obsp (joint graphs)
     gobs = {}
     for n, f in ds.fields.items():
-        if f.span == ["cells"] and not str((f.provenance or {}).get("mudata", "")).count("/") and \
-                f.role in ("label", "measure"):
+        prov = str((f.provenance or {}).get("mudata", ""))
+        if f.span == ["cells"] and not prov.count("/") and f.role in ("label", "measure"):
             gobs[n] = _to_pandas_col(f)
+        elif f.role == "embedding" and prov.startswith("obsm/"):
+            md.obsm[prov.split("/", 1)[1]] = np.asarray(f.values)
+        elif f.role == "relation" and f.span == ["cells", "cells"] and prov.startswith("obsp/"):
+            md.obsp[prov.split("/", 1)[1]] = f.values
     if gobs:
         gdf = pd.DataFrame(gobs, index=cells)
         for c in gdf.columns:

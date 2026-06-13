@@ -106,6 +106,60 @@ def test_partial_overlap_mudata():
     print("MuData partial-overlap: prot on 60/100 cells -> partial coverage over the shared cells axis; round-trips")
 
 
+def test_joint_method_storage_shapes():
+    """How joint integration results are *stored/shaped* (we don't run the methods, we type their output):
+      - WNN: a joint embedding (global `obsm`), per-cell modality weights (global `obs`), a joint graph
+             (global `obsp`).
+      - MOFA+: shared factor scores (global `obsm`) + **per-modality loadings** (`mod.varm`) that share
+             **one factor axis** with the scores -- the lstar induction shape (one coord axis; an
+             embedding over (cells, factor) + loadings over (feature, factor) per modality)."""
+    try:
+        import anndata as ad
+        import mudata
+        import pandas as pd
+    except Exception:
+        print("  SKIP test_joint_method_storage_shapes (mudata unavailable)"); return
+    import scipy.sparse as sp
+    rng = np.random.default_rng(1)
+    n, ng, npr, k = 80, 20, 6, 5
+    cells = [f"c{i}" for i in range(n)]
+    arna = ad.AnnData(sp.csr_matrix(rng.poisson(1, (n, ng)).astype("float32")),
+                      obs=pd.DataFrame(index=cells), var=pd.DataFrame(index=[f"g{i}" for i in range(ng)]))
+    aprot = ad.AnnData(sp.csr_matrix(rng.poisson(2, (n, npr)).astype("float32")),
+                       obs=pd.DataFrame(index=cells), var=pd.DataFrame(index=[f"p{i}" for i in range(npr)]))
+    arna.varm["factors"] = rng.normal(size=(ng, k)).astype("float32")    # MOFA per-mod loadings (RNA)
+    aprot.varm["factors"] = rng.normal(size=(npr, k)).astype("float32")  # MOFA per-mod loadings (ADT)
+    aprot.layers["denoised"] = sp.csr_matrix(rng.random((n, npr)).astype("float32"))  # totalVI-style denoised
+    md = mudata.MuData({"rna": arna, "prot": aprot})
+    md.obsm["X_factors"] = rng.normal(size=(n, k)).astype("float32")     # MOFA shared factor scores
+    md.obsm["X_wnn"] = rng.normal(size=(n, 2)).astype("float32")         # WNN joint embedding
+    md.obs["rna:mod_weight"] = rng.random(n).astype("float32")           # WNN per-cell modality weights
+    md.obs["prot:mod_weight"] = rng.random(n).astype("float32")
+    md.obsp["wnn_connectivities"] = sp.random(n, n, density=0.1, format="csr").astype("float32")  # joint graph
+
+    ds = lstar.read_mudata(md)
+    # WNN joint embedding + modality weights + joint graph
+    assert ds.field("X_wnn").role == "embedding" and ds.field("X_wnn").span == ["cells", "wnn"]
+    assert ds.field("rna:mod_weight").role == "measure" and ds.field("rna:mod_weight").span == ["cells"]
+    assert ds.field("wnn_connectivities").role == "relation" and ds.field("wnn_connectivities").span == ["cells", "cells"]
+    # MOFA: ONE shared `factors` coord axis carries both the scores embedding and the per-mod loadings
+    assert ds.axis("factors").role == "coordinate" and len(ds.axis("factors")) == k
+    assert ds.field("X_factors").span == ["cells", "factors"]
+    rl = ds.field("rna_factors_loadings"); pl = ds.field("prot_factors_loadings")
+    assert rl.role == "loading" and rl.span == ["genes", "factors"]
+    assert pl.role == "loading" and pl.span == ["proteins", "factors"]
+    assert not lstar.validate(ds)
+    ds2 = lstar.read(_w(ds))                                              # survives the store
+    assert not lstar.validate(ds2)
+    assert ds2.field("rna_factors_loadings").span == ["genes", "factors"]
+    md2 = lstar.write_mudata(ds2)                                         # and back to a MuData
+    assert "X_wnn" in md2.obsm and "X_factors" in md2.obsm
+    assert "wnn_connectivities" in md2.obsp
+    assert "factors" in md2.mod["rna"].varm and md2.mod["rna"].varm["factors"].shape == (ng, k)
+    print("joint-method shapes: WNN (embedding + cell-weight measures + joint-graph relation) + MOFA "
+          "(one shared factor axis: scores embedding + per-mod loadings) typed; round-trips to MuData")
+
+
 def _w(ds):
     p = _store(); lstar.write(ds, p); return p
 
@@ -114,3 +168,4 @@ if __name__ == "__main__":
     test_citeseq_mudata_roundtrip()
     test_real_minipbcite()
     test_partial_overlap_mudata()
+    test_joint_method_storage_shapes()

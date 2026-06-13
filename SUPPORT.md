@@ -105,6 +105,8 @@ CITE-seq (downloaded); CI: synthetic RNA+ADT through the real mudata/scanpy pipe
 | per-modality `X` / `layers` / `var` / `obsm` / `uns` | ✓ | ✓ | ✓ | own PCA/UMAP per modality |
 | global `obs` categoricals → factor axes (`<mod>:` prefix) | ✓ | ✓ | ✓ | celltype/leiden |
 | global `obsm` (WNN / MOFA joint embedding) | ✓ | ✓ | ✓ | |
+| **joint-method shapes** — WNN modality weights (cell measures) + joint graph (`obsp`→relation) | ✓ | ✓ | ✓ | we type the *output shape*, not the algorithm |
+| **MOFA/totalVI** — shared factor axis: scores (`obsm`) + per-modality loadings (`mod.varm`) | ✓ | ✓ | ✓ | one factor axis carries scores embedding + per-mod loadings (lstar induction) |
 | `obsmap`/`varmap` aligned cells | ✓ | ✓ | ✓ | |
 | **partial-overlap** modalities (a modality on a cell subset) | ✓ | — | ✓ | **typed partial coverage**: an `index` into the shared `cells` axis (not a `cells.<mod>` axis, not padded); round-trips Py↔C++↔R + back to MuData on the subset |
 | RNA+ATAC multiome `.h5mu` | ◐ | — | — | path = RNA+ADT + partial coverage; no real `.h5mu` multiome sourced (real ATAC is covered via Seurat pbmcMultiome) |
