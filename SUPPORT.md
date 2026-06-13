@@ -1,0 +1,193 @@
+# L★ — format & language support
+
+What lstar can convert, read, and write today — by **format** (AnnData, MuData, Seurat,
+SingleCellExperiment, Conos/pagoda2) and by **language** (Python, C++, R, JS/WASM) — with, for each
+case, whether it is exercised by a **real** dataset and by the **synthetic CI** fixture that stands in
+for it. This is the place to check "does lstar handle *my* object?" and the place we track where the
+coverage still has holes.
+
+> Status: early development. The matrices below reflect what round-trips and validates in the test
+> suite, not a frozen API.
+
+**Legend** — `✓` supported · `◐` partial (works, but a sub-case is *recorded as a known loss* rather
+than fully typed — never silently dropped) · `✗` not yet · `—` not applicable.
+
+## How testing works (so the columns mean something)
+
+lstar is tested in **two tiers**, and a gap can live in either one — that distinction is tracked here on
+purpose:
+
+- **Real corpus (local).** The profiles run against *real* published objects — downloaded small
+  datasets, large local atlases, and a breadth **sweep** over whole repositories (Bioconductor
+  `scRNAseq` ≈ 61 SCEs, SeuratData, scanpy.datasets, real Conos objects). Real data is what catches the
+  long tail; the sweep has caught **5 real profile bugs no fabricated fixture had** (SCE NULL dimnames,
+  S4 `Rle` columns, SE-not-SCE accessors, and — most recently — silent loss of Signac `ChromatinAssay`
+  peak ranges). See [`conformance/sweep/REPORT.md`](conformance/sweep/REPORT.md) and
+  [`python/tests/CORPUS.md`](python/tests/CORPUS.md).
+- **Synthetic CI (github).** CI runs **synthetic-only** — no real datasets are committed or downloaded
+  (they're large/slow). The synthetic fixtures aren't hand-fabricated: they push **synthetic counts
+  through the real scanpy/mudata/Seurat pipelines**, so the *same library code* produces the real
+  structures (categoricals, `*_colors`, `uns['pca']`, the neighbors `OverloadedDict`,
+  `rank_genes_groups` dtypes, RNA+ADT modalities, `velocity_graph`). Keeping these faithful to the real
+  corpus is an explicit contract; the local real runs verify it.
+
+So in the per-format tables, **Real** = a real object exercises the case; **CI** = the synthetic fixture
+does. A case can therefore have three kinds of gap: the **profile** doesn't handle it (`✗`/`◐`), there's
+**no real example** in the corpus, or the **synthetic fixture doesn't represent it** yet.
+
+---
+
+## Language / interface support
+
+One C++ core underlies Python, R, and (via WebAssembly) the browser; R adds the format profiles. The
+portable Zarr store is the interchange — every language reads and writes the *same* store, verified by
+the cross-language conformance suite ([`conformance/`](conformance/)).
+
+| capability | Python | C++ (`libstar`) | R | JS / WASM |
+|---|:---:|:---:|:---:|:---:|
+| Read a store | ✓ | ✓ | ✓ | ✓ (zarrita) |
+| Write a store | ✓ | ✓ | ✓ | ✓ |
+| `validate()` (model/consistency checks) | ✓ | — | via Py/C++ | — |
+| Encodings: dense / CSR / CSC / COO | ✓ | ✓ | ✓ | ✓ (read) |
+| UTF-8 + categorical (codes/levels/ordered/`-1` missing) | ✓ | ✓ | ✓ | ✓ |
+| Nullable validity mask (Int/bool/string) | ✓ | ✓ | ✓ | ✓ |
+| Factor-axis **induction** (`induced_by` round-trip) | ✓ | ✓ | ✓ | ✓ |
+| chunked + gzip | ✓ | ✓ | ✓ | ✓ (read) |
+| Lazy / partial / over-network reads | ✓ | ✓ | ✓ | ✓ |
+| Bounded-memory **streaming write** | ✓ | ✓ | ✓ | — |
+| Disk-backed targets (don't materialize) | backed AnnData | — | BPCells / HDF5Array | — |
+| Kernels: col mean/var · fused depth+log1p · grouped sum | ✓ | ✓ | ✓ | ✓ (colMeanVar, log1p) |
+| Block reader (read a gene/feature subset) | ✓ | ✓ | ✓ | — |
+| DE / markers / pseudobulk bundles | ✓ | — | ✓ | — |
+| **Format profiles** | AnnData, MuData | — | Seurat, SCE, Conos, pagoda2 | — |
+
+Notes: the C++ core is the model + Zarr IO + kernels (no `validate`/profiles — those live in the
+language packages). JS/WASM is the **viewer** data layer: read/write the store, decode every encoding,
+and run the view kernels in-browser; it has no format profiles or DE bundles. Cross-language round-trips
+covered by `conformance/{categorical,induce,nullable,aux,chunked,read_block,stream_reduce,fused_view,
+js}.sh`.
+
+---
+
+## AnnData (`.h5ad`) — Python
+
+**Versions:** legacy 0.7 (`h5sparse`) · 0.8 · ≥0.10 (incl. the `CSRDataset`/`CSCDataset` backed-class
+rename) — all ✓. Real grounding: `pbmc68k_reduced`, `pbmc3k_processed`, a local Tabula-Muris-Senis Marrow
+atlas (40 k × 20 k, read backed), real scVelo output.
+
+| case | status | real | CI (synth) | notes |
+|---|:---:|:---:|:---:|---|
+| `X` / `.raw` (divergent gene set) / `layers` | ✓ | ✓ | ✓ | pbmc68k `.raw`; pancreas spliced/unspliced |
+| encodings dense / CSR / CSC / UTF-8 | ✓ | ✓ | ✓ | |
+| categorical obs/var (ordered, `-1` missing) | ✓ | ✓ | ✓ | real louvain/phase/bulk_labels |
+| nullable `Int64` / `boolean` / `string` (+mask) | ✓ | ✓ | ✓ | derived from real values (no public h5ad ships them) |
+| obs/var **same-name** collision (`n_counts`) | ✓ | ✓ | — | disambiguated, neither lost |
+| `obsm`/`varm` (pca/umap/loadings, incl. NaN) | ✓ | ✓ | ✓ | |
+| `obsp`/`varp` graphs → relations | ✓ | ✓ | ✓ | distances/connectivities |
+| `uns` params / `*_colors` / pca variance → typed | ✓ | ✓ | ✓ | promoted out of the passthrough, bound to axes |
+| `uns['rank_genes_groups']` (t-test/wilcoxon/logreg/pairwise) | ✓ | ✓ | ✓ | one-vs-rest typed; pairwise kept verbatim |
+| `uns['velocity_graph']` (scVelo, cell×cell in `uns`) | ✓ | ✓ | ✓ | typed as a relation (not dropped) |
+| `uns` neighbors `OverloadedDict` / generic tail | ✓ | ✓ | ✓ | lossless passthrough |
+| backed / bounded-memory convert | ✓ | ✓ | ◐ | real Marrow atlas (local); CI exercises the backed proxy |
+| spatial `obsm['spatial']` + `uns['spatial']` images | ✗ | — | — | separate spatial tier (deferred) |
+
+## MuData (`.h5mu`) — Python (multimodal)
+
+Modalities map to **canonical feature axes over one shared `cells` axis** (rna→`genes`, prot/adt→
+`proteins`, atac→`peaks`) — the same shape as a Seurat multi-assay object. Real grounding: `minipbcite`
+CITE-seq (downloaded); CI: synthetic RNA+ADT through the real mudata/scanpy pipeline.
+
+| case | status | real | CI (synth) | notes |
+|---|:---:|:---:|:---:|---|
+| modalities → feature axes (genes/proteins/peaks) | ✓ | ✓ | ✓ | RNA+ADT |
+| per-modality `X` / `layers` / `var` / `obsm` / `uns` | ✓ | ✓ | ✓ | own PCA/UMAP per modality |
+| global `obs` categoricals → factor axes (`<mod>:` prefix) | ✓ | ✓ | ✓ | celltype/leiden |
+| global `obsm` (WNN / MOFA joint embedding) | ✓ | ✓ | ✓ | |
+| `obsmap`/`varmap` aligned cells | ✓ | ✓ | ✓ | |
+| **partial-overlap** modalities (`obsmap` 0 = absent) | ◐ | — | — | per-mod `cells.<mod>` axis; no real partial example yet |
+| RNA+ATAC multiome `.h5mu` | ◐ | — | — | path = RNA+ADT; no real `.h5mu` multiome sourced (see Seurat for real ATAC) |
+
+## Seurat — R
+
+**Classes/versions** (a "Seurat object" is several structurally-different classes; each is recorded in
+`ds$profiles`): `Assay` (v3/v4) ✓ · `Assay5` (v5) ✓ · v5 **split**/integration → read as a *collection*,
+re-split on write ✓ · `SCTAssay` ◐ · `ChromatinAssay` (Signac scATAC) ✓. Real grounding: a **10/10
+PASS** SeuratData sweep (RNA, RNA+ADT, 4-modality ECCITE-seq, integration, HVG-subset loadings) + real
+`pbmc3k.final`, `cbmc`, `pbmcMultiome`.
+
+| case | status | real | CI (synth) | notes |
+|---|:---:|:---:|:---:|---|
+| `Assay` (v3/v4) | ✓ | ✓ | ✓ | real pbmc3k.final |
+| `Assay5` (v5) + layers | ✓ | ✓ | ✓ | |
+| v5 **split** (per-sample layers → collection) | ✓ | ✓ | ✓ | write-back re-splits |
+| multimodal RNA+ADT / RNA+ATAC (other assays → feature axes) | ✓ | ✓ | ✓ | real cbmc, bmcite, thp1.eccite (RNA+ADT+HTO+GDO) |
+| `ChromatinAssay` peaks + **genomic ranges** (seqnames/start/end) | ✓ | ✓ | — | real pbmcMultiome (108 k peaks); fragments **recorded** |
+| `SCTAssay` (residuals + `SCTModel`) | ◐ | ✓ | ◐ | data typed; SCTModel recorded. CI runs SCT only when full Seurat loads |
+| reductions: embeddings / loadings / **stdev** | ✓ | ✓ | ✓ | |
+| `scale.data` / loadings over **HVG subset** | ◐ | ✓ | — | partial coverage *recorded* (e.g. 2000/13714) |
+| graphs (dgCMatrix) → relations | ✓ | ✓ | — | |
+| `Neighbor` (nn.idx/dist) | ✗ | — | — | not typed yet |
+| `meta.data` factors / active `Idents` | ✓ | ✓ | ✓ | active identity captured + restored |
+| version tracking (per-assay class + object version) | ✓ | ✓ | ✓ | `assay@RNA:Assay5`, `object@5.4.0`, … |
+| images (Visium/FOV) / `@commands` | ✗ | — | — | spatial tier / provenance not typed |
+
+> Heavy backends (full `Seurat` umbrella for SCTransform, `Signac` for ChromatinAssay, `BPCells`) are
+> optional: absent → the case degrades to a recorded SKIP, never a hard failure. CI loads the lightweight
+> `SeuratObject` (the full `Seurat` package can install-but-fail-to-load on a minimal runner); the SCT
+> path runs automatically wherever full Seurat loads (locally, and in CI once that's resolved).
+
+## SingleCellExperiment — R
+
+Also handles a plain **`SummarizedExperiment`** (no SCE-only accessors). Real grounding: a sweep over
+Bioconductor `scRNAseq` — **56/61 PASS** (the 5 non-passes are missing loader packages / a dataset
+segfault, not profile bugs) after 3 sweep-caught fixes; plus real `ZeiselBrain`.
+
+| case | status | real | CI (synth) | notes |
+|---|:---:|:---:|:---:|---|
+| assays (counts / logcounts / multiple) | ✓ | ✓ | ✓ | |
+| `reducedDims` (+ `rotation` → loadings) | ✓ | ✓ | ✓ | |
+| **altExps** (ADT / spike-ins → feature axes) | ✓ | ✓ | ✓ | real ZeiselBrain ERCC; synthetic ADT |
+| `colData` / `rowData` factors → factor axes | ✓ | ✓ | ✓ | |
+| S4 `Rle` columns / nested `DataFrame`/`GRanges` | ✓ | ✓ | — | Rle unpacked; uncoercible nested cols **recorded** (sweep-caught) |
+| **NULL dimnames** (cells keyed by `Barcode` colData) | ✓ | ✓ | — | labels synthesized (sweep-caught) |
+| plain `SummarizedExperiment` (no reducedDims/altExps) | ✓ | ✓ | — | guarded accessors (sweep-caught) |
+| `metadata` (free-form) | ◐ | ✓ | ✓ | recorded |
+| `colPairs` / `rowPairs` | ✗ | — | — | not typed yet |
+
+## Conos / pagoda2 — R
+
+| case | status | real | CI (synth) | notes |
+|---|:---:|:---:|:---:|---|
+| collection (multi-sample, heterogeneous, even cross-species) | ✓ | ✓ | ✓ | real `conI.rds`/`con.rds` (4 & 8 samples); synthetic collection |
+| joint graph / per-sample embeddings | ✓ | ✓ | ✓ | auto-upgrades an old igraph graph |
+| pagoda2 viewer schema + DE/pseudobulk over a factor axis | ✓ | — | ✓ | mock pagoda2 (no real pagoda2 object in the corpus yet) |
+| real pagoda2 object | ✗ | — | — | none sourced yet |
+
+---
+
+## Known gaps & roadmap
+
+Prioritized, with **where** the gap is (profile / real corpus / synthetic fixture):
+
+1. **Spatial tier** (Visium / Xenium / CosMx / Slide-seq) — *profile gap*, deliberately deferred:
+   images, coordinate frames, molecule tables. Affects AnnData `spatial`, Seurat images, the SeuratData
+   `stx*`/`ssHippo` datasets.
+2. **MuData partial-overlap + a real `.h5mu` multiome** — *corpus gap*: the code path exists (per-mod
+   `cells.<mod>` axis) but no real partial-overlap / multiome `.h5mu` is in the corpus; ties to the
+   lstar partial-coverage `index` arrays being spec'd-but-not-yet-implemented.
+3. **Seurat `Neighbor`** (nn graphs) and **`@commands`** provenance — *profile gap*.
+4. **Faithful partial coverage** — *profile refinement*: subset `scale.data`/loadings and SCT residuals
+   are currently *recorded as losses* (`◐`) rather than typed.
+5. **SCE `colPairs`/`rowPairs`** — *profile gap*.
+6. **Real pagoda2 object** in the corpus, and a **real ATAC `.h5mu`** — *corpus gaps*.
+7. **Azimuth reference atlases** (SeuratData `*ref`) — *corpus/tooling gap*: need the Azimuth loader to
+   read them (they're disk datasets); would add SCTAssay breadth.
+
+## Where the evidence lives
+
+- [`python/tests/CORPUS.md`](python/tests/CORPUS.md) — the real datasets each test is grounded in (and
+  their synthetic CI stand-ins).
+- [`conformance/sweep/REPORT.md`](conformance/sweep/REPORT.md) — the breadth sweep over whole
+  repositories, and every bug it caught.
+- [`conformance/`](conformance/) — the cross-language / cross-format round-trip suite that backs the
+  language matrix.

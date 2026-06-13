@@ -181,6 +181,8 @@ misc/         the design proposal (Lstar_proposal.md) + plans
 - **[docs/model.md](docs/model.md)** — the model: axes, fields, roles, collections.
 - **[docs/format.md](docs/format.md)** — the on-disk Zarr layout.
 - **[docs/examples.md](docs/examples.md)** — worked, commented examples (Python, R, C++, browser).
+- **[SUPPORT.md](SUPPORT.md)** — **format & language support matrix**: what converts/reads/writes today,
+  per format and per language, with real-vs-synthetic test coverage and the known gaps.
 
 The full normative specification (the model, the Zarr schema, and the bidirectional profile rule
 catalog for every format) is the proposal, [`misc/Lstar_proposal.md`](misc/Lstar_proposal.md).

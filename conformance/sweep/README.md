@@ -6,7 +6,7 @@ quirks, so we find the long tail of real-world structure (not just what we thoug
 
 The sweep corpus is **local-only** (datasets are large/many; cached in `testdata/` and Bioconductor/
 SeuratData caches) — these are NOT in CI. CI runs the small committed fixtures + the curated downloads
-(see `python/tests/CORPUS.md`, `COVERAGE.md`). The sweep is what you run locally to stay honest.
+(see `python/tests/CORPUS.md`, `SUPPORT.md`). The sweep is what you run locally to stay honest.
 
 | harness | source | scope |
 |---|---|---|
