@@ -52,6 +52,16 @@ stores <- c(stores, rt("HVG-subset loadings", sosub, function(ds, so2)
   nrow(Loadings(so2[["pca"]])) == 60 &&
   isTRUE(all.equal(unname(Loadings(so2[["pca"]])), unname(Lsub), check.attributes = FALSE))))
 
+# Neighbor (FindNeighbors(return.neighbor=TRUE)): nn.idx/nn.dist -> a weighted cell-cell relation
+knn <- 5; nnidx <- t(sapply(1:nc, function(i) sample(setdiff(1:nc, i), knn)))
+nnobj <- methods::new("Neighbor", nn.idx = nnidx, nn.dist = matrix(runif(nc*knn), nc, knn),
+                      cell.names = colnames(m), alg.info = list())
+sonn <- CreateSeuratObject(m); sonn[["pca.nn"]] <- nnobj
+stores <- c(stores, rt("Neighbor (nn graph)", sonn, function(ds, so2)
+  identical(ds$fields[["nn_pca.nn"]]$role, "relation") &&
+  identical(as.character(ds$fields[["nn_pca.nn"]]$span), c("cells", "cells")) &&
+  length(ds$fields[["nn_pca.nn"]]$values@x) == nc*knn))
+
 so5 <- CreateSeuratObject(m); so5$samp <- rep(c("s1","s2"), each = nc/2)
 so5[["RNA"]] <- split(so5[["RNA"]], f = so5$samp)
 stores <- c(stores, rt("v5 split (collection)", so5, function(ds, so2)

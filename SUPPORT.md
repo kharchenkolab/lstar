@@ -127,7 +127,7 @@ PASS** SeuratData sweep (RNA, RNA+ADT, 4-modality ECCITE-seq, integration, HVG-s
 | loadings over **HVG subset** → subset feature axis | ✓ | ✓ | — | real pbmc3k.final (2000/13714) round-trips exactly; was dropped |
 | `scale.data` over **HVG subset** | ◐ | ✓ | — | recorded (a measure over a subset; re-routing pending) |
 | graphs (dgCMatrix) → relations | ✓ | ✓ | — | |
-| `Neighbor` (nn.idx/dist) | ✗ | — | — | not typed yet |
+| `Neighbor` (nn.idx/dist) → weighted cell-cell relation | ✓ | — | ✓ | distance-weighted; was dropped |
 | `meta.data` factors / active `Idents` | ✓ | ✓ | ✓ | active identity captured + restored |
 | version tracking (per-assay class + object version) | ✓ | ✓ | ✓ | `assay@RNA:Assay5`, `object@5.4.0`, … |
 | images (Visium/FOV) / `@commands` | ✗ | — | — | spatial tier / provenance not typed |
@@ -176,7 +176,8 @@ Prioritized, with **where** the gap is (profile / real corpus / synthetic fixtur
 2. **MuData partial-overlap + a real `.h5mu` multiome** — *corpus gap*: the code path exists (per-mod
    `cells.<mod>` axis) but no real partial-overlap / multiome `.h5mu` is in the corpus; ties to the
    lstar partial-coverage `index` arrays being spec'd-but-not-yet-implemented.
-3. **Seurat `Neighbor`** (nn graphs) and **`@commands`** provenance — *profile gap*.
+3. **Seurat `@commands`** provenance (analysis history) — *profile gap*: not typed (the `Neighbor` nn
+   graph is now typed as a relation).
 4. **Faithful partial coverage** — *profile refinement*: subset PCA **loadings are now typed** (over a
    `<reduction>_features` subset axis); subset `scale.data` and SCT residuals are still *recorded as
    losses* (`◐`) rather than typed.

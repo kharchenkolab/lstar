@@ -348,6 +348,20 @@ read_seurat <- function(so, assay = SeuratObject::DefaultAssay(so)) {
     }
   }
 
+  # Neighbor objects (FindNeighbors(return.neighbor=TRUE)): a kNN result as nn.idx (cells x k) + nn.dist.
+  # Type each as a weighted cell-cell relation (distance-weighted), the analogue of a stored Graph, so
+  # it isn't silently lost.
+  for (nn_nm in tryCatch(SeuratObject::Neighbors(so), error = function(e) character(0))) {
+    nn <- tryCatch(so[[nn_nm]], error = function(e) NULL)
+    idx <- tryCatch(SeuratObject::Indices(nn), error = function(e) NULL)
+    if (is.null(idx) || nrow(idx) != length(cells)) next
+    dst <- tryCatch(SeuratObject::Distances(nn), error = function(e) NULL)
+    x <- if (!is.null(dst) && all(dim(dst) == dim(idx))) as.numeric(dst) else rep(1, length(idx))
+    m <- Matrix::sparseMatrix(i = rep(seq_len(nrow(idx)), times = ncol(idx)), j = as.integer(idx),
+                              x = x, dims = c(length(cells), length(cells)))
+    add(paste0("nn_", nn_nm), m, "relation", c("cells", "cells"))
+  }
+
   # active identity (Idents): the active-vs-stored distinction is otherwise lost. Capture it as a
   # categorical 'ident' field (inducing its factor axis) flagged `active_ident`; restored on write.
   id <- tryCatch(SeuratObject::Idents(so), error = function(e) NULL)
