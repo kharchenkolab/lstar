@@ -47,5 +47,28 @@ def test_marrow_realistic_size():
           "annotations; colors + pca variance promoted" % len(facs))
 
 
+def test_synthetic_backed_promotion():
+    """The real-atlas test above is local-only (skips in CI). This guards the **backed read + promotion**
+    path in CI on a small synthetic atlas-like object: write a synth pbmc-like `.h5ad`, open it *backed*
+    (X stays on disk), and confirm factor axes + `*_colors` + pca-variance still promote and validate."""
+    import tempfile
+
+    import anndata as ad
+    sys.path.insert(0, os.path.dirname(__file__))
+    import synth  # noqa: E402
+
+    a = synth.pbmc68k_like()
+    p = os.path.join(tempfile.mkdtemp(), "synth_atlas.h5ad"); a.write_h5ad(p)
+    ab = ad.read_h5ad(p, backed="r")                            # X stays on disk
+    ds = lstar.read_anndata(ab)
+    facs = [n for n, x in ds.axes.items() if x.role == "factor"]
+    assert "bulk_labels" in facs and ds.axis("bulk_labels").role == "factor"
+    assert ds.field("bulk_labels_colors").subtype == "color"
+    assert ds.field("pca_variance_ratio").span == ["pca"]
+    assert not [i for i in lstar.validate(ds) if i.startswith("ERROR")]
+    print("backed promotion (synthetic atlas): factor axes + colors + pca variance promote on a backed read")
+
+
 if __name__ == "__main__":
     test_marrow_realistic_size()
+    test_synthetic_backed_promotion()

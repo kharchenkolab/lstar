@@ -67,6 +67,9 @@ jobs:
           # Bioconductor packages are C-light; source-installs succeed (they don't pull the
           # problem CRAN deps above). CRAN deps still resolve as PPM binaries via getOption("repos").
           Rscript -e 'BiocManager::install(c("SingleCellExperiment","S4Vectors","SummarizedExperiment"), update=FALSE, ask=FALSE)'
+          # Signac so the synthetic ChromatinAssay case runs in CI -- TOLERANT: if it won't install on the
+          # runner (heavy Bioc/system deps), the case degrades to a recorded SKIP and CI stays green.
+          Rscript -e 'tryCatch(BiocManager::install("Signac", update=FALSE, ask=FALSE), error=function(e) message("Signac unavailable: ", conditionMessage(e)))'
       - name: install lstar R package
         run: |
           mkdir -p .Rlib

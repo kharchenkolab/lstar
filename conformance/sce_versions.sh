@@ -64,6 +64,28 @@ stores <- c(stores, rt("+colPairs/rowPairs (graphs)", sce_e, function(ds, s2)
   identical(ds$fields[["colpair_knn"]]$role, "relation") &&
   setequal(SingleCellExperiment::colPairNames(s2), "knn") &&
   setequal(SingleCellExperiment::rowPairNames(s2), "corr")))
+
+# --- sweep-caught real structures, now guarded synthetically (CI parity with the local scRNAseq sweep) ---
+# NULL dimnames: cells keyed by a `Barcode` colData column, no colnames (BachMammary/Ernst) -> labels synthesized
+sce_nd <- SingleCellExperiment(assays = list(counts = unname(counts)))
+colData(sce_nd)$Barcode <- paste0("BC", seq_len(nc))
+stores <- c(stores, rt("NULL dimnames (Barcode colData)", sce_nd, function(ds, s2)
+  length(ds$axes$cells$labels) == nc && all(grepl("^BC", ds$axes$cells$labels))))
+
+# S4Vectors `Rle` run-length colData -> unpacked; a nested DataFrame column -> recorded, not crashed
+# (Buettner/Bunis/Darmanis). Blind as.character() on these was the sweep-caught bug.
+sce_s4 <- sce_b
+colData(sce_s4)$rle_label <- S4Vectors::Rle(rep(c("a", "b"), length.out = nc))
+colData(sce_s4)$nested <- S4Vectors::DataFrame(x = seq_len(nc), y = seq_len(nc))
+stores <- c(stores, rt("S4 Rle + nested colData", sce_s4, function(ds, s2)
+  "rle_label" %in% names(ds$fields) && any(grepl("^colData/nested", ds$dropped))))
+
+# a plain `SummarizedExperiment` (NOT an SCE -- ReprocessedFluidigm): SCE-only accessors are guarded,
+# degrades to assays + colData/rowData only.
+se <- SummarizedExperiment(assays = list(counts = counts))
+colData(se)$grp <- factor(rep(c("x", "y"), length.out = nc))
+stores <- c(stores, rt("plain SummarizedExperiment", se, function(ds, s2)
+  identical(assayNames(s2), "counts") && identical(ds$axes$grp$role, "factor")))
 cat(paste(stores, collapse="\n"), "\n", file = "/tmp/scev_stores.txt")
 ' 2>&1 | grep -E "^  \[R\]|Error|Execution halted|cannot|unable|no method"
 

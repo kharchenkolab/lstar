@@ -97,6 +97,29 @@ stores <- c(stores, rt("multimodal RNA+ADT (synth)", mm, function(ds, so2)  # AD
   identical(as.character(ds$fields[["ADT.counts"]]$span), c("cells","ADT")) &&
   setequal(Assays(so2), c("RNA","ADT")) && nrow(so2[["ADT"]]) == 29 &&
   isTRUE(all.equal(as.matrix(LayerData(so2[["ADT"]],"counts")), as.matrix(cadt), check.attributes = FALSE))))
+
+# 4-assay ECCITE-style object (RNA + ADT + HTO + GDO): N feature spaces over one cells axis -- guards the
+# multimodal path for >2 assays (real thp1.eccite has these 4). No Signac needed.
+mkA <- function(nf) { x <- matrix(rpois(nf*nc, 2), nf, nc); dimnames(x) <- list(paste0("F", 1:nf), colnames(m)); as(x, "CsparseMatrix") }
+ecc <- CreateSeuratObject(m)
+ecc[["ADT"]] <- CreateAssay5Object(counts = mkA(8)); ecc[["HTO"]] <- CreateAssay5Object(counts = mkA(4))
+ecc[["GDO"]] <- CreateAssay5Object(counts = mkA(6))
+stores <- c(stores, rt("4-assay ECCITE (RNA+ADT+HTO+GDO)", ecc, function(ds, so2)
+  all(c("ADT","HTO","GDO") %in% names(ds$axes)) &&
+  all(vapply(c("ADT","HTO","GDO"), function(a) identical(ds$axes[[a]]$role, "feature"), logical(1))) &&
+  setequal(Assays(so2), c("RNA","ADT","HTO","GDO"))))
+
+# synthetic Signac ChromatinAssay: peaks + genomic ranges -> a peak feature axis + typed ranges
+# (<axis>_seqnames/_start/_end). Guards the real-pbmcMultiome capture. Skips where Signac is absent.
+if (requireNamespace("Signac", quietly = TRUE)) {
+  npk <- 20; pk <- sprintf("chr%d-%d-%d", rep(1:2, length.out = npk), seq(1, by = 1000, length.out = npk), seq(500, by = 1000, length.out = npk))
+  pm <- matrix(rpois(npk*nc, 1), npk, nc); dimnames(pm) <- list(pk, colnames(m))
+  ca <- Signac::CreateChromatinAssay(counts = as(pm, "CsparseMatrix"), ranges = Signac::StringToGRanges(pk, sep = c("-", "-")))
+  cao <- CreateSeuratObject(m); cao[["ATAC"]] <- ca
+  stores <- c(stores, rt("ChromatinAssay (synthetic)", cao, function(ds, so2)
+    "ATAC" %in% names(ds$axes) && identical(ds$axes$ATAC$role, "feature") &&
+    "ATAC_seqnames" %in% names(ds$fields) && identical(ds$fields[["ATAC_start"]]$role, "measure")))
+} else cat("  [R] ChromatinAssay (synthetic)   SKIP (Signac unavailable)\n")
 cat(paste(stores, collapse="\n"), "\n", file = "/tmp/sv_stores.txt")
 ' 2>&1 | grep -E "^  \[R\]|Error|Execution halted|cannot|unable|no method"
 

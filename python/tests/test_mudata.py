@@ -202,6 +202,34 @@ def test_per_modality_pca_different_dim():
           "axes (no collision); round-trips both loadings -- regression for the minipbcite sweep bug")
 
 
+def test_atac_modality_peaks_axis():
+    """An ATAC modality maps to the canonical **`peaks`** feature axis (the multiome shape on the MuData
+    side; real 10x multiome `.h5mu` exercises this locally). Guards the rna→genes / atac→peaks mapping."""
+    try:
+        import anndata as ad
+        import mudata
+        import pandas as pd
+    except Exception:
+        print("  SKIP test_atac_modality_peaks_axis (mudata unavailable)"); return
+    import scipy.sparse as sp
+    rng = np.random.default_rng(3)
+    n = 60; cells = [f"c{i}" for i in range(n)]
+    arna = ad.AnnData(sp.csr_matrix(rng.poisson(1, (n, 20)).astype("float32")),
+                      obs=pd.DataFrame(index=cells), var=pd.DataFrame(index=[f"g{i}" for i in range(20)]))
+    aatac = ad.AnnData(sp.csr_matrix(rng.poisson(1, (n, 50)).astype("float32")),
+                       obs=pd.DataFrame(index=cells),
+                       var=pd.DataFrame(index=[f"chr1-{i*100}-{i*100+90}" for i in range(50)]))
+    md = mudata.MuData({"rna": arna, "atac": aatac})
+    ds = lstar.read_mudata(md)
+    assert ds.axis("genes").role == "feature" and ds.axis("peaks").role == "feature"   # rna→genes, atac→peaks
+    assert len(ds.axis("peaks")) == 50
+    assert any(f.role == "measure" and f.span[1:] == ["peaks"] for f in ds.fields.values())
+    assert not lstar.validate(ds)
+    md2 = lstar.write_mudata(lstar.read(_w(ds)))
+    assert "atac" in md2.mod and md2.mod["atac"].n_vars == 50
+    print("MuData ATAC modality -> canonical `peaks` feature axis (RNA+ATAC multiome shape); round-trips")
+
+
 def _w(ds):
     p = _store(); lstar.write(ds, p); return p
 
@@ -212,3 +240,4 @@ if __name__ == "__main__":
     test_partial_overlap_mudata()
     test_joint_method_storage_shapes()
     test_per_modality_pca_different_dim()
+    test_atac_modality_peaks_axis()
