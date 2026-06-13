@@ -170,7 +170,13 @@ A few **named patterns** are bundles of the above, not new constructs:
 Every field and axis records the inputs it was built from, so a dataset *is* a provenance graph:
 `umap` ← `knn` ← `pca` ← `data` ← `counts`. That makes results reproducible, lets a guard refuse an
 operation on a measure of the wrong `state` (clustering raw counts), and gives an automated agent an
-auditable lineage.
+auditable lineage. Provenance round-trips verbatim across Python, C++, and R (carried as an opaque JSON
+record), so method parameters survive a conversion. Two conventions ride on it: a **normalization
+recipe** (`{model, depthScale, log_base, winsor_caps}`) stored on the raw measure lets a consumer
+recompute a normalized view on demand instead of persisting a redundant dense matrix — keep the *small*
+params here and any *large* precomputed per-axis vectors (a CLR divisor, an IDF) as their own arity-1
+`recipe_scalar` fields; and a joint product (WNN/MOFA) records its contributing feature axes in
+`input_axes`.
 
 ## A whole dataset, listed
 
@@ -233,6 +239,13 @@ No concatenated matrix exists: `featureVector("CD8A")` *gathers* per sample — 
 mouse cells the orthologous Cd8a, absent elsewhere. Alignment within a sample is legitimate (its facets
 share cells); across samples you keep a collection joined by a graph. A single Pagoda2 object is the
 `sample` unit; a Conos object is the `collection` unit.
+
+**Reducing over a collection without materializing it.** `collection_pseudobulk(ds, factor)` aggregates
+the per-sample `counts.<s>` measures into a `(joint-group × genes)` pseudobulk — grouped by a `factor`
+over the **union** `cells` axis (a joint clustering) — **streamed one sample at a time** (the joint
+matrix never exists), with float64 accumulation and genes label-aligned across samples (absent ⇒ 0). It's
+the collection generalization of `pseudobulk()`: a per-group result is just a measure over the induced
+factor axis, so nothing special is needed to express "joint pseudobulk over an atlas of samples."
 
 > **Implemented today.** The R profiles ingest a **Conos** object and a split **Seurat v5** assay as
 > collections: a `samples` axis, per-sample `cells.{s}`/`genes.{s}` axes and `counts.{s}` measures, a

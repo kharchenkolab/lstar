@@ -58,8 +58,10 @@ the cross-language conformance suite ([`conformance/`](conformance/)).
 | Bounded-memory **streaming write** | ✓ | ✓ | ✓ | — |
 | Disk-backed targets (don't materialize) | backed AnnData | — | BPCells / HDF5Array | — |
 | Kernels: col mean/var · fused depth+log1p · grouped sum | ✓ | ✓ | ✓ | ✓ (colMeanVar, log1p) |
+| **Deterministic reductions** (bit-identical across thread counts) | ✓ | ✓ | ✓ | — |
 | Block reader (read a gene/feature subset) | ✓ | ✓ | ✓ | — |
-| DE / markers / pseudobulk bundles | ✓ | — | ✓ | — |
+| `provenance` round-trip (method params / normalization recipe) | ✓ | ✓ | ✓ | — |
+| DE / markers / pseudobulk bundles · **collection** pseudobulk | ✓ | — | ✓ | — |
 | **Format profiles** | AnnData, MuData | — | Seurat, SCE, Conos, pagoda2 | — |
 
 Notes: the C++ core is the model + Zarr IO + kernels (no `validate`/profiles — those live in the
