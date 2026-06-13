@@ -47,8 +47,10 @@ plays which role is a profile choice.
 
 > **Implemented today.** lstar models `origin` (`observed`/`derived`) and `role`
 > (`observation`/`feature`/`coordinate`/…). Per-sample namespaced axes are used by the collection
-> profiles (e.g. `cells.GSM5746259`). Partial coverage is specified but not yet implemented (fields
-> currently cover their whole axis).
+> profiles (e.g. `cells.GSM5746259`). **Partial coverage is implemented**: a field may cover a subset of
+> a span axis via an `index` of positions into it (see Fields, below) — a modality measured on only some
+> cells (10x multiome barcode whitelists, CITE-seq dropout) lands over the shared `cells` axis with an
+> index, not a separate axis or an NA-padded matrix.
 
 ## Fields — typed data over axes
 
@@ -67,7 +69,7 @@ inferred from the data and overridden only to unlock a role-specific behavior:
 |---|---|
 | **span** | the axes it ranges over, e.g. `["cells","genes"]`, `["cells","cells"]` (a relation) |
 | **role** | a semantic type tag — what kind of object this is and what invariants apply (below) |
-| **index / coverage** | label-keyed; may cover only a subset of an axis (`partial`) or carry out-of-axis labels |
+| **coverage / index** | `full` (default), or `partial` — the field covers only a subset of one span axis (`index_axis`), keyed by an `index` of integer positions into it (one per value row along that axis) |
 | **values + encoding** | the data, *stored* (`dense`/`csr`/`csc`/`coo`/`ragged`/`raster`) or *virtual* (`recipe`) |
 | **state** | for measures: `raw`/`lognorm`/`scaled`/… so a method can refuse an invalid operation |
 | **uncertainty** | an optional companion field of the same span (a p-value, a variance) |
@@ -87,9 +89,10 @@ Two consequences of "only `values` is required" are worth internalizing:
   table.
 
 > **Implemented today.** Encodings `dense`, `csc`, `csr`, `coo`, and `utf8` (strings, lstar's encoding
-> for `label`/string fields). `state`, `subtype`, relation flags, and `provenance` are stored.
-> `recipe` (virtual fields), `ragged`, `raster`, and partial-coverage `index/` arrays are specified
-> but not yet implemented.
+> for `label`/string fields), each optionally with a nullable validity `mask`. `state`, `subtype`,
+> relation flags, and `provenance` are stored. **Partial coverage** (`coverage="partial"` + an `index`
+> into `index_axis`) is implemented and round-trips across Python, C++, and R. `recipe` (virtual
+> fields), `ragged`, and `raster` are specified but not yet implemented.
 
 ## Roles — what a field *means*
 
@@ -240,8 +243,10 @@ share cells); across samples you keep a collection joined by a graph. A single P
 ## Validation invariants
 
 A conforming store satisfies (what `lstar.validate` checks today): every field `span` references
-existing axes; a field's shape matches its axes' lengths; a `relation` (csc/csr 2-D) spans exactly two
-axes; a 1-arity `label` is `utf8` and as long as its axis. Roles/states outside the core registry are
+existing axes; a field's shape matches its axes' lengths — or, for **partial coverage**, `len(index)`
+along `index_axis` (with `index` in range, and `index_axis` one of the span axes); a `relation` (csc/csr
+2-D) spans exactly two axes; a 1-arity `label` is `utf8` and as long as its axis; an induced factor
+axis's labels match its inducing field's categories. Roles/states outside the core registry are
 *warnings*, not errors — the vocabulary is open.
 
 ---

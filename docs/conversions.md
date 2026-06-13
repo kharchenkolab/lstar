@@ -187,18 +187,28 @@ them:
 | UMAP / t-SNE | `umap` / `tsne` : embedding | `obsm['X_umap']` | a `DimReduc` | a `reducedDim` |
 | cell / gene metadata | columns over `(cells)` / `(genes)` | `obs` / `var` | `meta.data` / `meta.features` | `colData` / `rowData` |
 | clustering / cell type | a `label` over `(cells)` | an `obs` column | `Idents` / a `meta.data` column | a `colData` column |
+| a second modality (ADT/ATAC) | a measure over `(cells, proteins/peaks)` — a second **feature axis** | a MuData modality | a second assay | an `altExp` |
+| cell–cell / gene–gene graph | a `relation` over `(cells,cells)` / `(genes,genes)` | `obsp` / `varp` | a `Graph` / `Neighbor` | `colPairs` / `rowPairs` |
 
 The PCA-loadings row is the concrete payoff: a direct AnnData→Seurat conversion usually discards the
 gene loadings, but because L★ keeps the scores and loadings on one shared `pca` axis, they ride through.
+The same shared-axis trick carries **joint integration** outputs (WNN / MOFA+ / totalVI): the factor
+scores (an embedding) and per-modality loadings share one factor axis, and the modality weights ride as
+cell measures. A **modality measured on only some cells** rides over the shared `cells` axis as
+**partial coverage** (an `index`), not a padded matrix or a separate axis.
 
 **What a given target cannot hold is reported in `dropped`:**
 
-- Through **Seurat or SCE**: neighbor/other **graphs** (`relation` fields), arity-3 tensors, trees, and
-  fitted models have no native slot, so they are written to `@misc` / `metadata` and listed in
-  `dropped`. (An AnnData ↔ L★ ↔ AnnData round-trip *does* keep `obsp` graphs, because AnnData has a
-  place for them.)
+- Multimodal, graphs, and partial coverage now have native slots in the relevant formats (rows above),
+  so they survive — they are **no longer dropped**. What genuinely has no slot — **arity-3 tensors,
+  trees, and fitted models** — is written to the format's sidecar (`uns` / `@misc` / `metadata`) and
+  listed in `dropped`. Format-specific extras with no cross-format home (e.g. a Signac
+  `ChromatinAssay`'s external **fragment file**) are recorded too; its **peak ranges** *are* kept (as
+  `seqnames`/`start`/`end` feature fields).
 - Through **AnnData**: anything in `uns` that isn't a recognized structure is recorded in `dropped`
   (re-surfaced under `adata.uns['lstar/dropped']` on write-back).
+- **Keep the L★ store and nothing is dropped at all** — the `dropped` manifest only describes what a
+  *native target* couldn't carry.
 
 The rule of thumb: **convert through L★ and keep the L★ store** if you want nothing lost; convert all
 the way to a native format and you keep its shared-vocabulary core plus a recorded manifest of what it
@@ -210,11 +220,16 @@ The readers detect the version/variant of the object they're given and adapt, ra
 layout — so conversions don't break when a collaborator is on a different release:
 
 - **Seurat**: v3/v4 (`Assay`, fixed `counts`/`data`/`scale.data` slots) vs. v5 (`Assay5`, layers); a
-  fallback covers SeuratObject < 5. A **split v5 assay** (`split(assay, f = sample)`) is recognized as
-  a **collection**.
+  fallback covers SeuratObject < 5. Per-assay class is recorded — `SCTAssay` (SCTransform residuals),
+  `ChromatinAssay` (Signac scATAC: peaks + genomic ranges). A **split v5 assay**
+  (`split(assay, f = sample)`) is recognized as a **collection**. A `scale.data` over the variable
+  features only is kept as **partial coverage**.
+- **SingleCellExperiment**: full SCE vs. a plain `SummarizedExperiment` (SCE-only accessors are
+  guarded); S4 `Rle` columns are unpacked; cells keyed by a `Barcode` colData column (NULL dimnames)
+  get synthesized labels.
 - **pagoda2**: the modern `getRawCounts()` accessor vs. the legacy `$counts` slot.
-- **AnnData**: the library version, and the `.raw` slot (kept on its own gene axis when its gene set
-  differs from the main one).
+- **AnnData**: the library version, the on-disk sparse layout (legacy `h5sparse_format` < 0.7 and modern
+  `encoding-type`), and the `.raw` slot (kept on its own gene axis when its gene set differs).
 
 The detected `<format>@<version>` is recorded in `ds.profiles`, so a downstream reader knows exactly
 what produced the data.

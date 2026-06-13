@@ -27,7 +27,7 @@ A **Field** is typed data over a tuple of axes (its `span`).
 | `span` | ordered list of axis names, e.g. `["cells","genes"]`, `["cells","cells"]` (relation) |
 | `state` | optional measure state: `raw \| lognorm \| scaled` |
 | `encoding` | `dense \| csr \| csc \| coo \| utf8` (inferred if omitted) |
-| `coverage` | `full` (default) or partial (label-keyed) |
+| `coverage`/`index`/`index_axis` | `full` (default) or `partial` — covers a subset of one span axis (`index_axis`) via an `index` of int positions into it (implemented; round-trips Py/C++/R) |
 | `subtype` | role-specific tag (`distance`, `similarity`, `knn`, `design`, …) |
 | `directed`,`weighted` | relation flags |
 | `provenance` | native location for exact write-back (e.g. `{"anndata":"obsm/X_pca"}`) |

@@ -7,10 +7,11 @@ guiding rule: **all L★ metadata lives under an `"lstar"` key** in each group's
 is *also* a plain Zarr group that scanpy/Vitessce/zarrita can open and read the common parts of.
 
 > **Implemented today.** The Python and C++ writers emit the tree below in **Zarr v2** with a
-> consolidated `.zmetadata`; the C++/R/Python readers all read it (chunked + gzip included). The spec
-> targets **Zarr v3 + sharding** (the request-economy path for million-cell remote stores); that and
-> the `recipe`/`ragged`/`raster` encodings, partial-coverage `index/`, and `models/` are not yet
-> written.
+> consolidated `.zmetadata`; the C++/R/Python readers all read it (chunked + gzip included). A nullable
+> validity `mask` and **partial coverage** (`coverage="partial"` + an `index` into `index_axis`) are
+> written and read by all three. The spec targets **Zarr v3 + sharding** (the request-economy path for
+> million-cell remote stores); that and the `recipe`/`ragged`/`raster` encodings and `models/` are not
+> yet written.
 
 ## The tree
 
@@ -101,9 +102,13 @@ collapsing to float-NaN. It is distinct from the categorical `-1` sentinel (whic
 and from float `NaN` (which already encodes missing, so a float field needs no mask). An absent `mask`
 means no nulls — existing stores read unchanged.
 
-**Partial coverage** *(spec; not yet implemented).* A field that covers only some of an axis adds an
-`index/<axis>` array — the covered labels (a subset of `axes/<axis>/labels`). Access is a label join;
-uncovered elements are *absent*.
+**Partial coverage** *(implemented).* A field that covers only some of one span axis sets
+`coverage="partial"` and `index_axis=<axis>` in its `lstar` attrs and adds an `index` array under
+`fields/<name>/index` — `int64` **positions** into `axes/<axis>/labels` (one per value row along that
+axis), so the covered subset is `axes/<axis>/labels[index]`. The field's stored shape is `len(index)`
+along that axis (not the full axis length); uncovered elements are *absent* (not zero/NA-padded). Used
+e.g. for a modality measured on a subset of cells, or a Seurat `scale.data` over the variable features
+only. Round-trips across the Python, C++, and R readers/writers.
 
 **Models** *(spec; not yet emitted).* `models/<model>/` holds a fitted `transform`: an `apply` contract
 (`{in:[axes], out:[axes]}`) plus learned `weights` (inline or a URI), with provenance.
