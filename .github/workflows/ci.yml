@@ -87,3 +87,21 @@ jobs:
         run: bash conformance/r_write_chunked.sh
       - name: disk-backed targets (backed AnnData always; Seurat+BPCells / SCE+HDF5Array skip if absent)
         run: bash conformance/backed_targets.sh
+
+  js-wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # make_store.py drives the Python L* writer (PYTHONPATH=python/src) to emit the test store.
+      - run: pip install numpy scipy "zarr<3"
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 6.0.0          # bundles node 22.16 -> supports `node --experimental-strip-types`
+          actions-cache-folder: emsdk-cache
+      - name: install JS deps (zarrita)
+        run: cd js && npm install
+      - name: JS/WASM conformance (build WASM kernels + Node kernels/reader/view vs Python store)
+        run: bash conformance/js.sh
