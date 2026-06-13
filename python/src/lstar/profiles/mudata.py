@@ -114,6 +114,21 @@ def read_mudata(md, kind="sample"):
         if sp.issparse(mm) and mm.shape == (len(cells), len(cells)):
             ds.add_field(_uniq(ds, str(k), "cells"), mm, role="relation", span=["cells", "cells"],
                          directed=False, weighted=True, provenance={"mudata": "obsp/%s" % k})
+    # Facet-set provenance on joint products (WNN/MOFA/totalVI): a joint embedding records the input
+    # **feature axes** that fed it (`provenance["input_axes"]`). For factor models we can infer it -- the
+    # contributing feature axes are exactly those carrying a `loading` over the embedding's coordinate
+    # axis (MOFA: genes + proteins both load on `factors`). A producer that knows its facets (pagoda2
+    # records `facets=c("RNA","ADT")` on a reduction) sets the same key; it round-trips (provenance is
+    # preserved across Py/C++/R).
+    for nm, f in list(ds.fields.items()):
+        if f.role != "embedding" or len(f.span or []) != 2:
+            continue
+        coord = f.span[1]
+        feats = sorted({g.span[0] for g in ds.fields.values()
+                        if g.role == "loading" and len(g.span or []) == 2 and g.span[1] == coord
+                        and ds.axes.get(g.span[0]) is not None and ds.axes[g.span[0]].role == "feature"})
+        if feats:
+            f.provenance = dict(f.provenance or {}, input_axes=feats)
     guns = {k: v for k, v in md.uns.items() if not str(k).startswith("lstar/")}
     if guns:
         ds.aux["mudata.uns"] = guns

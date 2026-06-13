@@ -236,6 +236,8 @@ list lstar_cpp_read(std::string path) {
       fl.push_back("index_axis"_nm = f.index_axis);
       fl.push_back("coverage"_nm = std::string("partial"));
     }
+    if (f.provenance.is_object() && !f.provenance.empty())          // provenance as an opaque JSON string
+      fl.push_back("provenance"_nm = f.provenance.dump());          // (preserves arbitrary nesting verbatim)
     fields[k] = fl;
     fnames[k] = f.name;
   }
@@ -314,6 +316,17 @@ void lstar_cpp_write(list ds, std::string path, int chunk_elems = 0,
     fl.encoding = as_cpp<std::string>(f["encoding"]);
     fl.state = as_cpp<std::string>(f["state"]);
     fl.subtype = as_cpp<std::string>(f["subtype"]);
+    {                                                     // provenance: an opaque JSON string -> json
+      strings ns = f.names();
+      for (R_xlen_t j = 0; j < ns.size(); ++j) if (std::string(ns[j]) == "provenance") {
+        std::string pj = as_cpp<std::string>(f["provenance"]);
+        if (!pj.empty()) {
+          auto p = decltype(fl.provenance)::parse(pj, nullptr, false);  // lenient: discarded on bad input
+          if (p.is_object()) fl.provenance = p;
+        }
+        break;
+      }
+    }
     if (fl.encoding == "csc" || fl.encoding == "csr") {
       integers shp = f["shape"];
       for (R_xlen_t j = 0; j < shp.size(); ++j) fl.shape.push_back((int64_t)shp[j]);

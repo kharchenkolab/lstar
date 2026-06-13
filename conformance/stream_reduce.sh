@@ -49,14 +49,20 @@ cmv <- function(M, lognorm) {
   list(mean = as.numeric(mu), var = as.numeric(ss / (nr - 1)), nnz = diff(M@p))
 }
 g_raw <- cmv(m, FALSE); g_ln <- cmv(m, TRUE)
-s4    <- stream_col_stats(store, "counts", block = 29L, n_threads = 4L, lognorm = TRUE)
+
+# DETERMINISM CONTRACT: the multithreaded C++ kernel is BIT-identical across thread counts (float64
+# accumulation, column-parallel, no cross-thread reduction). mean/var/nnz at 2/4/8 threads must equal
+# the 1-thread result exactly (==0), not just within tolerance.
+for (nt in c(2L, 4L, 8L)) {
+  sN <- stream_col_stats(store, "counts", block = 29L, n_threads = nt, lognorm = TRUE)
+  stopifnot(max(abs(s_ln$mean - sN$mean)) == 0, max(abs(s_ln$var - sN$var)) == 0, all(s_ln$nnz == sN$nnz))
+}
 
 tol <- 1e-9
 stopifnot(max(abs(s_raw$mean - g_raw$mean)) < tol,
           max(abs(s_raw$var  - g_raw$var )) < tol,
           all(s_raw$nnz == g_raw$nnz),
           max(abs(s_ln$mean - g_ln$mean)) < tol,
-          max(abs(s_ln$var  - g_ln$var )) < tol,
-          max(abs(s_ln$var  - s4$var))   == 0)         # thread-count invariant
-cat(sprintf("  [R ] blocked reduction == full read (%d genes; raw + log1p; 1==4 threads)\n",
+          max(abs(s_ln$var  - g_ln$var )) < tol)
+cat(sprintf("  [R ] blocked reduction == full read (%d genes; raw + log1p; bit-identical 1==2==4==8 threads)\n",
             length(s_raw$mean)))' 2>&1 | grep -vE "^Warning|deprecat|Attaching|masked|following object|^$"

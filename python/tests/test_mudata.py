@@ -148,6 +148,8 @@ def test_joint_method_storage_shapes():
     rl = ds.field("rna_factors_loadings"); pl = ds.field("prot_factors_loadings")
     assert rl.role == "loading" and rl.span == ["genes", "factors"]
     assert pl.role == "loading" and pl.span == ["proteins", "factors"]
+    # facet-set provenance (S5): the factor-scores embedding records the feature axes that fed it
+    assert ds.field("X_factors").provenance.get("input_axes") == ["genes", "proteins"]
     assert not lstar.validate(ds)
     ds2 = lstar.read(_w(ds))                                              # survives the store
     assert not lstar.validate(ds2)

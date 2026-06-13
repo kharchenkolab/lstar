@@ -126,6 +126,8 @@ lstar_write <- function(ds, path, chunk_elems = NULL, compression = c("none", "g
       out$index <- as.integer(f$index)
       out$index_axis <- f$index_axis %||% as.character(f$span)[1]
     }
+    if (!is.null(f$provenance) && is.character(f$provenance) && nzchar(f$provenance[1]))
+      out$provenance <- f$provenance[1]             # opaque JSON string (e.g. recipe params); round-tripped
     out
   })
   names(fields) <- names(ds$fields)

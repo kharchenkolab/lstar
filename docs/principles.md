@@ -116,6 +116,14 @@ Glue sits on hot paths — large sparse matrices, remote stores. So:
 - **Fast by default.** Python uses a compiled C++/OpenMP accelerator automatically when present and
   the pure-Python path otherwise — identical results, no opt-in. Reductions scale to the core count
   in C++ (≈20× at 56 threads on a 77M-nonzero measure).
+- **Determinism contract (stated and tested).** The streaming reducers are **thread-count-invariant and
+  bit-identical**: each column is accumulated independently in float64, column-parallel, with **no
+  cross-thread reduction**, so a column's result is a pure function of its data — not of how many threads
+  ran. The same input gives byte-for-byte the same mean/variance/nnz at 1, 2, 4, or 8 threads (asserted
+  exactly, `== 0`, in `conformance/stream_reduce.sh` and `python/tests/test_determinism.py`). This is
+  both a reproducibility guarantee and the property that lets a *different* library reuse the same kernel
+  and get identical summaries — the precondition for sharing one tuned core across lstar, a viewer, or a
+  consumer like pagoda2.
 
 > **Example.** Lazily opening a 77.6M-nonzero measure costs ~9 MB instead of ~780 MB; per-gene
 > mean/variance streams in bounded memory and matches a dense computation; the C++ reduction is
