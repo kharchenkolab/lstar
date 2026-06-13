@@ -8,8 +8,8 @@ This is a living report — re-run the harnesses to refresh.
 
 | corpus | source | swept | PASS | profile-FAIL | load-skip |
 |---|---|---|---|---|---|
-| AnnData | scanpy.datasets + local atlases + **4 scVelo velocity** + **3 10x CITE-seq** | **14** | **13** | 0 | 1 (moignard15: needs `openpyxl`) |
-| AnnData velocity | scVelo `dentategyrus`/`gastrulation_erythroid`/`bonemarrow`/`pancreas` | **4** | **4** | 0 | — |
+| AnnData | scanpy.datasets + local atlases + scVelo velocity + 10x CITE-seq | **15** | **14** | 0 | 1 (moignard15: needs `openpyxl`) |
+| AnnData velocity | scVelo `dentategyrus`/`gastrulation_erythroid`/`bonemarrow`/`pancreas` (+ an anndata-0.11-format copy) | **5** | **5** | 0 | — |
 | SCE | Bioconductor `scRNAseq` | **61** | **56** | **0** (after 3 fixes) | 4 load-dep + 1 segfault (dataset, not profile) |
 | Conos | local `.rds` (real research objects) | 2 | 2 | 0 | (acon.rds 8.7 GB skipped) |
 | Seurat | SeuratData (lazy datasets) | **10** objects (9 datasets) | **10** | **0** | 11 Azimuth *ref atlases (need the Azimuth loader) |
