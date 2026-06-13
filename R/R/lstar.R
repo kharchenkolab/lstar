@@ -49,7 +49,10 @@ lstar_read <- function(path) {
               class = if (isTRUE(f$ordered)) c("ordered", "factor") else "factor")
   } else {
     shp <- as.integer(f$shape)
-    if (length(shp) <= 1) f$dense else t(matrix(f$dense, nrow = shp[2], ncol = shp[1]))
+    # dense values are stored C-order (row-major). Reconstruct an n-D R array: filling a reversed-dims
+    # array column-major == filling the original dims row-major, then aperm back. (Reduces to t(matrix())
+    # for 2-D; supports arity-3+ tensors -- CCC group×group×lr_pair, eQTL celltype×gene×variant.)
+    if (length(shp) <= 1) f$dense else aperm(array(f$dense, dim = rev(shp)), length(shp):1)
   }
   if (!is.null(f$mask) && is.null(dim(v))) {       # nullable: 1 == missing -> NA in the R vector
     miss <- as.integer(f$mask) == 1L
@@ -117,9 +120,10 @@ lstar_write <- function(ds, path, chunk_elems = NULL, compression = c("none", "g
       if (is.null(dim(v))) {                       # a plain vector -> arity-1 field
         if (any(is.na(v))) { out$mask <- as.integer(is.na(v)); v[is.na(v)] <- 0 }  # nullable int/num
         out$dense <- as.numeric(v); out$shape <- as.integer(length(v))
-      } else {                                     # a matrix -> C-order + 2-D shape
-        m <- as.matrix(v)
-        out$dense <- as.numeric(t(m)); out$shape <- as.integer(dim(m))
+      } else {                                     # an n-D array -> C-order flat + shape (arity 2, 3, ...)
+        d <- dim(v)
+        out$dense <- as.numeric(aperm(v, length(d):1))   # col-major flatten of axis-reversed == C-order
+        out$shape <- as.integer(d)
       }
     }
     if (!is.null(f$index)) {                        # partial coverage: int positions into index_axis
