@@ -7,6 +7,14 @@ jobs:
     runs-on: ubuntu-latest
     # CI runs the synthetic-but-faithful corpus (synth.py) -- no real datasets are downloaded or
     # committed (they're large/slow); the real corpus + sweep run locally. See python/tests/corpus.py.
+    # Version matrix: `latest` catches the newest anndata/scanpy; `pinned-old` (anndata 0.8 / scanpy 1.9,
+    # numpy<2 -- a combo known to pass) guards against regressions that only break on older deps.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { tag: latest, pip: 'numpy scipy "zarr<3" anndata scanpy mudata' }
+          - { tag: pinned-old, pip: '"numpy<2" scipy "zarr<3" "anndata==0.8.0" "scanpy==1.9.3" mudata' }
     env:
       LSTAR_SYNTHETIC_CORPUS: "1"
     steps:
@@ -16,12 +24,12 @@ jobs:
           python-version: "3.11"
       # NOTE: the Python reference impl currently targets the Zarr v2 API; the v3
       # port is pending (the C++ core targets v3). Pin zarr<3 until then.
-      - run: pip install numpy scipy "zarr<3" anndata scanpy mudata
+      - run: pip install ${{ matrix.pip }}
       - name: build libstar (C++ core)
         run: cmake -S core -B core/build -DCMAKE_BUILD_TYPE=Release && cmake --build core/build -j2
       - name: python tests + Python<->C++ cross-impl
         run: |
-          for t in test_roundtrip test_anndata_profile test_crossimpl test_validate test_versions test_lazy test_stream_write test_categorical test_induce test_nullable test_aux test_de test_tier1_promote test_real_atlas test_mudata test_partial test_spatial; do
+          for t in test_roundtrip test_anndata_profile test_crossimpl test_validate test_versions test_lazy test_stream_write test_categorical test_induce test_nullable test_aux test_de test_tier1_promote test_real_atlas test_mudata test_partial test_spatial test_fuzz; do
             echo "== $t =="; PYTHONPATH=python/src python3 python/tests/$t.py
           done
       - name: chunked+gzip cross-impl (Python -> C++ -> Python) + transpose
