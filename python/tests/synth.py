@@ -138,6 +138,11 @@ def velocity(seed=7):
     a.layers["spliced"] = sp.csr_matrix(spliced)
     a.layers["unspliced"] = sp.csr_matrix(unspliced)
     sc.pp.normalize_total(a); sc.pp.log1p(a)
+    # real scVelo output carries the standard pipeline products too (moments runs pca+neighbors) -- run
+    # them so the synthetic stand-in mirrors the real object's full structure (pca/neighbors/umap), not
+    # just the velocity-specific layers/graph (enforced by test_synth_faithful).
+    sc.pp.pca(a, n_comps=10); sc.pp.neighbors(a, n_neighbors=10)
+    a.obsm["X_umap"] = (a.obsm["X_pca"][:, :2] + rng.normal(0, 0.05, (n_obs, 2))).astype(np.float32)
     a.obs["clusters"] = pd.Categorical(np.array(["Ductal", "Ngn3", "Pre", "Beta"])[labels])
     a.uns["clusters_colors"] = _palette(n_clusters)
     # velocity graph: each cell transitions to ~12 neighbours; cosine-like signed weights, pos/neg split

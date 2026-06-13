@@ -25,6 +25,12 @@ for t in test_roundtrip test_anndata_profile test_crossimpl test_validate test_v
   else echo "  FAIL  $t"; tail -15 /tmp/lstar_$t.log; exit 1; fi
 done
 
+# Two-tier contract gate (LOCAL only -- needs real data; not in CI): every synthetic CI fixture must
+# structurally mirror the real dataset it stands in for. Catches synth drift when upstream libs change.
+echo "== synthetic-faithfulness guard (synthetic structure ⊆ real corpus) =="
+PYTHONPATH=python/src python3 python/tests/test_synth_faithful.py >/tmp/lstar_faithful.log 2>&1 \
+  && pass "synthetic fixtures mirror the real corpus" || { echo "  FAIL faithfulness"; cat /tmp/lstar_faithful.log; exit 1; }
+
 echo "== categorical-encoding conformance (codes/categories/ordered/-1 across Py/C++/R) =="
 bash conformance/categorical.sh >/tmp/lstar_cat.log 2>&1 \
   && pass "categorical round-trips Py<->C++<->R" || { echo "  FAIL categorical"; tail -15 /tmp/lstar_cat.log; exit 1; }
