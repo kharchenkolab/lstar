@@ -265,7 +265,10 @@ def read_anndata(adata, kind="sample"):
         v = np.asarray(adata.obsm[k])
         name = _strip_x(k)
         cax = _coord_axis(ds, name, v.shape[1], observed=(name == "spatial"))
+        # spatial coordinates are a *named observed* coordinate axis (conceptual spatial support; images /
+        # vendor frames are deferred to a spatial tier -> uns['spatial'] stays in the passthrough).
         ds.add_field(name, v, role="embedding", span=["cells", cax],
+                     subtype=("spatial" if name == "spatial" else None),
                      provenance={"anndata": "obsm/%s" % k})
 
     for k in list(adata.varm.keys()):
@@ -489,6 +492,8 @@ def _vocab_location(ds, name, f):
             return "layers/counts" if name != "X" else "X"
         return "X"
     if f.role == "embedding" and len(sp1) == 2 and sp1[0] == "cells":
+        if name == "spatial" or f.subtype == "spatial":     # spatial coords live at obsm['spatial'], not X_
+            return "obsm/spatial"
         return "obsm/X_%s" % name
     if f.role == "loading" and len(sp1) == 2 and sp1[0] == "genes":
         base = name[:-9] if name.endswith("_loadings") else name

@@ -90,7 +90,8 @@ atlas (40 k × 20 k, read backed), real scVelo output.
 | `uns['velocity_graph']` (scVelo, cell×cell in `uns`) | ✓ | ✓ | ✓ | typed as a relation (not dropped) |
 | `uns` neighbors `OverloadedDict` / generic tail | ✓ | ✓ | ✓ | lossless passthrough |
 | backed / bounded-memory convert | ✓ | ✓ | ◐ | real Marrow atlas (local); CI exercises the backed proxy |
-| spatial `obsm['spatial']` + `uns['spatial']` images | ✗ | — | — | separate spatial tier (deferred) |
+| spatial coords `obsm['spatial']` → named `spatial` coordinate axis (conceptual) | ✓ | — | ✓ | observed coordinate axis; round-trips to `obsm['spatial']` |
+| spatial images `uns['spatial']` / vendor frames / molecules | ✗ | — | — | deferred to a spatial tier; kept in the passthrough (not lost) |
 
 ## MuData (`.h5mu`) — Python (multimodal)
 
@@ -171,9 +172,10 @@ segfault, not profile bugs) after 3 sweep-caught fixes; plus real `ZeiselBrain`.
 
 Prioritized, with **where** the gap is (profile / real corpus / synthetic fixture):
 
-1. **Spatial tier** (Visium / Xenium / CosMx / Slide-seq) — *profile gap*, deliberately deferred:
-   images, coordinate frames, molecule tables. Affects AnnData `spatial`, Seurat images, the SeuratData
-   `stx*`/`ssHippo` datasets.
+1. **Spatial tier** (Visium / Xenium / CosMx / Slide-seq) — *deliberately deferred beyond the concept*.
+   Spatial **coordinates** are supported now (a named observed `spatial` coordinate axis); the deferred
+   part is **images, vendor coordinate frames, and molecule tables** (kept in the passthrough, not lost).
+   Affects Seurat images and the SeuratData `stx*`/`ssHippo` datasets.
 2. **A real `.h5mu` multiome** — *corpus gap*: partial-overlap is now implemented (typed partial coverage
    via `index`, tested on a constructed fixture); what's missing is a *real* partial-overlap / multiome
    `.h5mu` in the local corpus (real ATAC is already covered via the Seurat `pbmcMultiome` sweep).
