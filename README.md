@@ -14,8 +14,8 @@ a second, protein feature axis; or a case-control cohort carrying a statistical 
 samples. The routine count-matrix-plus-a-clustering case stays just as simple, while the harder cases
 use the same vocabulary instead of an opaque `uns`/`misc` blob (see [Why lstar?](#why-lstar)).
 
-In the short term, the most immediately useful thing this buys you is **moving data between the formats
-people already use**. Each existing container — AnnData (Python), Seurat and SingleCellExperiment (R),
+In the short term, the most immediately useful thing this buys you is **[moving data between the formats
+people already use](SUPPORT.md)**. Each existing container — AnnData (Python), Seurat and SingleCellExperiment (R),
 pagoda/conos — fixes a few named slots; routing a dataset through L★ converts one to another while
 preserving the *meaning* of each piece and **reporting** anything a target can't hold instead of
 dropping it silently.
