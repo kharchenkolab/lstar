@@ -8,6 +8,11 @@ The sweep corpus is **local-only** (datasets are large/many; cached in `testdata
 SeuratData caches) — these are NOT in CI. CI runs the small committed fixtures + the curated downloads
 (see `python/tests/CORPUS.md`, `SUPPORT.md`). The sweep is what you run locally to stay honest.
 
+> **One entry point:** `bash conformance/sweep/retest_local.sh` runs the faithfulness guard + every
+> cached-data sweep and ends with a TRIAGE of what to update. The recurring directive — when to run it,
+> how to read the outcomes, how to update the synthetics and the docs — is **[`RETEST.md`](RETEST.md)**.
+> The table + acquisition notes below are the reference the orchestrator and directive draw on.
+
 | harness | source | scope |
 |---|---|---|
 | `sweep_scrnaseq.R` / `sweep_scrnaseq_driver.sh` | Bioconductor `scRNAseq` (61 real SCEs) | `read_sce`→`write_sce`→`lstar_write`; subprocess-isolated per dataset |
@@ -51,7 +56,8 @@ How to acquire the local datasets (all cached under the **gitignored** `testdata
   Datlinger (34 MB) / sciPlex2 (139 MB) / Norman2019 (667 MB) — a varied-size spread; the genome-scale
   Replogle gwps (8.8 GB) is intentionally skipped.
 
-Run e.g. `Rscript conformance/sweep/sweep_scrnaseq.R` or `python3 conformance/sweep/sweep_mudata.py`
-(writes `/tmp/sweep_*.tsv`); aggregate into `REPORT.md`. A **FAIL/VALIDATE-ERR** = a profile bug to fix;
-a **LOADERR/SKIP** = the dataset itself needs an extra package or is too big (not our bug — recorded
-separately).
+Run them all at once with `bash conformance/sweep/retest_local.sh` (tolerant; covers whatever is cached;
+see [`RETEST.md`](RETEST.md)), or one at a time, e.g. `Rscript conformance/sweep/sweep_scrnaseq.R` or
+`python3 conformance/sweep/sweep_mudata.py` (each writes `/tmp/sweep_*.tsv`); aggregate into `REPORT.md`.
+A **FAIL/VALIDATE-ERR** = a profile bug to fix; a **LOADERR/SKIP** = the dataset itself needs an extra
+package or is too big (not our bug — recorded separately).

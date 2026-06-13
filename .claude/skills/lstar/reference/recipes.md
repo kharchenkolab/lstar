@@ -75,8 +75,24 @@ auto s  = lstar::csc_col_mean_var(f->data.as<float>(), ip.data(),  // float32 in
                                   f->shape[1], f->shape[0], 0, true);
 ```
 
+## Retest the profiles against the large LOCAL corpus (rare; keeps the synthetic CI tier honest)
+```bash
+bash conformance/sweep/retest_local.sh          # faithfulness guard + all cached-data sweeps + a TRIAGE
+RETEST_HEAVY=1 bash conformance/sweep/retest_local.sh   # + GB-scale SeuratData sweeps
+```
+Two tiers: CI runs synthetic-only fixtures (`synth.py`, `LSTAR_SYNTHETIC_CORPUS=1`); the **local** corpus
+(`testdata/`, gitignored) is what catches the long tail. The loop, run rarely: **(1)** the faithfulness
+guard (`test_synth_faithful.py`) checks real-structure ⊆ synthetic — a gap means **update `synth.py`**;
+**(2)** sweeps emit `/tmp/sweep_*.tsv` — a `FAIL`/`VALIDATE-ERR` is a **profile bug** (fix + add a fixture),
+`LOADERR`/`SKIP` is just absent data; **(3)** refresh the coverage docs (`sweep/REPORT.md`, `sweep/CATALOG.md`,
+`SUPPORT.md`) and re-grep for stale version/format enumerations. The orchestrator edits nothing — it names
+what to update. Full directive: **`conformance/sweep/RETEST.md`**.
+
 ## Gotchas
 - **Orientation:** L★ measures are cells×genes; Seurat/SCE are genes×cells (profiles transpose).
+- **Big R in conformance → temp file, not `Rscript -e`:** a large `-e` program overflows R's ~8 KB
+  command-line buffer and is silently ignored (`WARNING: '-e ...'`, runs nothing) → trips `pipefail` at a
+  trailing `grep`. Quoted heredoc → temp file, `$RLIB` via `commandArgs`, `</dev/null` (see `seurat_v2.sh`).
 - **dtype widths:** indptr/indices are int32 or int64 by size — use `as_i64` in C++; measures are
   often float32 — keep them float32, accumulate in float64.
 - **Don't widen to gain precision** — it breaks the memory-lean contract; accumulate in float64 instead.
