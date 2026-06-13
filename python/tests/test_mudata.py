@@ -71,6 +71,41 @@ def test_real_minipbcite():
           "round-trips" % (md.n_obs, md.mod["rna"].n_vars, md.mod["prot"].n_vars))
 
 
+def test_partial_overlap_mudata():
+    """A modality measured on only a SUBSET of cells (10x multiome barcode whitelists, CITE-seq dropout)
+    -> the measure is partial coverage over the *shared* cells axis (an index of covered positions), NOT
+    a separate `cells.<mod>` axis and NOT zero/NA-padded. Round-trips to the cell subset on write-back."""
+    try:
+        import anndata as ad
+        import mudata
+        import pandas as pd
+    except Exception:
+        print("  SKIP test_partial_overlap_mudata (mudata unavailable)"); return
+    import scipy.sparse as sp
+    rng = np.random.default_rng(0)
+    n = 100; cells = [f"c{i}" for i in range(n)]
+    arna = ad.AnnData(sp.csr_matrix(rng.poisson(1, (n, 20)).astype("float32")),
+                      obs=pd.DataFrame(index=cells), var=pd.DataFrame(index=[f"g{i}" for i in range(20)]))
+    sub = sorted(rng.choice(n, 60, replace=False)); subcells = [cells[i] for i in sub]
+    aprot = ad.AnnData(sp.csr_matrix(rng.poisson(2, (60, 8)).astype("float32")),
+                       obs=pd.DataFrame(index=subcells), var=pd.DataFrame(index=[f"p{i}" for i in range(8)]))
+    md = mudata.MuData({"rna": arna, "prot": aprot})
+
+    ds = lstar.read_mudata(md)
+    pm = [f for nm, f in ds.fields.items() if f.role == "measure" and f.span[1:] == ["proteins"]][0]
+    assert pm.coverage == "partial" and pm.index_axis == "cells" and len(np.asarray(pm.index)) == 60
+    assert len(ds.axis("cells")) == md.n_obs and "cells.prot" not in ds.axes   # shared axis, not a 2nd one
+    assert not lstar.validate(ds)
+
+    ds2 = lstar.read(_w(ds))                                    # through the store
+    pm2 = [f for nm, f in ds2.fields.items() if f.coverage == "partial"][0]
+    assert pm2.index is not None and not lstar.validate(ds2)
+    md2 = lstar.write_mudata(ds2)                               # back to MuData on the covered subset
+    assert md2.mod["rna"].n_obs == 100 and md2.mod["prot"].n_obs == 60
+    assert set(md2.mod["prot"].obs_names) == set(subcells)
+    print("MuData partial-overlap: prot on 60/100 cells -> partial coverage over the shared cells axis; round-trips")
+
+
 def _w(ds):
     p = _store(); lstar.write(ds, p); return p
 
@@ -78,3 +113,4 @@ def _w(ds):
 if __name__ == "__main__":
     test_citeseq_mudata_roundtrip()
     test_real_minipbcite()
+    test_partial_overlap_mudata()

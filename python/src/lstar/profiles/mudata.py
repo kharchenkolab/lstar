@@ -57,13 +57,16 @@ def read_mudata(md, kind="sample"):
 
         mcells = np.asarray(am.obs_names, dtype=str)
         aligned = len(mcells) == len(cells) and np.array_equal(mcells, cells)
-        cax = "cells"
-        if not aligned:                              # modality covers a cell subset -> its own cell axis
-            cax = _uniq(ds, "cells.%s" % m, "obs")
-            ds.add_axis(cax, mcells, origin=OBSERVED, role="observation")
+        cax = "cells"; midx = None; iax = None
+        if not aligned:
+            if all(c in cell_pos for c in mcells):   # a cell subset of the shared union -> partial coverage
+                midx = np.array([cell_pos[c] for c in mcells], dtype=np.int64); iax = "cells"
+            else:                                    # genuinely disjoint cells -> its own observation axis
+                cax = _uniq(ds, "cells.%s" % m, "obs")
+                ds.add_axis(cax, mcells, origin=OBSERVED, role="observation")
 
         def _add_measure(name, X, state):
-            ds.add_field(name, X, role="measure", span=[cax, fax], state=state,
+            ds.add_field(name, X, role="measure", span=[cax, fax], state=state, index=midx, index_axis=iax,
                          provenance={"mudata": "%s/%s" % (m, name.split(".")[-1])})
         _add_measure(_uniq(ds, m, "mod"), am.X, _guess_state_mod(am))
         for lk in list(am.layers.keys()):
@@ -80,7 +83,7 @@ def read_mudata(md, kind="sample"):
             cname = _uniq(ds, "%s_%s" % (m, k[2:] if str(k).startswith("X_") else k), "coord")
             _coord_axis(ds, cname, v.shape[1])
             ds.add_field(_uniq(ds, "%s_%s" % (m, k), fax), v, role="embedding", span=[cax, cname],
-                         provenance={"mudata": "%s/obsm/%s" % (m, k)})
+                         index=midx, index_axis=iax, provenance={"mudata": "%s/obsm/%s" % (m, k)})
         uns = {k: v for k, v in am.uns.items() if not str(k).startswith("lstar/")}
         if uns:
             ds.aux["mudata.%s.uns" % m] = uns
@@ -135,6 +138,9 @@ def write_mudata(ds):
             continue
         prov_mod = (meas[0][1].provenance or {}).get("mudata", "/").split("/")[0]
         primary = next((f for n, f in meas if f.state == "raw"), meas[0][1])
+        # partial coverage: this modality was measured on only a subset of the shared cells (cells[index])
+        midx = getattr(primary, "index", None)
+        mod_cells = cells[np.asarray(midx)] if midx is not None else cells
         layers = {}
         for n, f in meas:
             if f is primary:
@@ -147,7 +153,7 @@ def write_mudata(ds):
                 key = n.split(".", 1)[1] if n.startswith(fax + ".") or "." in n else n
                 var[key] = _to_pandas_col(f)
         am = ad.AnnData(X=primary.values, var=pd.DataFrame(var, index=feats) if var else pd.DataFrame(index=feats),
-                        obs=pd.DataFrame(index=cells), layers=layers or None)
+                        obs=pd.DataFrame(index=mod_cells), layers=layers or None)
         mods[prov_mod or mname] = am
 
     md = mudata.MuData(mods)

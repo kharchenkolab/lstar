@@ -29,20 +29,37 @@ def validate(ds, strict=False):
             err("field '%s' span references unknown axes %s" % (name, missing))
             continue
 
+        # Partial coverage: the field covers only a subset of `index_axis`, keyed by `index` (int
+        # positions into that axis). The effective length along that axis is len(index), so shape checks
+        # compare against `flen` (axis lengths with the index_axis overridden), and the index itself must
+        # be in range. A modality measured on a cell subset (multiome / CITE-seq dropout) uses this.
+        flen = axlen
+        if getattr(f, "index", None) is not None:
+            idx = np.asarray(f.index); iax = f.index_axis
+            if iax not in span:
+                err("field '%s' partial index_axis '%s' not in span %s" % (name, iax, span))
+                continue
+            if idx.size and (idx.min() < 0 or idx.max() >= axlen[iax]):
+                err("field '%s' partial index out of range [0,%d) for axis '%s'"
+                    % (name, axlen[iax], iax))
+            if idx.size and np.unique(idx).size != idx.size:
+                warn("field '%s' partial index has duplicate positions" % name)
+            flen = dict(axlen); flen[iax] = int(idx.size)
+
         enc = f.encoding
         if enc in ("csr", "csc", "coo"):
             if len(span) != 2:
                 err("field '%s' (%s) must span 2 axes, got %s" % (name, enc, span))
             elif sp.issparse(f.values):
-                shp, exp = tuple(f.values.shape), (axlen[span[0]], axlen[span[1]])
+                shp, exp = tuple(f.values.shape), (flen[span[0]], flen[span[1]])
                 if shp != exp:
                     err("field '%s' sparse shape %s != axis lengths %s" % (name, shp, exp))
         elif enc == "categorical":
             cat = f.values
             n = len(cat)
-            if len(span) == 1 and n != axlen[span[0]]:
+            if len(span) == 1 and n != flen[span[0]]:
                 err("field '%s' categorical length %d != axis '%s' length %d"
-                    % (name, n, span[0], axlen[span[0]]))
+                    % (name, n, span[0], flen[span[0]]))
             k = len(getattr(cat, "categories", []))
             codes = np.asarray(getattr(cat, "codes", []))
             if codes.size and (codes.min() < -1 or codes.max() >= k):
@@ -56,18 +73,18 @@ def validate(ds, strict=False):
                          "did not induce it -- a name clash; rename one to give it a factor axis" % (name, name))
         elif enc == "utf8" or (f.role == "label" and len(span) == 1):
             arr = np.asarray(f.values)
-            if len(span) == 1 and (arr.ndim != 1 or arr.shape[0] != axlen[span[0]]):
+            if len(span) == 1 and (arr.ndim != 1 or arr.shape[0] != flen[span[0]]):
                 err("field '%s' label shape %s != axis '%s' length %d"
-                    % (name, arr.shape, span[0], axlen[span[0]]))
+                    % (name, arr.shape, span[0], flen[span[0]]))
         else:  # dense
             arr = np.asarray(f.values)
             if arr.ndim != len(span):
                 err("field '%s' dense ndim %d != span arity %d" % (name, arr.ndim, len(span)))
             else:
                 for i, ax in enumerate(span):
-                    if arr.shape[i] != axlen[ax]:
+                    if arr.shape[i] != flen[ax]:
                         err("field '%s' dim %d (%d) != axis '%s' length %d"
-                            % (name, i, arr.shape[i], ax, axlen[ax]))
+                            % (name, i, arr.shape[i], ax, flen[ax]))
 
         if f.role == "relation" and len(span) != 2:
             err("field '%s' relation must span 2 axes, got %s" % (name, span))
@@ -76,9 +93,9 @@ def validate(ds, strict=False):
             mk = np.asarray(f.mask)
             if mk.dtype.kind not in ("u", "i", "b"):
                 err("field '%s' mask dtype %s is not integer/bool" % (name, mk.dtype))
-            if len(span) == 1 and mk.shape[0] != axlen[span[0]]:
+            if len(span) == 1 and mk.shape[0] != flen[span[0]]:
                 err("field '%s' mask length %d != axis '%s' length %d"
-                    % (name, mk.shape[0], span[0], axlen[span[0]]))
+                    % (name, mk.shape[0], span[0], flen[span[0]]))
 
         # open vocabularies -> warnings only
         if f.role and f.role not in CORE_ROLES and not f.role.startswith("x-"):

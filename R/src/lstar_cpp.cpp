@@ -231,6 +231,11 @@ list lstar_cpp_read(std::string path) {
                            "dense"_nm = nd_doubles(f.dense), "shape"_nm = to_ints(f.dense.shape)});
     }
     if (f.has_mask) fl.push_back("mask"_nm = nd_integers(f.mask));   // 1 == missing (nullable)
+    if (f.has_index) {                                              // partial coverage over index_axis
+      fl.push_back("index"_nm = nd_integers(f.index));
+      fl.push_back("index_axis"_nm = f.index_axis);
+      fl.push_back("coverage"_nm = std::string("partial"));
+    }
     fields[k] = fl;
     fnames[k] = f.name;
   }
@@ -345,6 +350,25 @@ void lstar_cpp_write(list ds, std::string path, int chunk_elems = 0,
         for (R_xlen_t i = 0; i < mk.size(); ++i) p[i] = (mk[i] != NA_INTEGER && mk[i] != 0) ? 1 : 0;
         fl.has_mask = true;
         break;
+      }
+    }
+    {                                                     // partial coverage: int index into index_axis
+      strings ns = f.names();
+      bool has_ix = false, has_iax = false;
+      for (R_xlen_t j = 0; j < ns.size(); ++j) {
+        std::string nm(ns[j]);
+        if (nm == "index") has_ix = true;
+        else if (nm == "index_axis") has_iax = true;
+      }
+      if (has_ix) {
+        integers ix = f["index"];
+        fl.index.dtype = "<i8"; fl.index.shape = {(int64_t)ix.size()};
+        fl.index.bytes.resize((size_t)ix.size() * 8);
+        auto p = fl.index.as<int64_t>();
+        for (R_xlen_t i = 0; i < ix.size(); ++i) p[i] = (int64_t)ix[i];
+        fl.has_index = true;
+        fl.coverage = "partial";
+        if (has_iax) fl.index_axis = as_cpp<std::string>(f["index_axis"]);
       }
     }
     out.fields.push_back(std::move(fl));

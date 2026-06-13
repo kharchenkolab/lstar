@@ -61,6 +61,10 @@ def write(ds, path, compressor=None, chunk_elems=None, stream=False):
         if fl.mask is not None:                        # nullable Int/bool/string: an explicit validity mask
             _ds(g, "mask", np.asarray(fl.mask, dtype=np.uint8), compressor, chunk_elems)
             meta["nullable"] = True
+        if getattr(fl, "index", None) is not None:     # partial coverage: int positions into index_axis
+            _ds(g, "index", np.asarray(fl.index, dtype=np.int64), compressor, chunk_elems)
+            meta["coverage"] = "partial"
+            meta["index_axis"] = fl.index_axis
         g.attrs[LSTAR] = meta
 
     aux = getattr(ds, "aux", None) or {}
@@ -127,12 +131,13 @@ def read(path, lazy=False):
         m = dict(g.attrs[LSTAR])
         vals = _lazy_values(g, m) if lazy else _read_values(g, m)
         mask = np.asarray(g["mask"], dtype=np.uint8) if m.get("nullable") and "mask" in g else None
+        index = np.asarray(g["index"], dtype=np.int64) if "index" in g else None
         ds.fields[name] = Field(
             name, vals, role=m.get("role"), span=m.get("span"), state=m.get("state"),
             encoding=m.get("encoding"), coverage=m.get("coverage", "full"),
             directed=m.get("directed"), weighted=m.get("weighted"),
             subtype=m.get("subtype"), uncertainty=m.get("uncertainty"),
-            mask=mask, provenance=m.get("provenance", {}))
+            mask=mask, index=index, index_axis=m.get("index_axis"), provenance=m.get("provenance", {}))
 
     for ns in rmeta.get("aux", []):                    # verbatim passthrough -> reconstruct the object
         from .aux import from_store as _aux_from_store

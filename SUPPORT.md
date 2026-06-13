@@ -52,6 +52,7 @@ the cross-language conformance suite ([`conformance/`](conformance/)).
 | UTF-8 + categorical (codes/levels/ordered/`-1` missing) | ✓ | ✓ | ✓ | ✓ |
 | Nullable validity mask (Int/bool/string) | ✓ | ✓ | ✓ | ✓ |
 | Factor-axis **induction** (`induced_by` round-trip) | ✓ | ✓ | ✓ | ✓ |
+| **Partial coverage** (a field on a subset of a span axis, via an `index`) | ✓ | ✓ | ✓ | — |
 | chunked + gzip | ✓ | ✓ | ✓ | ✓ (read) |
 | Lazy / partial / over-network reads | ✓ | ✓ | ✓ | ✓ |
 | Bounded-memory **streaming write** | ✓ | ✓ | ✓ | — |
@@ -104,8 +105,8 @@ CITE-seq (downloaded); CI: synthetic RNA+ADT through the real mudata/scanpy pipe
 | global `obs` categoricals → factor axes (`<mod>:` prefix) | ✓ | ✓ | ✓ | celltype/leiden |
 | global `obsm` (WNN / MOFA joint embedding) | ✓ | ✓ | ✓ | |
 | `obsmap`/`varmap` aligned cells | ✓ | ✓ | ✓ | |
-| **partial-overlap** modalities (`obsmap` 0 = absent) | ◐ | — | — | per-mod `cells.<mod>` axis; no real partial example yet |
-| RNA+ATAC multiome `.h5mu` | ◐ | — | — | path = RNA+ADT; no real `.h5mu` multiome sourced (see Seurat for real ATAC) |
+| **partial-overlap** modalities (a modality on a cell subset) | ✓ | — | ✓ | **typed partial coverage**: an `index` into the shared `cells` axis (not a `cells.<mod>` axis, not padded); round-trips Py↔C++↔R + back to MuData on the subset |
+| RNA+ATAC multiome `.h5mu` | ◐ | — | — | path = RNA+ADT + partial coverage; no real `.h5mu` multiome sourced (real ATAC is covered via Seurat pbmcMultiome) |
 
 ## Seurat — R
 
@@ -173,9 +174,9 @@ Prioritized, with **where** the gap is (profile / real corpus / synthetic fixtur
 1. **Spatial tier** (Visium / Xenium / CosMx / Slide-seq) — *profile gap*, deliberately deferred:
    images, coordinate frames, molecule tables. Affects AnnData `spatial`, Seurat images, the SeuratData
    `stx*`/`ssHippo` datasets.
-2. **MuData partial-overlap + a real `.h5mu` multiome** — *corpus gap*: the code path exists (per-mod
-   `cells.<mod>` axis) but no real partial-overlap / multiome `.h5mu` is in the corpus; ties to the
-   lstar partial-coverage `index` arrays being spec'd-but-not-yet-implemented.
+2. **A real `.h5mu` multiome** — *corpus gap*: partial-overlap is now implemented (typed partial coverage
+   via `index`, tested on a constructed fixture); what's missing is a *real* partial-overlap / multiome
+   `.h5mu` in the local corpus (real ATAC is already covered via the Seurat `pbmcMultiome` sweep).
 3. **Seurat `@commands`** provenance (analysis history) — *profile gap*: not typed (the `Neighbor` nn
    graph is now typed as a relation).
 4. **Faithful partial coverage** — *profile refinement*: subset PCA **loadings are now typed** (over a

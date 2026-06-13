@@ -126,6 +126,10 @@ struct Field {
     bool ordered = false, has_ordered = false;
     NdArray mask;                     // optional uint8 validity mask, 1 == missing (nullable Int/bool/string)
     bool has_mask = false;
+    std::string coverage = "full";    // "full" or "partial" (-> index keys the covered subset of index_axis)
+    NdArray index;                    // partial coverage: int64 positions into index_axis (one per value row)
+    bool has_index = false;
+    std::string index_axis;           // which span axis `index` keys into
 };
 
 // Lossless passthrough (AnnData `uns`, Seurat `@misc`). The core round-trips it *verbatim* and never
@@ -548,6 +552,8 @@ inline Dataset read(const fs::path& root) {
         f.encoding = opt_str(m, "encoding");
         f.state = opt_str(m, "state");
         f.subtype = opt_str(m, "subtype");
+        f.coverage = m.contains("coverage") && !m["coverage"].is_null() ? m["coverage"].get<std::string>() : "full";
+        f.index_axis = opt_str(m, "index_axis");
         if (m.contains("span") && !m["span"].is_null())
             f.span = m["span"].get<std::vector<std::string>>();
         if (m.contains("provenance") && !m["provenance"].is_null()) f.provenance = m["provenance"];
@@ -578,6 +584,10 @@ inline Dataset read(const fs::path& root) {
             && fs::exists(g / "mask")) {                               // optional validity mask
             f.mask = read_array(g / "mask");
             f.has_mask = true;
+        }
+        if (fs::exists(g / "index")) {                                 // partial coverage index
+            f.index = read_array(g / "index");
+            f.has_index = true;
         }
         ds.fields.push_back(std::move(f));
     }
@@ -649,7 +659,8 @@ inline void write(const Dataset& ds, const fs::path& root,
         fl["span"] = f.span;
         fl["state"] = f.state.empty() ? json(nullptr) : json(f.state);
         fl["subtype"] = f.subtype.empty() ? json(nullptr) : json(f.subtype);
-        fl["coverage"] = "full";
+        fl["coverage"] = f.has_index ? json("partial") : json(f.coverage.empty() ? "full" : f.coverage);
+        fl["index_axis"] = f.has_index && !f.index_axis.empty() ? json(f.index_axis) : json(nullptr);
         fl["uncertainty"] = nullptr;
         fl["provenance"] = f.provenance;
         fl["directed"] = f.has_directed ? json(f.directed) : json(nullptr);
@@ -675,6 +686,7 @@ inline void write(const Dataset& ds, const fs::path& root,
             write_array(g / "values", f.dense, chunk_elems, compressor);
         }
         if (f.has_mask) write_array(g / "mask", f.mask, chunk_elems, compressor);
+        if (f.has_index) write_array(g / "index", f.index, chunk_elems, compressor);
     }
 
     if (!ds.aux.empty()) {                                            // verbatim passthrough subtree

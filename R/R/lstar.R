@@ -122,6 +122,10 @@ lstar_write <- function(ds, path, chunk_elems = NULL, compression = c("none", "g
         out$dense <- as.numeric(t(m)); out$shape <- as.integer(dim(m))
       }
     }
+    if (!is.null(f$index)) {                        # partial coverage: int positions into index_axis
+      out$index <- as.integer(f$index)
+      out$index_axis <- f$index_axis %||% as.character(f$span)[1]
+    }
     out
   })
   names(fields) <- names(ds$fields)

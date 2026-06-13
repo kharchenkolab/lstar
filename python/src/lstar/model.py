@@ -84,12 +84,14 @@ class Field:
     span: Optional[List[str]] = None
     state: Optional[str] = None
     encoding: Optional[str] = None       # dense | csr | csc | coo
-    coverage: str = "full"
+    coverage: str = "full"               # "full", or "partial" -> `index` keys the covered subset
     directed: Optional[bool] = None
     weighted: Optional[bool] = None
     subtype: Optional[str] = None
     uncertainty: Optional[str] = None
     mask: Any = None                     # optional uint8 validity mask, 1 == missing (nullable Int/bool/string)
+    index: Any = None                    # partial coverage: int positions into `index_axis` (one per value row)
+    index_axis: Optional[str] = None     # which span axis `index` keys into (the partially-covered axis)
     provenance: dict = _dcfield(default_factory=dict)
 
 
@@ -118,7 +120,7 @@ class Dataset:
     # ---- fields ----
     def add_field(self, name, values, role=None, span=None, state=None, encoding=None,
                   coverage="full", directed=None, weighted=None, subtype=None,
-                  uncertainty=None, mask=None, provenance=None):
+                  uncertainty=None, mask=None, index=None, index_axis=None, provenance=None):
         if _is_categorical(values):
             values = as_categorical(values)               # normalize pandas.Categorical -> L* Categorical
         span = self._infer_span(values, span)
@@ -126,10 +128,16 @@ class Dataset:
         encoding = encoding or self._infer_encoding(values)
         if mask is not None:
             mask = np.asarray(mask).astype(np.uint8, copy=False)   # 1 == missing
+        if index is not None:                              # partial coverage over `index_axis`
+            index = np.asarray(index).astype(np.int64, copy=False)
+            coverage = "partial"
+            if index_axis is None and span:
+                index_axis = span[0]                       # default: the field's first (observation) axis
         self.fields[name] = Field(
             name, values, role=role, span=span, state=state, encoding=encoding,
             coverage=coverage, directed=directed, weighted=weighted, subtype=subtype,
-            uncertainty=uncertainty, mask=mask, provenance=provenance or {})
+            uncertainty=uncertainty, mask=mask, index=index, index_axis=index_axis,
+            provenance=provenance or {})
         if _is_categorical(values):            # a categorical label induces its factor axis (data-driven)
             self._auto_induce(name)
         return self.fields[name]
