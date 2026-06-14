@@ -66,6 +66,30 @@ Format detection: `.h5ad`→AnnData, `.h5mu`→MuData, `.rds`→Seurat/SCE (snif
 store. Override with `--from`/`--to`. Seurat/SCE legs need R with the `lstar` package on the path (set
 `LSTAR_RLIB`/`LSTAR_RSCRIPT` if it isn't on the default library path).
 
+### What you need installed (and the package-free fallback)
+
+A conversion needs the *format* library for each endpoint it touches — **not** the analysis packages
+(scanpy / full Seurat / scran are only used by the optional `--check`). And where lstar has its own codec,
+the format package itself is optional too: `--backend auto` (default) uses the native package when it's
+importable and falls back to lstar's **package-free** codec otherwise.
+
+| convert | with the native package | package-free fallback (`--backend direct`) |
+|---|---|---|
+| `.h5ad` ↔ store | `anndata` | **`h5py`** (lstar reads/writes the HDF5 encoding directly) |
+| Seurat `.rds` ↔ store | R + `SeuratObject` | **base R + the `lstar` R package** (reads via S4 slot-walk; writes a pinned-schema object) |
+| `.h5mu` ↔ store | `mudata` | — (native only for now) |
+| SCE `.rds` ↔ store | R + `SingleCellExperiment` | — (native only for now) |
+| store ↔ store | — | — |
+
+So `pip install lstar h5py` converts `.h5ad` with no anndata, and a Seurat `.rds` reads/writes with just
+base R + lstar (no SeuratObject). Force a path with `--backend native|direct`. When the package-free path
+hits something only the native package can handle — an unrecognized on-disk version, or an external-pointer
+/ `BPCells`-backed matrix — it stops with a clear message naming the package to install (lstar then uses it
+automatically). The deterministic role→slot contract both paths honor is [`mapping.md`](mapping.md).
+
+> The package-free codecs are kept honest by CI: every Tier-A path is cross-validated against the native
+> package (forced `--backend direct`, then read back and value-compared) in `conformance/convert_cli.sh`.
+
 ## The functions
 
 You only need a handful. The reader/writer for each format:

@@ -216,4 +216,6 @@ Prioritized, with **where** the gap is (profile / real corpus / synthetic fixtur
 - [`docs/mapping.md`](docs/mapping.md) — the deterministic role→slot conversion contract (what lands
   where in each target, and why), and the **native-acceptance** check (`lstar convert --check`) that opens
   the produced object in its own library and runs a canonical-ops smoke — verifying native tools accept
-  it, not just that bytes round-tripped (`conformance/convert_cli.sh`).
+  it, not just that bytes round-tripped (`conformance/convert_cli.sh`). The same contract governs the
+  **package-free** backends (`--backend direct`): `.h5ad` ↔ store via `h5py` (no anndata) and Seurat
+  `.rds` ↔ store via base R (no SeuratObject) — see the dependency table in `docs/conversions.md`.

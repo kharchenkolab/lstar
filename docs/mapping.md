@@ -86,3 +86,13 @@ check degrades to *open + structural invariants* and reports `ops skipped`, neve
 > Scope: the smoke runs a *representative* set of canonical ops, not every downstream tool. The deeper
 > guard against *silent* mis-placement (a tool that runs but on the wrong matrix) is Layer 1 + the `state`
 > typing — which is the point of routing through L★ rather than converting format-to-format directly.
+
+## Both backends honor this contract
+
+The same role→slot mapping governs whether a conversion runs through the native package or lstar's
+**package-free** codec (`--backend direct`): the h5py h5ad reader/writer and the base-R Seurat
+reader/writer produce byte-for-value the same L★ ↔ native mapping as `anndata`/`SeuratObject` would. The
+Seurat package-free *writer* materializes the object from a **pinned SeuratObject schema** (a recent
+`Assay5`/`DimReduc`/`Seurat` `setClass`, lifted verbatim from source) with the S4 class identity forged to
+`SeuratObject`, so a real SeuratObject session reconstructs and accepts it — verified by the
+native-acceptance check on every CI run, which is exactly what keeps the pinned schema from drifting.
