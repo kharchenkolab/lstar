@@ -69,6 +69,39 @@ lstar_read <- function(path) {
   else "dense"
 }
 
+# Validate a hand-built dataset's shape before it reaches the C++ writer -- a malformed `ds` (e.g. axes
+# given as `list(values=)` instead of `list(labels=)`, so an axis has no labels) otherwise reaches the
+# core with a zero-length axis vs a real matrix and triggers a floating-point exception / core dump.
+# Catch the common shape errors here and `stop()` with a clear message instead.
+.check_writable <- function(ds) {
+  if (!is.list(ds$axes) || !is.list(ds$fields))
+    stop("lstar_write: dataset must have $axes and $fields lists", call. = FALSE)
+  for (nm in names(ds$axes)) {
+    a <- ds$axes[[nm]]
+    if (is.null(a$labels))
+      stop(sprintf("lstar_write: axis '%s' has no 'labels' (found: %s) -- axes need list(labels=, origin=, role=)",
+                   nm, paste(names(a), collapse = ", ")), call. = FALSE)
+  }
+  axlen <- vapply(ds$axes, function(a) length(as.character(a$labels)), integer(1))
+  for (nm in names(ds$fields)) {
+    f <- ds$fields[[nm]]
+    if (is.null(f$values))
+      stop(sprintf("lstar_write: field '%s' has no 'values'", nm), call. = FALSE)
+    sp <- as.character(f$span)
+    miss <- setdiff(sp, names(ds$axes))
+    if (length(miss))
+      stop(sprintf("lstar_write: field '%s' spans unknown axis/axes: %s", nm, paste(miss, collapse = ", ")), call. = FALSE)
+    d <- dim(f$values)                                   # dim check for matrix-like values (not utf8/partial)
+    if (!is.null(d) && length(d) == length(sp) && is.null(f$index)) {
+      want <- axlen[sp]
+      if (!all(d == want))
+        stop(sprintf("lstar_write: field '%s' dims (%s) != its span axis lengths (%s = %s)",
+                     nm, paste(d, collapse = "x"), paste(sp, collapse = ","), paste(want, collapse = "x")), call. = FALSE)
+    }
+  }
+  invisible(TRUE)
+}
+
 #' Write an R dataset to an L* Zarr store.
 #'
 #' @param ds an `lstar_dataset` (as returned by [lstar_read()] or a profile reader)
@@ -86,6 +119,7 @@ lstar_read <- function(path) {
 lstar_write <- function(ds, path, chunk_elems = NULL, compression = c("none", "gzip", "zlib"),
                         level = 5L) {
   compression <- match.arg(compression)
+  .check_writable(ds)                    # fail loudly on a malformed dataset, not with a C++ crash
   axes <- lapply(names(ds$axes), function(nm) {
     a <- ds$axes[[nm]]
     list(labels = as.character(a$labels), origin = a$origin %||% "observed",
@@ -130,8 +164,12 @@ lstar_write <- function(ds, path, chunk_elems = NULL, compression = c("none", "g
       out$index <- as.integer(f$index)
       out$index_axis <- f$index_axis %||% as.character(f$span)[1]
     }
-    if (!is.null(f$provenance) && is.character(f$provenance) && nzchar(f$provenance[1]))
-      out$provenance <- f$provenance[1]             # opaque JSON string (e.g. recipe params); round-tripped
+    if (!is.null(f$provenance)) {                   # recipe/facet metadata -> JSON object on disk:
+      if (is.list(f$provenance) && length(f$provenance))                 # a native named list (pagoda2's path)
+        out$provenance <- f$provenance
+      else if (is.character(f$provenance) && nzchar(f$provenance[1]))    # or an opaque JSON string (back-compat)
+        out$provenance <- f$provenance[1]
+    }
     out
   })
   names(fields) <- names(ds$fields)

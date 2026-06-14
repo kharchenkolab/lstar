@@ -174,8 +174,9 @@ A few **named patterns** are bundles of the above, not new constructs:
 Every field and axis records the inputs it was built from, so a dataset *is* a provenance graph:
 `umap` ← `knn` ← `pca` ← `data` ← `counts`. That makes results reproducible, lets a guard refuse an
 operation on a measure of the wrong `state` (clustering raw counts), and gives an automated agent an
-auditable lineage. Provenance round-trips verbatim across Python, C++, and R (carried as an opaque JSON
-record), so method parameters survive a conversion. Two conventions ride on it: a **normalization
+auditable lineage. Provenance round-trips as the native mapping type of each language — a `dict` in
+Python, a **named list** in R, a JSON object in C++ — so method parameters (and a joint product's
+`input_axes`) survive a conversion in either direction. Two conventions ride on it: a **normalization
 recipe** (`{model, depthScale, log_base, winsor_caps}`) stored on the raw measure lets a consumer
 recompute a normalized view on demand instead of persisting a redundant dense matrix — keep the *small*
 params here and any *large* precomputed per-axis vectors (a CLR divisor, an IDF) as their own arity-1

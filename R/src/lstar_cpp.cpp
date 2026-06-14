@@ -46,6 +46,54 @@ writable::strings to_strings(const std::vector<std::string>& v) {
   return out;
 }
 
+// `provenance` (a field's recipe/facet metadata: a dict in Python) round-trips at the R boundary as a
+// native **named list** <-> JSON object, so pagoda2's `list(facet=,model=,defaultReduction=,...)` and a
+// joint product's `input_axes` survive R write/read symmetrically with the Python path (rather than being
+// dropped or surfaced as an opaque string). Numbers come back as doubles; homogeneous arrays as vectors.
+sexp json_to_r(const lstar::json& j) {
+  if (j.is_null()) return sexp(R_NilValue);
+  if (j.is_boolean()) return as_sexp(j.get<bool>());
+  if (j.is_number()) return as_sexp(j.get<double>());           // ints and floats both -> R double
+  if (j.is_string()) return as_sexp(j.get<std::string>());
+  if (j.is_array()) {
+    bool all_num = !j.empty(), all_str = !j.empty();
+    for (const auto& e : j) { if (!e.is_number()) all_num = false; if (!e.is_string()) all_str = false; }
+    if (all_num) { writable::doubles v((R_xlen_t)j.size()); R_xlen_t i = 0; for (const auto& e : j) v[i++] = e.get<double>(); return v; }
+    if (all_str) { writable::strings v((R_xlen_t)j.size()); R_xlen_t i = 0; for (const auto& e : j) v[i++] = e.get<std::string>(); return v; }
+    writable::list v((R_xlen_t)j.size()); R_xlen_t i = 0; for (const auto& e : j) v[i++] = json_to_r(e); return v;
+  }
+  writable::list out((R_xlen_t)j.size());                        // object -> named list
+  writable::strings nm((R_xlen_t)j.size());
+  R_xlen_t i = 0;
+  for (auto it = j.begin(); it != j.end(); ++it, ++i) { out[i] = json_to_r(it.value()); nm[i] = it.key(); }
+  if (j.size() > 0) out.names() = nm;
+  return out;
+}
+
+lstar::json r_to_json(SEXP x) {
+  if (x == R_NilValue) return lstar::json(nullptr);
+  switch (TYPEOF(x)) {
+    case VECSXP: {                                               // named list -> object; unnamed -> array
+      cpp11::list l(x);
+      SEXP nms = Rf_getAttrib(x, R_NamesSymbol);
+      if (nms != R_NilValue) {
+        cpp11::strings nm(nms);
+        lstar::json o = lstar::json::object();
+        for (R_xlen_t i = 0; i < l.size(); ++i) o[std::string(nm[i])] = r_to_json(l[i]);
+        return o;
+      }
+      lstar::json a = lstar::json::array();
+      for (R_xlen_t i = 0; i < l.size(); ++i) a.push_back(r_to_json(l[i]));
+      return a;
+    }
+    case STRSXP:  { cpp11::strings s(x);  if (s.size() == 1) return std::string(s[0]); lstar::json a = lstar::json::array(); for (R_xlen_t i = 0; i < s.size(); ++i) a.push_back(std::string(s[i])); return a; }
+    case REALSXP: { cpp11::doubles d(x);  if (d.size() == 1) return (double)d[0];      lstar::json a = lstar::json::array(); for (R_xlen_t i = 0; i < d.size(); ++i) a.push_back((double)d[i]);  return a; }
+    case INTSXP:  { cpp11::integers v(x); if (v.size() == 1) return (int)v[0];          lstar::json a = lstar::json::array(); for (R_xlen_t i = 0; i < v.size(); ++i) a.push_back((int)v[i]);     return a; }
+    case LGLSXP:  { cpp11::logicals b(x); if (b.size() == 1) return (bool)(b[0] == TRUE); lstar::json a = lstar::json::array(); for (R_xlen_t i = 0; i < b.size(); ++i) a.push_back((bool)(b[i] == TRUE)); return a; }
+    default: return lstar::json(nullptr);
+  }
+}
+
 // Aux (passthrough) dense leaves round-trip as raw bytes + dtype + shape, so *any* dtype is preserved
 // exactly across the R boundary (no f8 widening), the same way the store holds them.
 writable::raws nd_to_raws(const lstar::NdArray& a) {
@@ -236,8 +284,8 @@ list lstar_cpp_read(std::string path) {
       fl.push_back("index_axis"_nm = f.index_axis);
       fl.push_back("coverage"_nm = std::string("partial"));
     }
-    if (f.provenance.is_object() && !f.provenance.empty())          // provenance as an opaque JSON string
-      fl.push_back("provenance"_nm = f.provenance.dump());          // (preserves arbitrary nesting verbatim)
+    if (f.provenance.is_object() && !f.provenance.empty())          // provenance -> native R named list
+      fl.push_back("provenance"_nm = json_to_r(f.provenance));      // (matches Python's dict; round-trips)
     fields[k] = fl;
     fnames[k] = f.name;
   }
@@ -316,12 +364,18 @@ void lstar_cpp_write(list ds, std::string path, int chunk_elems = 0,
     fl.encoding = as_cpp<std::string>(f["encoding"]);
     fl.state = as_cpp<std::string>(f["state"]);
     fl.subtype = as_cpp<std::string>(f["subtype"]);
-    {                                                     // provenance: an opaque JSON string -> json
-      strings ns = f.names();
+    {                                  // provenance: a native R named list -> json object (pagoda2's path),
+      strings ns = f.names();          // or a JSON string -> parsed (back-compat with string callers)
       for (R_xlen_t j = 0; j < ns.size(); ++j) if (std::string(ns[j]) == "provenance") {
-        std::string pj = as_cpp<std::string>(f["provenance"]);
-        if (!pj.empty()) {
-          auto p = decltype(fl.provenance)::parse(pj, nullptr, false);  // lenient: discarded on bad input
+        SEXP prov = f["provenance"];
+        if (TYPEOF(prov) == STRSXP && Rf_xlength(prov) >= 1) {
+          std::string pj = as_cpp<std::string>(prov);
+          if (!pj.empty()) {
+            auto p = decltype(fl.provenance)::parse(pj, nullptr, false);  // lenient: discarded on bad input
+            if (p.is_object()) fl.provenance = p;
+          }
+        } else if (TYPEOF(prov) == VECSXP) {
+          auto p = r_to_json(prov);
           if (p.is_object()) fl.provenance = p;
         }
         break;
