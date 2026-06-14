@@ -245,6 +245,30 @@ _DIRECT_R_READ["seurat"] = _direct_seurat_read       # .rds Seurat read with bas
 _DIRECT_R_READ["rds"] = _direct_seurat_read
 
 
+# Package-free (direct) Seurat writer: base R builds a native-valid Seurat object from the L* store using a
+# pinned SeuratObject schema (`.build_seurat_direct`) with the S4 class identity forged to "SeuratObject",
+# then saveRDS. No SeuratObject needed; a real SeuratObject session reconstructs + accepts it.
+_R_DRIVER_DIRECT_WRITE = r'''
+args <- commandArgs(trailingOnly = TRUE); store <- args[2]; path <- args[3]
+rlib <- Sys.getenv("LSTAR_RLIB", ""); if (nzchar(rlib)) .libPaths(c(rlib, .libPaths()))
+suppressMessages(library(lstar))
+ds  <- lstar_read(store)
+obj <- lstar:::.build_seurat_direct(ds)
+saveRDS(obj, path)
+cat("LSTAR_R_OK\n")
+'''
+
+
+def _direct_seurat_write(bridge: str, dst: str) -> None:
+    proc = run_r_driver(_R_DRIVER_DIRECT_WRITE, "seurat", bridge, dst)
+    if proc.returncode != 0 or "LSTAR_R_OK" not in proc.stdout:
+        tail = "\n".join((proc.stderr or proc.stdout).strip().splitlines()[-8:])
+        raise ConvertError(f"package-free Seurat write failed (--backend direct):\n{tail}")
+
+
+_DIRECT_R_WRITE["seurat"] = _direct_seurat_write     # .rds Seurat write with base R only (pinned schema)
+
+
 # ── Python-side load / emit (native or direct, per dispatch) ──────────────────────────────────────────
 
 def _load_py(src: str, fmt: str, backend: str = "auto"):

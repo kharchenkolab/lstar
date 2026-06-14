@@ -465,6 +465,116 @@ write_seurat <- function(ds) {
   ds
 }
 
+# ---- Seurat PACKAGE-FREE write (base R, no SeuratObject) ----------------------------------------------
+# The `--backend direct` write fallback: build a native-valid Seurat object from an L* dataset using a
+# PINNED v4 SeuratObject schema (slot names/types lifted verbatim from SeuratObject::getSlots), `new()`d in
+# base R, with the S4 class identity forged to "SeuratObject" so a real SeuratObject session reconstructs
+# it as a genuine Seurat object and its tools accept it (verified by the native-acceptance check). Only the
+# WRITE direction is hard packagelessly (reading just needs attr()); this is the pinned-version answer.
+.forge_s4 <- function(obj) {                            # claim SeuratObject ownership of the S4 class
+  cl <- attr(obj, "class"); attr(cl, "package") <- "SeuratObject"; attr(obj, "class") <- cl; obj
+}
+
+.seurat_pinned_classes <- function() {
+  # Guarded: only define when the class isn't already present (so we never clash with a loaded
+  # SeuratObject). Direct-write only runs when SeuratObject is absent, so these are normally fresh.
+  if (!methods::isClass("JackStrawData"))
+    methods::setClass("JackStrawData", where = globalenv(), representation(empirical.p.values = "matrix",
+      fake.reduction.scores = "matrix", empirical.p.values.full = "matrix", overall.p.values = "matrix"))
+  if (!methods::isClass("DimReduc"))
+    methods::setClass("DimReduc", where = globalenv(), representation(cell.embeddings = "matrix", feature.loadings = "matrix",
+      feature.loadings.projected = "matrix", assay.used = "character", global = "logical",
+      stdev = "numeric", jackstraw = "JackStrawData", misc = "list", key = "character"))
+  if (!methods::isClass("Assay"))
+    methods::setClass("Assay", where = globalenv(), representation(counts = "ANY", data = "ANY", scale.data = "matrix",
+      assay.orig = "ANY", var.features = "vector", meta.features = "data.frame", misc = "ANY",
+      key = "character"))
+  if (!methods::isClass("LogMap"))                       # v5: a logical (entities x layers) membership map
+    methods::setClass("LogMap", where = globalenv(), contains = "matrix")
+  if (!methods::isClass("Assay5"))
+    methods::setClass("Assay5", where = globalenv(), representation(layers = "list", cells = "LogMap",
+      features = "LogMap", default = "integer", assay.orig = "character", meta.data = "data.frame",
+      misc = "list", key = "character"))
+  if (!methods::isClass("Seurat"))
+    methods::setClass("Seurat", where = globalenv(), representation(assays = "list", meta.data = "data.frame",
+      active.assay = "character", active.ident = "factor", graphs = "list", neighbors = "list",
+      reductions = "list", images = "list", project.name = "character", misc = "list",
+      version = "ANY", commands = "list", tools = "list"))
+}
+
+.build_seurat_direct <- function(ds) {
+  .seurat_pinned_classes()
+  em <- function() matrix(numeric(0), 0, 0)
+  cells <- as.character(ds$axes$cells$labels); genes <- as.character(ds$axes$genes$labels); nc <- length(cells)
+  gxc <- function(nm) { m <- Matrix::t(as(ds$fields[[nm]]$values, "CsparseMatrix")); dimnames(m) <- list(genes, cells); m }
+  is_full_meas <- function(nm) { f <- ds$fields[[nm]]; identical(f$role, "measure") &&
+      length(f$span) == 2 && all(c("cells", "genes") == as.character(f$span)) && is.null(f$index) }
+  meas <- Filter(is_full_meas, names(ds$fields))
+  pick <- function(state, name) { for (nm in meas) { f <- ds$fields[[nm]]
+      if (identical(f$state, state) || identical(nm, name)) return(nm) }; NULL }
+  counts_nm <- pick("raw", "counts"); data_nm <- pick("lognorm", "X")
+  # Build a v5 Assay5 with explicit layers (counts / data / scale.data), so a counts-only assay has NO
+  # data layer -- matching the native writer and avoiding a spurious lognorm `X` (a v4 Assay always
+  # surfaces a `data` layer). Layer membership is carried by the cells/features LogMaps.
+  layers <- list(); lnames <- character(0); used <- character(0)
+  # a real Assay5 layer is a bare matrix (NULL dimnames); cell/feature names live in the cells/features LogMaps
+  addL <- function(lname, nm) { m <- gxc(nm); dimnames(m) <- NULL; layers[[lname]] <<- m
+    lnames <<- c(lnames, lname); used <<- c(used, nm) }
+  primary <- if (!is.null(counts_nm)) counts_nm else data_nm   # primary -> the counts layer (as CreateSeuratObject does)
+  if (is.null(primary)) stop("write_seurat (direct): no full (cells x genes) measure to build an assay")
+  addL("counts", primary)
+  if (!is.null(counts_nm) && !is.null(data_nm)) addL("data", data_nm)   # a distinct lognorm layer only if both exist
+  scaled_nm <- NULL
+  for (nm in setdiff(meas, used)) if (identical(ds$fields[[nm]]$state, "scaled") && is.null(ds$fields[[nm]]$index)) { scaled_nm <- nm; break }
+  if (!is.null(scaled_nm)) addL("scale.data", scaled_nm)
+  cnt <- gxc(primary)   # for the QC bookkeeping below (genes x cells, dimnamed)
+  mklm <- function(nms) .forge_s4(new("LogMap", matrix(TRUE, length(nms), length(lnames), dimnames = list(nms, lnames))))
+  assay <- .forge_s4(new("Assay5", layers = layers, cells = mklm(cells), features = mklm(genes),
+    default = 1L, assay.orig = character(0), meta.data = data.frame(row.names = genes),
+    misc = list(), key = "rna_"))
+
+  reductions <- list()
+  embs <- Filter(function(nm) { f <- ds$fields[[nm]]
+    identical(f$role, "embedding") && length(f$span) == 2 && as.character(f$span)[1] == "cells" }, names(ds$fields))
+  for (nm in embs) {
+    f <- ds$fields[[nm]]; rn <- as.character(f$span)[2]
+    emb <- as.matrix(f$values); rownames(emb) <- cells; colnames(emb) <- as.character(ds$axes[[rn]]$labels)
+    ld_nm <- paste0(nm, "_loadings"); sd_nm <- paste0(nm, "_stdev")
+    ld <- em()
+    if (!is.null(ds$fields[[ld_nm]])) { ld <- as.matrix(ds$fields[[ld_nm]]$values)
+      fax <- as.character(ds$fields[[ld_nm]]$span)[1]; rownames(ld) <- as.character(ds$axes[[fax]]$labels); colnames(ld) <- colnames(emb) }
+    sdv <- if (!is.null(ds$fields[[sd_nm]])) as.numeric(ds$fields[[sd_nm]]$values) else numeric(0)
+    js <- .forge_s4(new("JackStrawData", empirical.p.values = em(), fake.reduction.scores = em(),
+      empirical.p.values.full = em(), overall.p.values = em()))
+    reductions[[nm]] <- .forge_s4(new("DimReduc", cell.embeddings = emb, feature.loadings = ld,
+      feature.loadings.projected = em(), assay.used = "RNA", global = FALSE, stdev = sdv,
+      jackstraw = js, misc = list(), key = paste0(toupper(rn), "_")))
+    used <- c(used, nm, ld_nm, sd_nm)
+  }
+
+  md <- data.frame(row.names = cells); ident <- NULL
+  for (nm in setdiff(names(ds$fields), used)) {
+    f <- ds$fields[[nm]]
+    if (length(f$span) == 1 && as.character(f$span)[1] == "cells" && f$role %in% c("label", "measure")) {
+      v <- f$values
+      if (identical(f$subtype, "active_ident")) { ident <- as.factor(v); next }
+      md[[nm]] <- if (is.factor(v)) v else if (identical(f$role, "measure")) as.numeric(v) else as.character(v)
+    }
+  }
+  # CreateSeuratObject bookkeeping (match the native writer): default identity + per-cell QC totals,
+  # added only when the store didn't already carry them (a Seurat -> store -> Seurat round-trip would).
+  if (is.null(md[["orig.ident"]])) md[["orig.ident"]] <- factor(rep("SeuratProject", nc))
+  if (is.null(md[["nCount_RNA"]])) md[["nCount_RNA"]] <- as.numeric(Matrix::colSums(cnt))
+  if (is.null(md[["nFeature_RNA"]])) md[["nFeature_RNA"]] <- as.numeric(Matrix::colSums(cnt > 0))
+  if (is.null(ident)) ident <- as.factor(md[["orig.ident"]])
+  names(ident) <- cells
+
+  .forge_s4(new("Seurat", assays = list(RNA = assay), meta.data = md, active.assay = "RNA",
+    active.ident = ident, graphs = list(), neighbors = list(), reductions = reductions, images = list(),
+    project.name = "lstar", misc = list(), version = as.package_version("5.0.0"),
+    commands = list(), tools = list()))
+}
+
 #' Read a Seurat object into an L* dataset.
 #'
 #' Handles Seurat v3/v4 (`Assay`) and v5 (`Assay5`); a v5 assay split by sample

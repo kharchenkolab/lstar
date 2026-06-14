@@ -177,6 +177,32 @@ for nm in d.fields:
 assert not [e for e in lstar.validate(d) if e.startswith("ERROR")]
 print(f"  [py] Tier-A direct READ (Seurat): base-R slot-walk == native read ({len(d.fields)} fields + axes)")
 PY
+
+  # Tier-A / P4: the package-free Seurat WRITER (--backend direct, base R + a PINNED Assay5 setClass schema
+  # with the S4 class identity forged to SeuratObject, NO SeuratObject installed-or-used) must emit a .rds
+  # that native SeuratObject reads + ACCEPTS (--strict: real NormalizeData/ScaleData/RunPCA), re-reading
+  # value-equal to the native writer's output.
+  RWD="$TMP/ta_w_direct.rds"; RWN="$TMP/ta_w_native.rds"
+  SWD="$TMP/ta_w_d.lstar.zarr"; SWN="$TMP/ta_w_n.lstar.zarr"
+  python3 -m lstar convert "$STORE" "$RWD" --backend direct --strict >/dev/null    # write + native-acceptance
+  python3 -m lstar convert "$STORE" "$RWN" --backend native --no-check -q
+  python3 -m lstar convert "$RWD" "$SWD" --backend native --no-check -q            # native re-reads both
+  python3 -m lstar convert "$RWN" "$SWN" --backend native --no-check -q
+  python3 - "$SWD" "$SWN" <<'PY'
+import sys, warnings; warnings.filterwarnings("ignore")
+import numpy as np, scipy.sparse as sp, lstar
+from lstar import Categorical
+d = lstar.read(sys.argv[1]); n = lstar.read(sys.argv[2])
+dense = lambda f: (f.values.toarray() if sp.issparse(f.values) else np.asarray(f.values))
+assert set(d.fields) == set(n.fields), (sorted(d.fields), sorted(n.fields))
+for nm in d.fields:
+    fd, fn = d.field(nm), n.field(nm)
+    if isinstance(fd.values, Categorical):
+        assert list(fd.values.codes) == list(fn.values.codes), nm
+    else:
+        assert np.allclose(dense(fd), dense(fn), equal_nan=True), nm
+print(f"  [py] Tier-A direct WRITE (Seurat): pinned-schema build accepted by native, == native write ({len(d.fields)} fields)")
+PY
 else
   echo "  [skip] R / .Rlib / SeuratObject unavailable — skipping the cross-language (Seurat) leg"
 fi
