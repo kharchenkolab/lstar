@@ -347,6 +347,124 @@ write_seurat <- function(ds) {
   ds
 }
 
+# ---- Seurat v3/v4/v5 PACKAGE-FREE read (base R, no SeuratObject) --------------------------------------
+# The `--backend direct` fallback used by `lstar convert` when SeuratObject isn't installed: read a modern
+# Seurat .rds by walking its S4 slots via attr() (the same mechanism the v2 path uses), so only base R +
+# Matrix are needed. Produces the same core L* dataset `read_seurat` builds (counts/data/scale.data
+# measures, reductions, meta.data, active ident). v5 layer names come from the `cells`/`features` LogMaps
+# (`rownames(attr(assay,"cells"))`). A package-backed matrix slot (BPCells/DelayedArray) can't be decoded
+# packagelessly -> a clear error names the package. Verified value-equal to native by convert_cli.sh.
+.read_seurat_direct <- function(so) {
+  S <- function(obj, nm) tryCatch(attr(obj, nm), error = function(e) NULL)
+  assays <- S(so, "assays")
+  if (is.null(assays) || !length(assays))
+    stop("read_seurat (direct): object has no 'assays' slot -- not a Seurat object ",
+         "(a SingleCellExperiment? install SingleCellExperiment and re-run for the native path)")
+  aname <- S(so, "active.assay")
+  if (is.null(aname) || !length(aname) || !nzchar(aname[1])) aname <- names(assays)[1]
+  a <- assays[[aname]]
+  asparse <- function(m) {
+    if (is.null(m) || !length(m)) return(NULL)
+    if (methods::is(m, "externalptr") || !(is.matrix(m) || methods::is(m, "Matrix")))
+      stop(sprintf("read_seurat (direct): assay '%s' holds a package-backed matrix (e.g. BPCells / ",
+                   aname), "DelayedArray) that can't be decoded without its package -- install it and ",
+           "re-run (lstar will then use the native path)")
+    m
+  }
+  layers <- S(a, "layers")
+  if (!is.null(layers) && length(layers)) {            # v5 Assay5: names from the cells/features LogMaps
+    cl <- rownames(S(a, "cells")); ft <- rownames(S(a, "features"))
+    getL <- function(L) {
+      m <- asparse(layers[[L]]); if (is.null(m)) return(NULL)
+      if (is.null(rownames(m)) && nrow(m) == length(ft) && ncol(m) == length(cl)) dimnames(m) <- list(ft, cl)
+      m
+    }
+    raw <- getL("counts"); dat <- getL("data"); scl <- getL("scale.data"); cells <- cl; genes <- ft
+  } else {                                             # v3/v4 Assay
+    raw <- asparse(S(a, "counts")); dat <- asparse(S(a, "data")); scl <- asparse(S(a, "scale.data"))
+    ref <- if (!is.null(dat)) dat else if (!is.null(raw)) raw else scl
+    if (is.null(ref)) stop("read_seurat (direct): assay carries no counts/data/scale.data matrix")
+    cells <- colnames(ref); genes <- rownames(ref)
+  }
+  cells <- as.character(cells); genes <- as.character(genes)
+  ver <- tryCatch(as.character(S(so, "version")), error = function(e) NA_character_)
+  if (!length(ver) || is.na(ver[1])) ver <- "5"
+
+  ds <- list(kind = "sample", spec_version = "0.1",
+             profiles = c("seurat@0.1", "object@seurat", paste0("Seurat_pkg@", ver[1])),
+             dropped = character(0), axes = list(), fields = list())
+  ds$axes$cells <- list(labels = cells, origin = "observed", role = "observation")
+  ds$axes$genes <- list(labels = genes, origin = "observed", role = "feature")
+  add <- function(nm, values, role, span, state = "", subtype = "") {
+    ds$fields[[nm]] <<- list(role = role, span = span, state = state, subtype = subtype, values = values)
+  }
+  add_factor <- function(nm, v, span) {
+    v <- as.factor(v)
+    ds$fields[[nm]] <<- list(role = "label", span = span, state = "", subtype = "",
+                             encoding = "categorical", values = v)
+    if (is.null(ds$axes[[nm]]))
+      ds$axes[[nm]] <<- list(labels = levels(v), origin = "derived", role = "factor", induced_by = nm)
+  }
+  add_measure <- function(nm, m, state) {
+    if (is.null(m) || !length(m) || !nrow(m)) return(invisible())
+    m <- as(m, "CsparseMatrix")
+    if (nrow(m) == length(genes)) {
+      add(nm, Matrix::t(m), "measure", c("cells", "genes"), state = state)
+    } else {
+      gi <- match(as.character(rownames(m)), genes)
+      if (!anyNA(gi)) ds$fields[[nm]] <<- list(role = "measure", span = c("cells", "genes"), state = state,
+        subtype = "", values = Matrix::t(m), coverage = "partial", index = as.integer(gi - 1L), index_axis = "genes")
+      else ds$dropped <<- c(ds$dropped, sprintf("%s (%d of %d genes, unnamed)", nm, nrow(m), length(genes)))
+    }
+  }
+  add_measure("counts", raw, "raw"); add_measure("X", dat, "lognorm"); add_measure("scale.data", scl, "scaled")
+
+  dr <- S(so, "reductions")                            # v3-v5 slot names: cell.embeddings / stdev / feature.loadings
+  if (is.list(dr)) for (rn in names(dr)) {
+    d <- dr[[rn]]; emb <- S(d, "cell.embeddings")
+    if (is.null(emb) || !nrow(emb)) next
+    emb <- as.matrix(emb); dimn <- colnames(emb)
+    if (is.null(dimn)) dimn <- paste0(toupper(rn), seq_len(ncol(emb)))
+    er <- rownames(emb); ord <- if (!is.null(er) && setequal(er, cells)) match(cells, er) else seq_len(nrow(emb))
+    ds$axes[[rn]] <- list(labels = dimn, origin = "derived", role = "coordinate")
+    add(rn, unname(emb[ord, , drop = FALSE]), "embedding", c("cells", rn))
+    sdv <- tryCatch(as.numeric(S(d, "stdev")), error = function(e) numeric(0))
+    if (length(sdv) == ncol(emb)) add(paste0(rn, "_stdev"), sdv, "measure", rn)
+    ld <- S(d, "feature.loadings")
+    if (!is.null(ld) && nrow(ld) > 0 && ncol(ld) == ncol(emb)) {
+      ld <- as.matrix(ld)
+      if (nrow(ld) == length(genes)) add(paste0(rn, "_loadings"), unname(ld), "loading", c("genes", rn))
+      else { hvg <- rownames(ld); if (!is.null(hvg) && length(hvg) == nrow(ld)) {
+        fax <- paste0(rn, "_features"); ds$axes[[fax]] <- list(labels = as.character(hvg), origin = "derived", role = "feature")
+        add(paste0(rn, "_loadings"), unname(ld), "loading", c(fax, rn)) } }
+    }
+  }
+
+  md <- S(so, "meta.data")                             # meta.data + active ident -> cell fields (same as v2)
+  if (is.data.frame(md) && nrow(md)) {
+    mdr <- rownames(md); ord <- if (!is.null(mdr) && setequal(mdr, cells)) match(cells, mdr) else seq_len(nrow(md))
+    for (col in colnames(md)) {
+      v <- md[[col]][ord]
+      if (is.numeric(v)) add(col, as.numeric(v), "measure", "cells")
+      else if (is.factor(v)) add_factor(col, v, "cells")
+      else add(col, as.character(v), "label", "cells")
+    }
+  }
+  id <- S(so, "active.ident")
+  if (!is.null(id) && length(id)) {
+    idr <- names(id); ord <- if (!is.null(idr) && setequal(idr, cells)) match(cells, idr) else seq_along(id)
+    idf <- droplevels(as.factor(id[ord]))
+    if (length(idf) == length(cells)) {
+      ds$fields[["ident"]] <- list(role = "label", span = "cells", state = "", subtype = "active_ident",
+                                   encoding = "categorical", values = idf)
+      if (is.null(ds$axes[["ident"]]))
+        ds$axes[["ident"]] <- list(labels = levels(idf), origin = "derived", role = "factor", induced_by = "ident")
+    }
+  }
+  class(ds) <- "lstar_dataset"
+  ds
+}
+
 #' Read a Seurat object into an L* dataset.
 #'
 #' Handles Seurat v3/v4 (`Assay`) and v5 (`Assay5`); a v5 assay split by sample

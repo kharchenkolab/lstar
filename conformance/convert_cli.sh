@@ -152,6 +152,31 @@ ok = any(c.ndim == 2 and c.shape == ax.shape and np.allclose(ax, c[np.ix_(bi, bj
 assert ok, f"expression values not recovered (checked X + layers {list(b.layers)})"
 print(f"  [py] h5ad -> Seurat(.rds) -> h5ad: shape {b.shape}, expression intact (cross-language round-trip)")
 PY
+
+  # Tier-A / P3: the package-free Seurat reader (--backend direct, base R + Matrix, NO SeuratObject
+  # accessors — it walks S4 slots via attr()) must produce a store value-equal to the native read of the
+  # SAME .rds. Forcing --backend direct exercises the slot-walk even with SeuratObject present.
+  SRD="$TMP/ta_seu_direct.lstar.zarr"; SRN="$TMP/ta_seu_native.lstar.zarr"
+  python3 -m lstar convert "$RDS" "$SRD" --backend direct --no-check -q
+  python3 -m lstar convert "$RDS" "$SRN" --backend native --no-check -q
+  python3 - "$SRD" "$SRN" <<'PY'
+import sys, warnings; warnings.filterwarnings("ignore")
+import numpy as np, scipy.sparse as sp, lstar
+from lstar import Categorical
+d = lstar.read(sys.argv[1]); n = lstar.read(sys.argv[2])
+dense = lambda f: (f.values.toarray() if sp.issparse(f.values) else np.asarray(f.values))
+assert list(np.asarray(d.axis("cells").labels)) == list(np.asarray(n.axis("cells").labels))
+assert list(np.asarray(d.axis("genes").labels)) == list(np.asarray(n.axis("genes").labels))
+assert set(d.fields) == set(n.fields), (sorted(d.fields), sorted(n.fields))
+for nm in d.fields:
+    fd, fn = d.field(nm), n.field(nm)
+    if isinstance(fd.values, Categorical):
+        assert list(fd.values.codes) == list(fn.values.codes), nm
+    else:
+        assert np.allclose(dense(fd), dense(fn), equal_nan=True), nm
+assert not [e for e in lstar.validate(d) if e.startswith("ERROR")]
+print(f"  [py] Tier-A direct READ (Seurat): base-R slot-walk == native read ({len(d.fields)} fields + axes)")
+PY
 else
   echo "  [skip] R / .Rlib / SeuratObject unavailable — skipping the cross-language (Seurat) leg"
 fi

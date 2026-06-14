@@ -220,6 +220,31 @@ def _run_r(mode: str, path: str, store: str, fmt: str = "") -> None:
         raise ConvertError(f"R conversion step failed ({mode}):\n{tail}")
 
 
+# Package-free (direct) Seurat reader: base R only — readRDS (which auto-loads the class package if it is
+# installed, else leaves the class undefined with slots reachable via attr()) + lstar's `.read_seurat_direct`
+# (S4 slot-walking, no SeuratObject accessors) + lstar_write. lstar itself only Imports Matrix.
+_R_DRIVER_DIRECT_READ = r'''
+args <- commandArgs(trailingOnly = TRUE); path <- args[2]; store <- args[3]
+rlib <- Sys.getenv("LSTAR_RLIB", ""); if (nzchar(rlib)) .libPaths(c(rlib, .libPaths()))
+suppressMessages(library(lstar))
+obj <- readRDS(path)
+ds  <- lstar:::.read_seurat_direct(obj)
+lstar_write(ds, store)
+cat("LSTAR_R_OK\n")
+'''
+
+
+def _direct_seurat_read(src: str, bridge: str) -> None:
+    proc = run_r_driver(_R_DRIVER_DIRECT_READ, "seurat", src, bridge)
+    if proc.returncode != 0 or "LSTAR_R_OK" not in proc.stdout:
+        tail = "\n".join((proc.stderr or proc.stdout).strip().splitlines()[-8:])
+        raise ConvertError(f"package-free Seurat read failed (--backend direct):\n{tail}")
+
+
+_DIRECT_R_READ["seurat"] = _direct_seurat_read       # .rds Seurat read with base R only (no SeuratObject)
+_DIRECT_R_READ["rds"] = _direct_seurat_read
+
+
 # ── Python-side load / emit (native or direct, per dispatch) ──────────────────────────────────────────
 
 def _load_py(src: str, fmt: str, backend: str = "auto"):
