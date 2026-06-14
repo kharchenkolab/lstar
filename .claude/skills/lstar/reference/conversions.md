@@ -4,6 +4,22 @@ lstar's near-term value: glue between single-cell formats. `convert(X → Y) = w
 with an L★ dataset (in memory) or a `.lstar.zarr` store (on disk, bridges languages) as the universal
 intermediate.
 
+## The CLI (`lstar convert`) — the quickest path
+
+```bash
+lstar convert a.h5ad a.rds                 # AnnData -> Seurat; detect by extension, bridge Py↔R via store
+lstar convert a.h5ad a.lstar.zarr          # -> store  (--to sce for SCE; --from/--to to override detection)
+lstar convert a.rds  a.h5ad --report       # + fidelity report: every field + provenance + `dropped`
+lstar inspect a.h5ad --report-json r.json  # read + structured report, no write
+```
+- Detection: `.h5ad`→anndata, `.h5mu`→mudata, `.rds`→Seurat/SCE (sniffed), `.lstar.zarr`/`.zarr`→store.
+- `--check` (default on; `--strict` gates exit code): opens the result in its native library + runs a
+  canonical-ops smoke (scanpy `pca`/`rank_genes_groups`; Seurat `RunPCA`; scran `modelGeneVar`) — proves
+  native tools accept it, not just round-trip. Heavy libs optional → degrades to open + structural.
+- Seurat/SCE legs need R + the `lstar` package (`LSTAR_RLIB`/`LSTAR_RSCRIPT` if not on the default path).
+- Entry point: `python -m lstar convert …` or the `lstar` console script. Code: `python/src/lstar/cli.py`
+  (+ `_native_check.py`); the deterministic role→slot contract is `docs/mapping.md`.
+
 ## Readers / writers
 
 | Format | read → L★ | L★ → write | Lang | Import |
@@ -40,6 +56,10 @@ Recorded in `ds.dropped` (written to the target's sidecar, never silent):
 Rule: keep the L★ store to lose nothing; convert to a native format to keep its core + a `dropped` manifest.
 
 ## Mapping specifics (for accurate docs/answers)
+
+Full deterministic role→slot contract (and the per-format conventions native tools require — Seurat
+`_`-terminated `DimReduc` keys, scanpy categorical `groupby`, SCE `logcounts` name): **`docs/mapping.md`**.
+Verify with `lstar convert --check` (native-acceptance: open + canonical-ops smoke). Per-profile summary:
 
 - **anndata** (`python/src/lstar/profiles/anndata.py`): `X`→`X` measure; `.raw.X`→`raw` (own
   `genes_raw` axis if divergent); `layers[k]`→measures; `obs/var[k]`→label|measure; `obsm[k]`→embedding
