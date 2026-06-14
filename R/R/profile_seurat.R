@@ -543,7 +543,8 @@ write_seurat <- function(ds) {
     identical(f$role, "embedding") && length(f$span) == 2 && as.character(f$span)[1] == "cells" }, names(ds$fields))
   for (nm in embs) {
     f <- ds$fields[[nm]]; rn <- as.character(f$span)[2]
-    emb <- as.matrix(f$values); rownames(emb) <- cells; colnames(emb) <- as.character(ds$axes[[rn]]$labels)
+    key <- .dimreduc_key(rn)                            # SeuratObject requires embedding colnames to start with the key
+    emb <- as.matrix(f$values); rownames(emb) <- cells; colnames(emb) <- paste0(key, seq_len(ncol(emb)))
     ld_nm <- paste0(nm, "_loadings"); sd_nm <- paste0(nm, "_stdev")
     ld <- em()
     if (!is.null(ds$fields[[ld_nm]])) { ld <- as.matrix(ds$fields[[ld_nm]]$values)
@@ -553,7 +554,7 @@ write_seurat <- function(ds) {
       empirical.p.values.full = em(), overall.p.values = em()))
     reductions[[nm]] <- .forge_s4(new("DimReduc", cell.embeddings = emb, feature.loadings = ld,
       feature.loadings.projected = em(), assay.used = "RNA", global = FALSE, stdev = sdv,
-      jackstraw = js, misc = list(), key = paste0(toupper(rn), "_")))
+      jackstraw = js, misc = list(), key = key))
     used <- c(used, nm, ld_nm, sd_nm)
   }
 
