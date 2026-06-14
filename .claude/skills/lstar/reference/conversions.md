@@ -17,8 +17,16 @@ lstar inspect a.h5ad --report-json r.json  # read + structured report, no write
   canonical-ops smoke (scanpy `pca`/`rank_genes_groups`; Seurat `RunPCA`; scran `modelGeneVar`) — proves
   native tools accept it, not just round-trip. Heavy libs optional → degrades to open + structural.
 - Seurat/SCE legs need R + the `lstar` package (`LSTAR_RLIB`/`LSTAR_RSCRIPT` if not on the default path).
+- **`--backend auto|native|direct`** — the package-free fallback. `auto` (default) uses the format's native
+  package when present, else lstar's own codec, so the domain packages aren't *required*. Without them:
+  `.h5ad`↔store (read+write) needs only `h5py`; **Seurat `.rds`**↔store (read+write) and **SCE `.rds`**→store
+  (**read**) need only base R + the `lstar` R package (no SeuratObject/SingleCellExperiment — readers walk
+  S4 slots via `attr()`, the Seurat writer builds a pinned-schema object). Native-only: **SCE write** (a
+  valid SCE needs the SummarizedExperiment/GRanges machinery) and `.h5mu`. `--backend direct` forces the
+  codec; at a wall (unknown version, `BPCells`-backed matrix) it raises a clear "install X" error. Analysis
+  packages (scanpy/Seurat/scran) are only for `--check`, never for converting.
 - Entry point: `python -m lstar convert …` or the `lstar` console script. Code: `python/src/lstar/cli.py`
-  (+ `_native_check.py`); the deterministic role→slot contract is `docs/mapping.md`.
+  (+ `_native_check.py`, `profiles/anndata_direct.py`); the deterministic role→slot contract is `docs/mapping.md`.
 
 ## Readers / writers
 

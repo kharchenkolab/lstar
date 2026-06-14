@@ -6,12 +6,14 @@ description: >-
   h5ad, Seurat, SingleCellExperiment, Conos, pagoda2) and languages (Python, R, C++). Covers
   converting/exporting/importing between those formats via profiles (read_anndata/write_anndata,
   read_seurat/write_seurat, read_sce/write_sce, write_conos) or the one-command `lstar convert` CLI
-  (with a fidelity report + native-acceptance check), building datasets of axes and fields,
+  (with a fidelity report, native-acceptance check, and a package-free `--backend` fallback that converts
+  .h5ad via h5py / Seurat & SCE .rds via base R, without anndata/SeuratObject/SingleCellExperiment),
+  building datasets of axes and fields,
   reading/writing .lstar.zarr stores, collections of heterogeneous samples, lazy/streaming reads, the
   C++ accelerator (libstar), per-gene reductions, and format/version recognition. Keywords: lstar, L*,
   L-star, convert, conversion, glue, interchange, h5ad, AnnData, Seurat, SingleCellExperiment, SCE,
-  Conos, pagoda2, profile, export, import, lstar convert, CLI, native-acceptance, mapping, axes, fields,
-  measure, embedding, loading, relation, label,
+  Conos, pagoda2, profile, export, import, lstar convert, CLI, native-acceptance, mapping, backend,
+  package-free, h5py, axes, fields, measure, embedding, loading, relation, label,
   collection, zarr, csc, csr, lazy, streaming, stream_col_stats, libstar, accelerator, single-cell.
 ---
 
@@ -57,6 +59,13 @@ lstar inspect x.h5ad                        # read + report its L★ structure, 
 `--check` (default on; `--strict` to gate the exit code) opens the result in its native library and runs
 a canonical-ops smoke (scanpy/Seurat/scran) — verifies native tools accept it, not just that bytes
 round-tripped. The deterministic role→slot contract is `docs/mapping.md`.
+
+`--backend auto|native|direct` picks the codec: `auto` (default) uses the format's native package when
+present, else lstar's **package-free** fallback — so you don't *need* the domain packages. Without them:
+`.h5ad` ↔ store (read+write) needs only **`h5py`**; **Seurat `.rds`** ↔ store (read+write) and **SCE
+`.rds`** → store (**read**) need only **base R + the `lstar` R package** (no SeuratObject/SingleCellExperiment).
+Native-only: **SCE write** and `.h5mu`. At a wall (unknown on-disk version, `BPCells`-backed matrix) it
+names the package to install. The analysis packages (scanpy/Seurat/scran) are only for `--check`.
 
 Under the hood it's the readers/writers — `read_anndata`/`write_anndata` (Python),
 `read_seurat`/`write_seurat`, `read_sce`/`write_sce`, `write_conos` (R) — which you can also call directly:
