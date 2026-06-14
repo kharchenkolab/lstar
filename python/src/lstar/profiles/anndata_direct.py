@@ -194,3 +194,154 @@ def read_h5ad_direct(path: str) -> Dataset:
 
         ds.profiles = ["anndata@direct"]
     return ds
+
+
+# ── package-free writer (h5py): emit the pinned modern anndata encoding ───────────────────────────────
+# Pinned versions: anndata 0.1.0 / array 0.2.0 / csr|csc_matrix 0.1.0 / dataframe 0.2.0 / categorical
+# 0.2.0 / string-array 0.2.0 / nullable-* 0.1.0 / dict 0.1.0. "latest/recent so everything fits"; native
+# anndata >= 0.8 reads it (verified by the native-acceptance check + the direct-vs-native cross-validation).
+_EV = {"anndata": "0.1.0", "array": "0.2.0", "dataframe": "0.2.0", "categorical": "0.2.0",
+       "string-array": "0.2.0", "nullable-integer": "0.1.0", "nullable-boolean": "0.1.0",
+       "dict": "0.1.0", "string": "0.2.0", "numeric-scalar": "0.2.0"}
+
+
+def _vlen():
+    import h5py
+    return h5py.special_dtype(vlen=str)
+
+
+def _w_strings(parent, name, arr):
+    a = np.asarray(arr)
+    data = np.array([("" if x is None else str(x)) for x in a.ravel()], dtype=object).reshape(a.shape)
+    d = parent.create_dataset(name, data=data, dtype=_vlen())
+    d.attrs["encoding-type"], d.attrs["encoding-version"] = "string-array", _EV["string-array"]
+    return d
+
+
+def _w_array(parent, name, arr):
+    arr = np.asarray(arr)
+    if arr.dtype.kind in ("U", "S", "O"):
+        return _w_strings(parent, name, arr)
+    d = parent.create_dataset(name, data=arr)
+    d.attrs["encoding-type"], d.attrs["encoding-version"] = "array", _EV["array"]
+    return d
+
+
+def _w_matrix(parent, name, m):
+    import scipy.sparse as sp
+    if sp.issparse(m):
+        fmt = "csr" if sp.isspmatrix_csr(m) else ("csc" if sp.isspmatrix_csc(m) else None)
+        if fmt is None:
+            m, fmt = m.tocsr(), "csr"
+        g = parent.create_group(name)
+        g.attrs["encoding-type"], g.attrs["encoding-version"] = f"{fmt}_matrix", "0.1.0"
+        g.attrs["shape"] = np.asarray(m.shape, dtype="int64")
+        g.create_dataset("data", data=m.data)
+        g.create_dataset("indices", data=m.indices)
+        g.create_dataset("indptr", data=m.indptr)
+        return g
+    return _w_array(parent, name, np.asarray(m))
+
+
+def _w_column(group, name, fld):
+    v = fld.values
+    if isinstance(v, Categorical):
+        g = group.create_group(name)
+        g.attrs["encoding-type"], g.attrs["encoding-version"] = "categorical", _EV["categorical"]
+        g.attrs["ordered"] = bool(v.ordered)
+        cd = g.create_dataset("codes", data=np.asarray(v.codes).astype("int32"))
+        cd.attrs["encoding-type"], cd.attrs["encoding-version"] = "array", _EV["array"]
+        _w_strings(g, "categories", np.asarray(v.categories, dtype=str))
+        return
+    arr = np.asarray(v)
+    mask = getattr(fld, "mask", None)
+    if mask is not None and arr.dtype.kind in ("b", "i", "u"):       # nullable Int/boolean (True == missing)
+        et = "nullable-boolean" if arr.dtype.kind == "b" else "nullable-integer"
+        g = group.create_group(name)
+        g.attrs["encoding-type"], g.attrs["encoding-version"] = et, _EV[et]
+        _w_array(g, "values", arr.astype(bool) if arr.dtype.kind == "b" else arr.astype("int64"))
+        g.create_dataset("mask", data=np.asarray(mask).astype(bool))
+        return
+    _w_array(group, name, arr)                                       # plain numeric / bool / string
+
+
+def _w_dataframe(root, name, index, items):
+    import h5py
+    g = root.create_group(name)
+    g.attrs["encoding-type"], g.attrs["encoding-version"] = "dataframe", _EV["dataframe"]
+    g.attrs["_index"] = "_index"
+    cols = [c for c, _ in items]
+    g.attrs.create("column-order", data=np.array(cols, dtype=object),
+                   shape=(len(cols),), dtype=h5py.special_dtype(vlen=str))
+    _w_strings(g, "_index", np.asarray(index, dtype=str))
+    for cname, fld in items:
+        _w_column(g, cname, fld)
+
+
+def _w_uns(parent, name, obj):
+    if isinstance(obj, dict):
+        g = parent.create_group(name)
+        g.attrs["encoding-type"], g.attrs["encoding-version"] = "dict", _EV["dict"]
+        for k, v in obj.items():
+            _w_uns(g, str(k), v)
+    elif isinstance(obj, str):
+        d = parent.create_dataset(name, data=obj)
+        d.attrs["encoding-type"], d.attrs["encoding-version"] = "string", _EV["string"]
+    elif isinstance(obj, (bool, np.bool_, int, float, np.integer, np.floating)):
+        d = parent.create_dataset(name, data=obj)
+        d.attrs["encoding-type"], d.attrs["encoding-version"] = "numeric-scalar", _EV["numeric-scalar"]
+    elif isinstance(obj, np.ndarray):
+        _w_array(parent, name, obj)
+    else:
+        _w_array(parent, name, np.asarray(obj))                     # best effort for the long tail
+
+
+def write_h5ad_direct(ds, path: str) -> str:
+    """Write an L* :class:`Dataset` to an ``.h5ad`` using only ``h5py`` (no ``anndata``), in the pinned
+    modern encoding. Reuses ``write_anndata``'s field routing so a field lands in the same slot as native."""
+    try:
+        import h5py
+    except ImportError:
+        raise _needs("writing .h5ad without the anndata package", "h5py",
+                     "pip install h5py   (the package-free path; or: pip install anndata)")
+    from .anndata import _route_fields
+    r = _route_fields(ds)
+    cells = np.asarray(ds.axis("cells").labels, dtype=str)
+    genes = np.asarray(ds.axis("genes").labels, dtype=str)
+
+    with h5py.File(path, "w") as f:
+        f.attrs["encoding-type"], f.attrs["encoding-version"] = "anndata", _EV["anndata"]
+        if r["X"] is not None:
+            _w_matrix(f, "X", r["X"].values)
+        _w_dataframe(f, "obs", cells, list(r["obs"].items()))
+        _w_dataframe(f, "var", genes, list(r["var"].items()))
+
+        for grp, is_matrix in (("layers", True), ("obsm", False), ("varm", False),
+                               ("obsp", True), ("varp", True)):
+            items = r[grp]
+            if not items:
+                continue
+            g = f.create_group(grp)
+            g.attrs["encoding-type"], g.attrs["encoding-version"] = "dict", _EV["dict"]
+            for k, fld in items.items():
+                _w_matrix(g, k, fld.values) if is_matrix else _w_array(g, k, np.asarray(fld.values))
+
+        if r["raw"] is not None:                                    # pre-HVG raw (its own gene axis)
+            rg = f.create_group("raw")
+            _w_matrix(rg, "X", r["raw"].values)
+            _w_dataframe(rg, "var", np.asarray(ds.axis(r["raw"].span[1]).labels, dtype=str), [])
+
+        uns = dict((getattr(ds, "aux", None) or {}).get("anndata.uns", {}))
+        xstate = r["X"].state if (r["X"] is not None and r["X"].state) else None
+        if r["dropped"]:
+            uns["lstar/dropped"] = list(r["dropped"])
+        if uns or xstate:
+            ug = f.create_group("uns")
+            ug.attrs["encoding-type"], ug.attrs["encoding-version"] = "dict", _EV["dict"]
+            for k, v in uns.items():
+                _w_uns(ug, str(k), v)
+            if xstate:                                              # lstar's own X-state marker
+                lg = ug.create_group("lstar")
+                lg.attrs["encoding-type"], lg.attrs["encoding-version"] = "dict", _EV["dict"]
+                _w_uns(lg, "state", xstate)
+    return path

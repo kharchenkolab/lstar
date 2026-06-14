@@ -67,7 +67,13 @@ def _direct_anndata_read(src):                      # lazy: only imports h5py/th
     return read_h5ad_direct(src)
 
 
+def _direct_anndata_write(ds, dst):
+    from .profiles.anndata_direct import write_h5ad_direct
+    write_h5ad_direct(ds, dst)
+
+
 _DIRECT_PY_READ["anndata"] = _direct_anndata_read
+_DIRECT_PY_WRITE["anndata"] = _direct_anndata_write
 
 # Extension → format (longest/most-specific first).
 _EXT = [(".h5ad", "anndata"), (".h5mu", "mudata"), (".rds", "rds"),

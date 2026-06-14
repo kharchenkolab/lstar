@@ -97,10 +97,28 @@ for nm in d.fields:                                  # every core field present 
         assert np.allclose(dense(fd), dense(fn), equal_nan=True), nm
 assert d.axis("leiden").role == "factor", "induction missing on the direct path"
 assert not [e for e in lstar.validate(d) if e.startswith("ERROR")]
-print("  [py] Tier-A direct: package-free h5py read == native read on the core (X, obs/var, obsm, induction)")
+print("  [py] Tier-A direct READ: package-free h5py read == native read on the core (X, obs/var, obsm, induction)")
+PY
+  # P2: the package-free h5py WRITER (--backend direct) must emit an h5ad that native anndata reads and
+  # ACCEPTS (--strict native-acceptance), value-equal to the native writer on the core.
+  HWD="$TMP/ta_w_direct.h5ad"; HWN="$TMP/ta_w_native.h5ad"
+  python3 -m lstar convert "$STORE" "$HWD" --backend direct --strict >/dev/null   # write + native-acceptance
+  python3 -m lstar convert "$STORE" "$HWN" --backend native --no-check -q
+  python3 - "$HWD" "$HWN" <<'PY'
+import sys, warnings; warnings.filterwarnings("ignore")
+import numpy as np, scipy.sparse as sp, anndata as ad
+d = ad.read_h5ad(sys.argv[1]); n = ad.read_h5ad(sys.argv[2])
+den = lambda M: (M.toarray() if sp.issparse(M) else np.asarray(M))
+assert d.shape == n.shape, (d.shape, n.shape)
+assert list(d.obs_names) == list(n.obs_names) and list(d.var_names) == list(n.var_names)
+Xof = lambda a: (den(a.X) if a.X is not None else den(next(iter(a.layers.values()))))
+assert np.allclose(Xof(d), Xof(n)), "X differs (direct vs native write)"
+assert np.allclose(np.asarray(d.obsm["X_pca"]), np.asarray(n.obsm["X_pca"])), "pca differs"
+assert str(d.obs["leiden"].dtype) == "category" and list(d.obs["leiden"]) == list(n.obs["leiden"])
+print("  [py] Tier-A direct WRITE: package-free h5py write read + accepted by native anndata, == native write")
 PY
 else
-  echo "  [skip] h5py absent — skipping the package-free (direct) AnnData read check"
+  echo "  [skip] h5py absent — skipping the package-free (direct) AnnData read/write checks"
 fi
 
 # L2: cross-language routing (h5ad <-> Seurat .rds, bridged by the store + an Rscript driver). Needs R

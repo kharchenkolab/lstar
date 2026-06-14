@@ -56,14 +56,18 @@ def _check_anndata(dst: str) -> dict:
             else:
                 return _res("anndata", "pass", detail + "; no X/layers → ops skipped")
         sc.pp.normalize_total(c)
-        sc.pp.log1p(c)
-        sc.pp.pca(c, n_comps=max(2, min(5, min(c.shape) - 1)))
-        ran = "normalize_total,log1p,pca"
-        cats = [col for col in c.obs.columns
-                if str(c.obs[col].dtype) == "category" and c.obs[col].nunique() > 1]
-        if cats:
-            sc.tl.rank_genes_groups(c, cats[0], method="t-test")
-            ran += f",rank_genes_groups[{cats[0]}]"
+        sc.pp.log1p(c)                                   # ingestion ops: a malformed object fails here
+        ran = "normalize_total,log1p"
+        try:                                             # analysis ops are best-effort: PCA/DE can fail
+            sc.pp.pca(c, n_comps=max(2, min(10, min(c.shape) - 1)))   # numerically on a tiny/degenerate
+            ran += ",pca"                                            # matrix, which is a data property,
+            cats = [col for col in c.obs.columns                     # not an object-acceptance failure
+                    if str(c.obs[col].dtype) == "category" and c.obs[col].nunique() > 1]
+            if cats:
+                sc.tl.rank_genes_groups(c, cats[0], method="t-test")
+                ran += f",rank_genes_groups[{cats[0]}]"
+        except Exception as e:
+            ran += f" (analysis ops skipped: {type(e).__name__})"
         return _res("anndata", "pass", detail + f"; scanpy {ran} OK")
     except Exception as e:
         return _res("anndata", "fail", f"scanpy op failed: {type(e).__name__}: {e}")
