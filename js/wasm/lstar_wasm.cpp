@@ -95,12 +95,23 @@ static val subsampleDeRank(val data_js, val indptr_js, val indices_js, int nrows
     return out;
 }
 
-static std::string version() { return "lstar-wasm 0.0.2"; }
+// gzip-compress raw bytes (RFC1952) via the core's deflate_stream -- the write-side codec for chunked
+// stores. Produces exactly what the Python/C++ writers emit (.zarray compressor {"id":"gzip"}), so the
+// bytes are decodable by zarrita's GzipCodec, Python numcodecs.GZip, and the C++ reader unchanged.
+// (Built with -sUSE_ZLIB=1 -DLSTAR_HAVE_ZLIB; deflate/inflate are otherwise excluded from the kernels.)
+static val gzipCompress(val bytes_js, int level) {
+    std::vector<uint8_t> src = convertJSArrayToNumberVector<uint8_t>(bytes_js);
+    std::vector<uint8_t> out = lstar::deflate_stream(src.data(), src.size(), level, /*gzip=*/true);
+    return val(typed_memory_view(out.size(), out.data())).call<val>("slice");
+}
+
+static std::string version() { return "lstar-wasm 0.0.3"; }
 
 EMSCRIPTEN_BINDINGS(lstar_wasm) {
     function("colMeanVar", &colMeanVar);
     function("cscToCsr", &cscToCsr);
     function("colSumByGroup", &colSumByGroup);
     function("subsampleDeRank", &subsampleDeRank);
+    function("gzipCompress", &gzipCompress);
     function("version", &version);
 }

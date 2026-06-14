@@ -75,6 +75,20 @@ auto s  = lstar::csc_col_mean_var(f->data.as<float>(), ip.data(),  // float32 in
                                   f->shape[1], f->shape[0], 0, true);
 ```
 
+## Write or extend an L★ store from JS/WASM (browser viewer)
+```ts
+import { writeStore, addToStore, type Compressor } from "lstar-js";
+import createLstarKernels from "lstar-js/wasm";
+const k = await createLstarKernels();
+const gzip: Compressor = { id: "gzip", level: 1, compress: (b) => new Uint8Array(k.gzipCompress(b, 1)) };
+await writeStore(store, dataset, { chunkElems: 1 << 18, compressor: gzip });   // chunked + gzip via WASM zlib
+await addToStore(store, { fields: { od_score: { encoding: "dense", span: ["genes"], shape: [ng], data } } });
+```
+Every encoding writes (CSC/dense/categorical+factor/mask/partial/aux) and round-trips to Python/R/C++.
+The compressor is **injected** (so the uncompressed path needs no WASM); `compressor: null`/omitted ->
+one uncompressed chunk. Offsets/index are `<i8`; codes `<i4` (-1=missing). Verified by `conformance/js.sh`
+(JS-write → Python/C++-read). Source: `js/core/writer.ts`, `js/wasm/lstar_wasm.cpp` (`gzipCompress`).
+
 ## Retest the profiles against the large LOCAL corpus (rare; keeps the synthetic CI tier honest)
 ```bash
 bash conformance/sweep/retest_local.sh          # faithfulness guard + all cached-data sweeps + a TRIAGE

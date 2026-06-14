@@ -48,13 +48,13 @@ the cross-language conformance suite ([`conformance/`](conformance/)).
 | Read a store | ✓ | ✓ | ✓ | ✓ (zarrita) |
 | Write a store | ✓ | ✓ | ✓ | ✓ |
 | `validate()` (model/consistency checks) | ✓ | — | via Py/C++ | — |
-| Encodings: dense / CSR / CSC / COO | ✓ | ✓ | ✓ | ✓ (read) |
+| Encodings: dense / CSR / CSC / COO | ✓ | ✓ | ✓ | ✓ (read; write dense/CSC/CSR) |
 | UTF-8 + categorical (codes/levels/ordered/`-1` missing) | ✓ | ✓ | ✓ | ✓ |
 | Nullable validity mask (Int/bool/string) | ✓ | ✓ | ✓ | ✓ |
 | Factor-axis **induction** (`induced_by` round-trip) | ✓ | ✓ | ✓ | ✓ |
-| **Partial coverage** (a field on a subset of a span axis, via an `index`) | ✓ | ✓ | ✓ | — |
+| **Partial coverage** (a field on a subset of a span axis, via an `index`) | ✓ | ✓ | ✓ | ✓ |
 | **Arity-3 fields** (CCC `sender×receiver×lr_pair`, eQTL `celltype×gene×variant`) | ✓ | ✓ | ✓ | — |
-| chunked + gzip | ✓ | ✓ | ✓ | ✓ (read) |
+| chunked + gzip | ✓ | ✓ | ✓ | ✓ (read; write via WASM zlib) |
 | Lazy / partial / over-network reads | ✓ | ✓ | ✓ | ✓ |
 | Bounded-memory **streaming write** | ✓ | ✓ | ✓ | — |
 | Disk-backed targets (don't materialize) | backed AnnData | — | BPCells / HDF5Array | — |
@@ -66,10 +66,12 @@ the cross-language conformance suite ([`conformance/`](conformance/)).
 | **Format profiles** | AnnData, MuData | — | Seurat, SCE, Conos, pagoda2 | — |
 
 Notes: the C++ core is the model + Zarr IO + kernels (no `validate`/profiles — those live in the
-language packages). JS/WASM is the **viewer** data layer: read/write the store, decode every encoding,
-and run the view kernels in-browser; it has no format profiles or DE bundles. Cross-language round-trips
+language packages). JS/WASM is the **viewer** data layer: read **and write** the store — every encoding
+both directions (CSC/dense/categorical+factor/mask/partial/aux), chunked + **gzip-compressed via the WASM
+zlib kernel** — and run the view kernels in-browser; it has no format profiles or DE bundles. The writer
+also `addToStore`s derived fields onto an existing (e.g. Python-written) store. Cross-language round-trips
 covered by `conformance/{categorical,induce,nullable,aux,chunked,read_block,stream_reduce,fused_view,
-js}.sh`.
+js}.sh` (the JS-write → Python/C++-read leg is in `js.sh`).
 
 ---
 

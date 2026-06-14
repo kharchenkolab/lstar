@@ -29,4 +29,29 @@ echo "  [py ] generated test store + references"
 echo "  -- kernels --"; "$NODE" "$ROOT/js/test/kernels.test.mjs"
 echo "  -- reader  --"; "$NODE" --experimental-strip-types "$ROOT/js/test/reader.test.ts" 2>/dev/null
 echo "  -- view    --"; "$NODE" --experimental-strip-types "$ROOT/js/test/view.test.ts" 2>/dev/null
+
+# 4) the WRITE side: JS round-trip (writer.test.ts), then the cross-language gate -- JS writes a
+# chunked + gzip-compressed store with every encoding (CSC/dense/categorical/mask/partial/aux, using the
+# WASM zlib kernel) and the Python reader validates it clean + value-equal.
+echo "  -- writer  --"; "$NODE" --experimental-strip-types "$ROOT/js/test/writer.test.ts" 2>/dev/null
+echo "  -- writer x-read (JS-write chunked+gzip -> Python read+validate) --"
+WX=/tmp/lstar_js_writer_cross.lstar.zarr; rm -rf "$WX"
+"$NODE" --experimental-strip-types "$ROOT/js/test/writer_make.ts" "$WX" 2>/dev/null \
+  || { echo "  FAIL: JS writer_make"; exit 1; }
+PYTHONPATH="$ROOT/python/src" python3 "$ROOT/js/test/writer_crossread.py" "$WX" \
+  || { echo "  FAIL: writer_crossread"; exit 1; }
+
+# 5) reverse leg: JS addToStore appends a derived field to a PYTHON-written store -> Python re-reads it
+echo "  -- writer extend (Python-write -> JS addToStore -> Python read) --"
+WE=/tmp/lstar_js_writer_extend.lstar.zarr; rm -rf "$WE"; cp -r "$ROOT/js/test/data/sample.lstar.zarr" "$WE"
+"$NODE" --experimental-strip-types "$ROOT/js/test/writer_extend.ts" "$WE" 2>/dev/null \
+  || { echo "  FAIL: JS writer_extend"; exit 1; }
+PYTHONPATH="$ROOT/python/src" python3 - "$WE" <<'PY' || { echo "  FAIL: extend re-read"; exit 1; }
+import sys, lstar
+ds = lstar.read(sys.argv[1])
+assert "od_score" in ds.fields and "counts" in ds.fields, list(ds.fields)   # derived added, original kept
+assert ds.axis("od_groups").origin == "derived" and "viewer@0.1" in ds.profiles
+assert not [e for e in lstar.validate(ds) if e.startswith("ERROR")]
+print("  [py] JS addToStore on a Python store re-reads clean (derived field + axis + profile)")
+PY
 echo "JS/WASM conformance PASSED."

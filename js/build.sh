@@ -14,6 +14,10 @@ JS="$ROOT/js"
 # whatever python emsdk found at install time). Source emsdk only if present; otherwise rely on a
 # PATH emcc (Homebrew/system install).
 PYBIN="${LSTAR_EMCC_PYTHON:-}"
+# Building an emscripten PORT (e.g. -sUSE_ZLIB) spawns the `emcc` wrapper as a subprocess, whose
+# `#!/usr/bin/env python3` shebang resolves python3 from PATH -- not from our chosen interpreter. So when
+# LSTAR_EMCC_PYTHON is set (system python too old), put its dir first on PATH so the port build uses it too.
+if [ -n "$PYBIN" ]; then export PATH="$(dirname "$PYBIN"):$PATH"; fi
 if [ -f "$EMSDK/emsdk_env.sh" ]; then
   # shellcheck disable=SC1091
   source "$EMSDK/emsdk_env.sh" >/dev/null 2>&1 || true
@@ -29,6 +33,7 @@ mkdir -p "$JS/dist"
 "${EMCC[@]}" "$JS/wasm/lstar_wasm.cpp" \
   -I"$ROOT/core/include" \
   -std=c++17 -O3 -lembind \
+  -sUSE_ZLIB=1 -DLSTAR_HAVE_ZLIB \
   -sMODULARIZE=1 -sEXPORT_ES6=1 -sENVIRONMENT=node,web \
   -sALLOW_MEMORY_GROWTH=1 \
   -sEXPORT_NAME=createLstarKernels \
