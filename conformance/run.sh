@@ -55,6 +55,10 @@ echo "== cross-format conformance (R: Seurat + SCE) =="
 bash conformance/cross_format.sh >/tmp/lstar_cf.log 2>&1 \
   && pass "AnnData<->Seurat<->SCE via L*" || { echo "  FAIL cross-format"; tail -15 /tmp/lstar_cf.log; exit 1; }
 
+echo "== convert CLI (lstar convert: detect/route + fidelity report + native-acceptance of the target) =="
+bash conformance/convert_cli.sh >/tmp/lstar_cli.log 2>&1 \
+  && pass "lstar convert CLI (h5ad<->store<->Seurat, native-valid)" || { echo "  FAIL convert_cli"; tail -20 /tmp/lstar_cli.log; exit 1; }
+
 echo "== Seurat Tier-1 extras (DimReduc stdev -> measure; active Idents captured + restored) =="
 bash conformance/seurat_extras.sh >/tmp/lstar_se.log 2>&1 \
   && pass "Seurat stdev + active Idents round-trip" || { echo "  FAIL seurat_extras"; tail -15 /tmp/lstar_se.log; exit 1; }

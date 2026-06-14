@@ -2,7 +2,19 @@
 
 Concrete, copy-pasteable solutions. Runnable end-to-end versions live in `examples/`.
 
-## Convert h5ad → L★ → Seurat (cross-language)
+## Convert in one command (the CLI)
+```bash
+lstar convert a.h5ad a.rds                 # AnnData -> Seurat (.rds), bridged via the L★ store + Rscript
+lstar convert a.h5ad a.lstar.zarr          # -> store ; lstar convert a.rds a.h5ad --to sce for SCE targets
+lstar convert s.rds s.h5ad --report        # + fidelity report (axes/fields/provenance + `dropped`)
+lstar inspect a.h5ad --report-json r.json  # read + structured report, no write
+```
+`--check` (default on) opens the produced object in its native library and runs a canonical-ops smoke
+(scanpy/Seurat/scran) — verifies native tools won't choke, not just that bytes round-tripped; `--strict`
+gates the exit code. Detect by extension (`--from`/`--to` to override); Seurat/SCE legs need R + the
+`lstar` package (`LSTAR_RLIB`/`LSTAR_RSCRIPT`). The deterministic role→slot contract is `docs/mapping.md`.
+
+## Convert h5ad → L★ → Seurat (cross-language, library calls)
 ```python
 # Python
 import anndata as ad, lstar

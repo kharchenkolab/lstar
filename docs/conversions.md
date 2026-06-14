@@ -37,6 +37,35 @@ they are the selling point:
    format's sidecar (`uns` / `Misc` / `metadata`) and recorded in the dataset's `dropped` list — so you
    can see exactly what a conversion could not carry, instead of discovering it missing later.
 
+## One command: the `lstar convert` CLI
+
+For the common cases you don't need to write any glue — the CLI detects each format from its path,
+routes through the L★ store (in-process for Python formats, via a short `Rscript` bridge for Seurat/SCE),
+and reports what crossed:
+
+```bash
+lstar convert pbmc.h5ad pbmc.rds              # AnnData -> Seurat (.rds), bridged automatically
+lstar convert atlas.h5ad atlas.lstar.zarr     # AnnData -> L★ store
+lstar convert s.rds s.h5ad --report           # Seurat -> AnnData + the full fidelity report
+lstar convert x.h5ad y.rds --to sce           # a .rds target as SingleCellExperiment (default is Seurat)
+lstar inspect data.h5ad                        # read + report its L★ structure, no write
+```
+
+Two things make it more than a one-liner:
+
+- **A fidelity report** (`--report`, `--report-json FILE`) lists every axis/field with its role, state,
+  span, and `provenance`, and — crucially — **`dropped`**: what the target could not represent, made
+  visible rather than silently lost.
+- **A native-acceptance check** (`--check`, on by default; `--strict` to gate the exit code) opens the
+  produced object in its *own* library and runs a canonical-ops smoke (scanpy / Seurat / scran-scater), so
+  you know the native analysis tools will accept it — not just that the bytes round-tripped. The heavy
+  analysis libraries are optional; absent → the check degrades to open + structural invariants. What lands
+  where (and why it is deterministic) is the explicit contract in [`mapping.md`](mapping.md).
+
+Format detection: `.h5ad`→AnnData, `.h5mu`→MuData, `.rds`→Seurat/SCE (sniffed), `.lstar.zarr`/`.zarr`→
+store. Override with `--from`/`--to`. Seurat/SCE legs need R with the `lstar` package on the path (set
+`LSTAR_RLIB`/`LSTAR_RSCRIPT` if it isn't on the default library path).
+
 ## The functions
 
 You only need a handful. The reader/writer for each format:

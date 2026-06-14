@@ -213,3 +213,7 @@ Prioritized, with **where** the gap is (profile / real corpus / synthetic fixtur
 - [`conformance/`](conformance/) — the cross-language / cross-format round-trip suite that backs the
   language matrix; [`conformance/README.md`](conformance/README.md) documents the **origin-coverage** rule
   (test every producer, not just consumers) and the per-test coverage matrix.
+- [`docs/mapping.md`](docs/mapping.md) — the deterministic role→slot conversion contract (what lands
+  where in each target, and why), and the **native-acceptance** check (`lstar convert --check`) that opens
+  the produced object in its own library and runs a canonical-ops smoke — verifying native tools accept
+  it, not just that bytes round-tripped (`conformance/convert_cli.sh`).
