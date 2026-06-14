@@ -25,6 +25,9 @@ dependencies = ["numpy", "scipy", "zarr<3"]
 anndata = ["anndata"]
 test = ["anndata", "numcodecs"]
 
+[project.scripts]
+lstar = "lstar.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/kharchenkolab/lstar"
 Source = "https://github.com/kharchenkolab/lstar"
