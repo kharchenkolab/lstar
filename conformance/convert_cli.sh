@@ -203,6 +203,33 @@ for nm in d.fields:
         assert np.allclose(dense(fd), dense(fn), equal_nan=True), nm
 print(f"  [py] Tier-A direct WRITE (Seurat): pinned-schema build accepted by native, == native write ({len(d.fields)} fields)")
 PY
+
+  # Tier-A / P5: the package-free SCE READER (--backend direct, base R + Matrix, NO SingleCellExperiment —
+  # walks the SE/SCE S4 slots via attr()) must equal the native read of the same .rds. Gated on
+  # SingleCellExperiment being present (to build a native SCE to read); SKIPs otherwise.
+  if Rscript -e '.libPaths(c("'"$ROOT"'/.Rlib", .libPaths())); quit(status=!requireNamespace("SingleCellExperiment", quietly=TRUE))' </dev/null >/dev/null 2>&1; then
+    SCEF="$TMP/x.rds"; SCD="$TMP/sce_d.lstar.zarr"; SCN="$TMP/sce_n.lstar.zarr"
+    python3 -m lstar convert "$STORE" "$SCEF" --to sce --no-check -q
+    python3 -m lstar convert "$SCEF" "$SCD" --from sce --backend direct --no-check -q
+    python3 -m lstar convert "$SCEF" "$SCN" --from sce --backend native --no-check -q
+    python3 - "$SCD" "$SCN" <<'PY'
+import sys, warnings; warnings.filterwarnings("ignore")
+import numpy as np, scipy.sparse as sp, lstar
+from lstar import Categorical
+d = lstar.read(sys.argv[1]); n = lstar.read(sys.argv[2])
+dense = lambda f: (f.values.toarray() if sp.issparse(f.values) else np.asarray(f.values))
+assert set(d.fields) == set(n.fields), (sorted(d.fields), sorted(n.fields))
+for nm in d.fields:
+    fd, fn = d.field(nm), n.field(nm)
+    if isinstance(fd.values, Categorical):
+        assert list(fd.values.codes) == list(fn.values.codes), nm
+    else:
+        assert np.allclose(dense(fd), dense(fn), equal_nan=True), nm
+print(f"  [py] Tier-A direct READ (SCE): base-R slot-walk == native read ({len(d.fields)} fields)")
+PY
+  else
+    echo "  [skip] SingleCellExperiment unavailable — skipping the package-free SCE read check"
+  fi
 else
   echo "  [skip] R / .Rlib / SeuratObject unavailable — skipping the cross-language (Seurat) leg"
 fi

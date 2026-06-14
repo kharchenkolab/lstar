@@ -180,3 +180,60 @@ read_sce <- function(sce) {
   class(ds) <- "lstar_dataset"
   ds
 }
+
+# ---- SCE v? PACKAGE-FREE read (base R, no SingleCellExperiment) ---------------------------------------
+# The `--backend direct` fallback: read an SCE .rds by walking its S4 slots via attr() -- the SE/SCE class
+# hierarchy stores everything in plain slots (assays = Assays -> SimpleList -> listData; colData /
+# elementMetadata = DataFrames whose columns are in `listData` and whose names are in `rownames`;
+# reducedDims live in `int_colData$reducedDims`). Only base R is needed (sparse matrices are dgCMatrix
+# from Matrix). Produces the same core L* dataset `read_sce` builds; verified value-equal by convert_cli.sh.
+.df_cols <- function(df) { ld <- tryCatch(attr(df, "listData"), error = function(e) NULL); if (is.null(ld)) list() else ld }
+
+.read_sce_direct <- function(so) {
+  S <- function(obj, nm) tryCatch(attr(obj, nm), error = function(e) NULL)
+  amats <- S(S(S(so, "assays"), "data"), "listData")       # Assays -> SimpleList -> named matrices (genes x cells)
+  if (is.null(amats) || !length(amats)) stop("read_sce (direct): object has no assays -- not a SingleCellExperiment?")
+  m1 <- amats[[1]]; cd <- S(so, "colData")           # names: the assay matrix's own dimnames are most reliable;
+  cells <- colnames(m1); if (is.null(cells)) cells <- S(cd, "rownames")          # else colData rownames
+  genes <- rownames(m1); if (is.null(genes)) genes <- S(so, "NAMES")             # else NAMES / rowData rownames
+  if (is.null(genes)) genes <- attr(S(so, "elementMetadata"), "rownames")
+  if (is.null(cells)) cells <- paste0("cell", seq_len(ncol(m1)))
+  if (is.null(genes)) genes <- paste0("g", seq_len(nrow(m1)))
+  cells <- as.character(cells); genes <- as.character(genes)
+
+  ds <- list(kind = "sample", spec_version = "0.1", profiles = c("sce@0.1", "object@sce"),
+             dropped = character(0), axes = list(), fields = list())
+  ds$axes$cells <- list(labels = cells, origin = "observed", role = "observation")
+  ds$axes$genes <- list(labels = genes, origin = "observed", role = "feature")
+  add <- function(nm, v, role, span, state = "") {
+    ds$fields[[nm]] <<- list(role = role, span = span, state = state, subtype = "", values = v)
+  }
+  add_factor <- function(nm, v, span) {
+    v <- as.factor(v)
+    ds$fields[[nm]] <<- list(role = "label", span = span, state = "", subtype = "", encoding = "categorical", values = v)
+    if (is.null(ds$axes[[nm]])) ds$axes[[nm]] <<- list(labels = levels(v), origin = "derived", role = "factor", induced_by = nm)
+  }
+  name_of <- function(a) if (identical(a, "counts")) "counts" else if (identical(a, "logcounts")) "X" else a
+  state_of <- function(a) if (identical(a, "counts")) "raw" else if (identical(a, "logcounts")) "lognorm" else ""
+  for (a in names(amats))                            # genes x cells -> (cells, genes); axes carry the names
+    add(name_of(a), Matrix::t(as(amats[[a]], "CsparseMatrix")), "measure", c("cells", "genes"), state = state_of(a))
+  sce_col <- function(nm, v, span, n) {                    # decode S4 Rle/factor/vector columns
+    v <- tryCatch(if (methods::is(v, "Rle")) as.vector(v) else v, error = function(e) v)
+    if (is.numeric(v) && length(v) == n) add(nm, as.numeric(v), "measure", span)
+    else if (is.factor(v) && length(v) == n) add_factor(nm, v, span)
+    else { vv <- tryCatch(as.character(v), error = function(e) NULL); if (!is.null(vv) && length(vv) == n) add(nm, vv, "label", span) }
+  }
+  for (col in names(.df_cols(cd))) sce_col(col, .df_cols(cd)[[col]], "cells", length(cells))
+  for (col in names(.df_cols(S(so, "elementMetadata")))) sce_col(col, .df_cols(S(so, "elementMetadata"))[[col]], "genes", length(genes))
+
+  rdims <- .df_cols(S(so, "int_colData"))$reducedDims       # int_colData -> reducedDims DFrame -> named embeddings
+  if (!is.null(rdims)) for (rn in names(.df_cols(rdims))) {
+    emb <- as.matrix(.df_cols(rdims)[[rn]]); if (!nrow(emb)) next
+    coord <- tolower(rn)
+    labs <- if (!is.null(colnames(emb))) colnames(emb) else paste0(coord, seq_len(ncol(emb)))
+    ds$axes[[coord]] <- list(labels = labs, origin = "derived", role = "coordinate")
+    add(coord, unname(emb), "embedding", c("cells", coord))
+  }
+  class(ds) <- "lstar_dataset"
+  ds
+}

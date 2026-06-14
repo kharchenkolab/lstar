@@ -224,25 +224,29 @@ def _run_r(mode: str, path: str, store: str, fmt: str = "") -> None:
 # installed, else leaves the class undefined with slots reachable via attr()) + lstar's `.read_seurat_direct`
 # (S4 slot-walking, no SeuratObject accessors) + lstar_write. lstar itself only Imports Matrix.
 _R_DRIVER_DIRECT_READ = r'''
-args <- commandArgs(trailingOnly = TRUE); path <- args[2]; store <- args[3]
+args <- commandArgs(trailingOnly = TRUE); fmt <- args[1]; path <- args[2]; store <- args[3]
 rlib <- Sys.getenv("LSTAR_RLIB", ""); if (nzchar(rlib)) .libPaths(c(rlib, .libPaths()))
 suppressMessages(library(lstar))
 obj <- readRDS(path)
-ds  <- lstar:::.read_seurat_direct(obj)
+is_sce <- !is.null(attr(obj, "int_colData")) || methods::is(obj, "SingleCellExperiment")
+ds <- if (identical(fmt, "sce") || (identical(fmt, "rds") && is_sce)) lstar:::.read_sce_direct(obj) else lstar:::.read_seurat_direct(obj)
 lstar_write(ds, store)
 cat("LSTAR_R_OK\n")
 '''
 
 
-def _direct_seurat_read(src: str, bridge: str) -> None:
-    proc = run_r_driver(_R_DRIVER_DIRECT_READ, "seurat", src, bridge)
-    if proc.returncode != 0 or "LSTAR_R_OK" not in proc.stdout:
-        tail = "\n".join((proc.stderr or proc.stdout).strip().splitlines()[-8:])
-        raise ConvertError(f"package-free Seurat read failed (--backend direct):\n{tail}")
+def _make_direct_rds_read(fmt: str):
+    def reader(src: str, bridge: str) -> None:
+        proc = run_r_driver(_R_DRIVER_DIRECT_READ, fmt, src, bridge)
+        if proc.returncode != 0 or "LSTAR_R_OK" not in proc.stdout:
+            tail = "\n".join((proc.stderr or proc.stdout).strip().splitlines()[-8:])
+            raise ConvertError(f"package-free {fmt} read failed (--backend direct):\n{tail}")
+    return reader
 
 
-_DIRECT_R_READ["seurat"] = _direct_seurat_read       # .rds Seurat read with base R only (no SeuratObject)
-_DIRECT_R_READ["rds"] = _direct_seurat_read
+_DIRECT_R_READ["seurat"] = _make_direct_rds_read("seurat")   # base R only (no SeuratObject)
+_DIRECT_R_READ["sce"] = _make_direct_rds_read("sce")         # base R only (no SingleCellExperiment)
+_DIRECT_R_READ["rds"] = _make_direct_rds_read("rds")         # sniff Seurat vs SCE
 
 
 # Package-free (direct) Seurat writer: base R builds a native-valid Seurat object from the L* store using a
