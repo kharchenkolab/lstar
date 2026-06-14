@@ -90,9 +90,17 @@ check degrades to *open + structural invariants* and reports `ops skipped`, neve
 ## Both backends honor this contract
 
 The same role→slot mapping governs whether a conversion runs through the native package or lstar's
-**package-free** codec (`--backend direct`): the h5py h5ad reader/writer and the base-R Seurat
-reader/writer produce byte-for-value the same L★ ↔ native mapping as `anndata`/`SeuratObject` would. The
-Seurat package-free *writer* materializes the object from a **pinned SeuratObject schema** (a recent
-`Assay5`/`DimReduc`/`Seurat` `setClass`, lifted verbatim from source) with the S4 class identity forged to
-`SeuratObject`, so a real SeuratObject session reconstructs and accepts it — verified by the
-native-acceptance check on every CI run, which is exactly what keeps the pinned schema from drifting.
+**package-free** codec (`--backend direct`): the h5py h5ad reader/writer, the base-R Seurat reader/writer,
+and the base-R SCE *reader* produce byte-for-value the same L★ ↔ native mapping as
+`anndata`/`SeuratObject`/`SingleCellExperiment` would. The Seurat package-free *writer* materializes the
+object from a **pinned SeuratObject schema** (a recent `Assay5`/`DimReduc`/`Seurat` `setClass`, lifted
+verbatim from source) with the S4 class identity forged to `SeuratObject`, so a real SeuratObject session
+reconstructs and accepts it — verified by the native-acceptance check on every CI run, which is exactly
+what keeps the pinned schema from drifting.
+
+**Asymmetry, by design.** Reading a serialized object packagelessly only needs base R (`readRDS` +
+slot-walk); *manufacturing* one needs the destination's class machinery. For Seurat that machinery is a
+flat, forgeable `setClass` schema. For **SCE the write side stays native-only**: a valid
+`SingleCellExperiment` is a deep `SummarizedExperiment` + `GRanges` (rowRanges) + internal-`DataFrame`
+hierarchy whose nested validity invariants make a forged object impractical to keep correct — so
+`--backend direct` to an SCE target reports that `SingleCellExperiment` is required.

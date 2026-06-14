@@ -77,8 +77,9 @@ importable and falls back to lstar's **package-free** codec otherwise.
 |---|---|---|
 | `.h5ad` ↔ store | `anndata` | **`h5py`** (lstar reads/writes the HDF5 encoding directly) |
 | Seurat `.rds` ↔ store | R + `SeuratObject` | **base R + the `lstar` R package** (reads via S4 slot-walk; writes a pinned-schema object) |
+| SCE `.rds` → store (read) | R + `SingleCellExperiment` | **base R + the `lstar` R package** (S4 slot-walk) |
+| store → SCE `.rds` (write) | R + `SingleCellExperiment` | — (native only: a valid SCE needs the SummarizedExperiment / GRanges machinery) |
 | `.h5mu` ↔ store | `mudata` | — (native only for now) |
-| SCE `.rds` ↔ store | R + `SingleCellExperiment` | — (native only for now) |
 | store ↔ store | — | — |
 
 So `pip install lstar h5py` converts `.h5ad` with no anndata, and a Seurat `.rds` reads/writes with just

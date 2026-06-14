@@ -17,8 +17,10 @@ gates the exit code. Detect by extension (`--from`/`--to` to override); Seurat/S
 **Package-free fallback (`--backend auto|native|direct`).** `auto` (default) uses the format package when
 present, else lstar's own codec: `.h5ad` ↔ store needs only **`h5py`** (no anndata), and a Seurat `.rds`
 reads/writes with **base R + the `lstar` R package** (no SeuratObject — reads via S4 slot-walk, writes a
-pinned-schema object). `--backend direct` forces it; at a wall (unknown version, `BPCells`-backed matrix)
-it says exactly what to install. (`.h5mu`/SCE are native-only for now.)
+pinned-schema object). An **SCE `.rds`** also *reads* package-free (base-R S4 slot-walk; gene names taken
+from `rowRanges` when assay dimnames are stripped). `--backend direct` forces it; at a wall (unknown
+version, `BPCells`-backed matrix) it says exactly what to install. Native-only for now: **SCE write**
+(a valid SCE needs the SummarizedExperiment/GRanges machinery) and `.h5mu`.
 
 ## Convert h5ad → L★ → Seurat (cross-language, library calls)
 ```python
