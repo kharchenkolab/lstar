@@ -38,3 +38,6 @@ R/src/*.o
 R/src/*.so
 R/src/symbols.rds
 testdata/
+lstar_*.tar.gz
+R/lstar_*.tar.gz
+*.Rcheck/
