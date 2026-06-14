@@ -286,6 +286,10 @@ def format_report_text(rep: dict) -> str:
         out += [f"  - {x}" for x in dl]
     else:
         out.append("dropped (not representable in L*): none")
+
+    nc = rep.get("native_check")
+    if nc:
+        out += ["", f"native-acceptance ({nc['format']}): {nc['status']}", f"  {nc['detail']}"]
     return "\n".join(out)
 
 
@@ -302,6 +306,12 @@ def main(argv=None) -> int:
     c.add_argument("--report", action="store_true", help="print the full fidelity report")
     c.add_argument("--report-json", dest="report_json", metavar="FILE", default=None,
                    help="write the fidelity report as JSON to FILE")
+    c.add_argument("--check", dest="check", action="store_true", default=True,
+                   help="native-acceptance check on the target (open + canonical-ops smoke) [default]")
+    c.add_argument("--no-check", dest="check", action="store_false",
+                   help="skip the native-acceptance check")
+    c.add_argument("--strict", action="store_true",
+                   help="exit non-zero if the native-acceptance check fails")
     c.add_argument("-q", "--quiet", action="store_true", help="suppress the summary")
 
     i = sub.add_parser("inspect", help="read SRC and report its L* structure (no write)")
@@ -315,12 +325,22 @@ def main(argv=None) -> int:
         if args.cmd == "convert":
             ds, ff, tf = convert(args.src, args.dst, args.from_fmt, args.to_fmt)
             rep = build_report(ds, args.src, ff, args.dst, tf)
+            nc = None
+            if args.check:
+                from ._native_check import check as _native_check
+                nc = _native_check(args.dst, tf)
+                rep["native_check"] = nc
             if args.report_json:
                 _dump_json(rep, args.report_json)
             if args.report:
                 print(format_report_text(rep))
             elif not args.quiet:
                 _print_summary(ds, args.src, ff, args.dst, tf)
+            if nc and not (args.quiet or args.report):
+                print(f"  native-acceptance ({nc['format']}): {nc['status']} — {nc['detail']}")
+            if args.strict and nc and nc["status"] == "fail":
+                print("lstar convert: native-acceptance check FAILED (--strict)", file=sys.stderr)
+                return 3
         elif args.cmd == "inspect":
             ff = detect_format(args.src, args.from_fmt)
             ds = _read_dataset(args.src, ff)

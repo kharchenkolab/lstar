@@ -59,13 +59,31 @@ print(f"  [py] report JSON: {len(r['axes'])} axes, {len(r['fields'])} fields, "
       f"dropped={len(r['dropped'])}; roles + structure correct")
 PY
 
+# L3: native-acceptance — open the produced object in its native library + a canonical-ops smoke. For an
+# anndata target this runs scanpy (normalize/log1p/pca/rank_genes_groups) when scanpy is present, else
+# falls back to open + structural invariants. A valid conversion must never FAIL the check (--strict).
+RJC="$TMP/report_check.json"
+python3 -m lstar convert "$H5AD" "$OUT" --strict --report-json "$RJC" >/dev/null
+python3 - "$RJC" <<'PY'
+import sys, json
+nc = json.load(open(sys.argv[1]))["native_check"]
+assert nc["format"] == "anndata" and nc["status"] in ("pass", "skip"), nc
+print(f"  [py] native-acceptance (anndata): {nc['status']} — {nc['detail'][:64]}")
+PY
+
 # L2: cross-language routing (h5ad <-> Seurat .rds, bridged by the store + an Rscript driver). Needs R
 # with the lstar package (.Rlib) + SeuratObject; SKIPs cleanly otherwise.
 if command -v Rscript >/dev/null 2>&1 && [ -d "$ROOT/.Rlib/lstar" ] && \
    Rscript -e '.libPaths(c("'"$ROOT"'/.Rlib", .libPaths())); quit(status=!requireNamespace("SeuratObject", quietly=TRUE))' </dev/null >/dev/null 2>&1; then
   export LSTAR_RLIB="$ROOT/.Rlib"
-  RDS="$TMP/mid.rds"; BACK="$TMP/back.h5ad"
-  python3 -m lstar convert "$H5AD" "$RDS"  | sed 's/^/  /'       # h5ad -> Seurat .rds (via R)
+  RDS="$TMP/mid.rds"; BACK="$TMP/back.h5ad"; RJR="$TMP/rds_check.json"
+  python3 -m lstar convert "$H5AD" "$RDS" --strict --report-json "$RJR" | sed 's/^/  /'   # h5ad -> Seurat .rds
+  python3 - "$RJR" <<'PY'
+import sys, json
+nc = json.load(open(sys.argv[1]))["native_check"]
+assert nc["format"] == "seurat" and nc["status"] == "pass", nc      # must OPEN + pass canonical Seurat ops
+print(f"  [py] native-acceptance (seurat): pass — {nc['detail'][:64]}")
+PY
   python3 -m lstar convert "$RDS" "$BACK"  | sed 's/^/  /'       # Seurat .rds -> h5ad (via R)
   python3 - "$H5AD" "$BACK" <<'PY'
 import sys, warnings; warnings.filterwarnings("ignore")
@@ -87,4 +105,4 @@ PY
 else
   echo "  [skip] R / .Rlib / SeuratObject unavailable — skipping the cross-language (Seurat) leg"
 fi
-echo "convert-cli (L0-L2) PASSED."
+echo "convert-cli (L0-L3) PASSED."
