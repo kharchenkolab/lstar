@@ -94,6 +94,13 @@ def _read_uns(node):
     if isinstance(node, h5py.Group):
         if _sparse_attrs(node):
             return _read_matrix(node)
+        if str(node.attrs.get("encoding-type", "")) == "lstar-record":   # reconstruct a structured array
+            cols = {k: np.asarray(_read_uns(node[k])) for k in node.keys()}
+            n = int(node.attrs.get("length", len(next(iter(cols.values()))) if cols else 0))
+            out = np.empty(n, dtype=[(k, v.dtype) for k, v in cols.items()])
+            for k, v in cols.items():
+                out[k] = v
+            return out
         return {k: _read_uns(node[k]) for k in node.keys() if not str(k).startswith("lstar")}
     a = node[...]
     if np.ndim(a) == 0:
@@ -290,6 +297,12 @@ def _w_uns(parent, name, obj):
     elif isinstance(obj, (bool, np.bool_, int, float, np.integer, np.floating)):
         d = parent.create_dataset(name, data=obj)
         d.attrs["encoding-type"], d.attrs["encoding-version"] = "numeric-scalar", _EV["numeric-scalar"]
+    elif isinstance(obj, np.ndarray) and obj.dtype.names:           # structured/record array (e.g.
+        g = parent.create_group(name)                              # rank_genes_groups['names']): a group of
+        g.attrs["encoding-type"], g.attrs["encoding-version"] = "lstar-record", "0.1.0"   # per-field arrays
+        g.attrs["length"] = int(obj.shape[0]) if obj.ndim else 0   # (h5py can't write a numpy U-dtype compound)
+        for fld in obj.dtype.names:
+            _w_uns(g, str(fld), np.asarray(obj[fld]))
     elif isinstance(obj, np.ndarray):
         _w_array(parent, name, obj)
     else:

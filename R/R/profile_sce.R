@@ -193,13 +193,15 @@ read_sce <- function(sce) {
   S <- function(obj, nm) tryCatch(attr(obj, nm), error = function(e) NULL)
   amats <- S(S(S(so, "assays"), "data"), "listData")       # Assays -> SimpleList -> named matrices (genes x cells)
   if (is.null(amats) || !length(amats)) stop("read_sce (direct): object has no assays -- not a SingleCellExperiment?")
-  m1 <- amats[[1]]; cd <- S(so, "colData")           # names: the assay matrix's own dimnames are most reliable;
-  cells <- colnames(m1); if (is.null(cells)) cells <- S(cd, "rownames")          # else colData rownames
-  genes <- rownames(m1); if (is.null(genes)) genes <- S(so, "NAMES")             # else NAMES / rowData rownames
-  if (is.null(genes)) genes <- attr(S(so, "elementMetadata"), "rownames")
-  if (is.null(cells)) cells <- paste0("cell", seq_len(ncol(m1)))
-  if (is.null(genes)) genes <- paste0("g", seq_len(nrow(m1)))
-  cells <- as.character(cells); genes <- as.character(genes)
+  m1 <- amats[[1]]; cd <- S(so, "colData"); ng1 <- nrow(m1); nc1 <- ncol(m1)
+  # gene names can live in the assay dimnames, NAMES, rowData rownames, OR -- for a real SCE with a
+  # GRangesList rowRanges -- in rowRanges@partitioning@NAMES. Pick the first source of the right length.
+  rr_names <- tryCatch(attr(attr(S(so, "rowRanges"), "partitioning"), "NAMES"), error = function(e) NULL)
+  pick_len <- function(L, want) { for (x in L) if (!is.null(x) && length(x) == want) return(as.character(x)); NULL }
+  genes <- pick_len(list(rownames(m1), S(so, "NAMES"), rr_names, attr(S(so, "elementMetadata"), "rownames")), ng1)
+  cells <- pick_len(list(colnames(m1), S(cd, "rownames")), nc1)
+  if (is.null(genes)) genes <- paste0("g", seq_len(ng1))
+  if (is.null(cells)) cells <- paste0("cell", seq_len(nc1))
 
   ds <- list(kind = "sample", spec_version = "0.1", profiles = c("sce@0.1", "object@sce"),
              dropped = character(0), axes = list(), fields = list())

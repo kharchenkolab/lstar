@@ -117,6 +117,26 @@ assert np.allclose(np.asarray(d.obsm["X_pca"]), np.asarray(n.obsm["X_pca"])), "p
 assert str(d.obs["leiden"].dtype) == "category" and list(d.obs["leiden"]) == list(n.obs["leiden"])
 print("  [py] Tier-A direct WRITE: package-free h5py write read + accepted by native anndata, == native write")
 PY
+  # Real-data bug guard (corpus-surfaced): a structured/record uns array (scanpy rank_genes_groups['names'])
+  # the direct reader keeps verbatim in aux must not crash the direct writer (was: h5py "No conversion path").
+  HRG="$TMP/rg.h5ad"; SRG="$TMP/rg.lstar.zarr"; ORG="$TMP/rg_out.h5ad"
+  python3 - "$HRG" <<'PY'
+import sys, warnings; warnings.filterwarnings("ignore")
+import numpy as np, scipy.sparse as sp, pandas as pd, anndata as ad
+np.random.seed(7); X = sp.random(12, 5, density=0.5, format="csr").astype("float32")
+a = ad.AnnData(X=X, obs=pd.DataFrame(index=[f"c{i}" for i in range(12)]), var=pd.DataFrame(index=[f"g{i}" for i in range(5)]))
+a.uns["rank_genes_groups"] = {"names": np.array([("g1", "g2"), ("g3", "g4")], dtype=[("A", "U10"), ("B", "U10")])}
+a.write_h5ad(sys.argv[1])
+PY
+  python3 -m lstar convert "$HRG" "$SRG" --backend direct --no-check -q     # direct read: record array -> aux
+  python3 -m lstar convert "$SRG" "$ORG" --backend direct --no-check -q     # direct write: must not crash
+  python3 - "$ORG" <<'PY'
+import sys, warnings; warnings.filterwarnings("ignore")
+from lstar.profiles.anndata_direct import read_h5ad_direct
+names = read_h5ad_direct(sys.argv[1]).aux["anndata.uns"]["rank_genes_groups"]["names"]
+assert names.dtype.names == ("A", "B") and list(names["A"]) == ["g1", "g3"], names
+print("  [py] Tier-A direct: structured/record uns array round-trips (no h5py crash)")
+PY
 else
   echo "  [skip] h5py absent — skipping the package-free (direct) AnnData read/write checks"
 fi
@@ -226,6 +246,23 @@ for nm in d.fields:
     else:
         assert np.allclose(dense(fd), dense(fn), equal_nan=True), nm
 print(f"  [py] Tier-A direct READ (SCE): base-R slot-walk == native read ({len(d.fields)} fields)")
+PY
+    # Real-data bug guard (corpus-surfaced): a real SCE keeps gene names in rowRanges with the assay matrix
+    # dimnames stripped. Strip them and confirm the direct reader recovers genes from rowRanges@partitioning.
+    SCST="$TMP/sce_stripped.rds"; SST="$TMP/sce_stripped.lstar.zarr"
+    # strip assay dimnames via direct slot access (the SCE assay<- setter validates+refuses; real serialized
+    # SCEs drop them the same way) so gene names are forced to come from rowRanges.
+    Rscript -e '.libPaths(c("'"$ROOT"'/.Rlib", .libPaths()))
+sce <- readRDS("'"$SCEF"'"); a <- attr(sce, "assays"); sl <- attr(a, "data")
+ld <- lapply(attr(sl, "listData"), function(m) { dimnames(m) <- NULL; m })
+attr(sl, "listData") <- ld; attr(a, "data") <- sl; attr(sce, "assays") <- a; saveRDS(sce, "'"$SCST"'")' </dev/null >/dev/null 2>&1
+    python3 -m lstar convert "$SCST" "$SST" --from sce --backend direct --no-check -q
+    python3 - "$SST" "$SCN" <<'PY'
+import sys, warnings; warnings.filterwarnings("ignore")
+import numpy as np, lstar
+d = lstar.read(sys.argv[1]); n = lstar.read(sys.argv[2])
+assert list(np.asarray(d.axis("genes").labels)) == list(np.asarray(n.axis("genes").labels)), "genes from rowRanges"
+print("  [py] Tier-A direct READ (SCE): gene names recovered from rowRanges even with stripped assay dimnames")
 PY
   else
     echo "  [skip] SingleCellExperiment unavailable — skipping the package-free SCE read check"
