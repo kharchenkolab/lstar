@@ -70,8 +70,12 @@ language packages). JS/WASM is the **viewer** data layer: read **and write** the
 both directions (CSC/dense/categorical+factor/mask/partial/aux), chunked + **gzip-compressed via the WASM
 zlib kernel** — and run the view kernels in-browser; it has no format profiles or DE bundles. The writer
 also `addToStore`s derived fields onto an existing (e.g. Python-written) store. Cross-language round-trips
-covered by `conformance/{categorical,induce,nullable,aux,chunked,read_block,stream_reduce,fused_view,
-js}.sh` (the JS-write → Python/C++-read leg is in `js.sh`).
+covered by `conformance/{categorical,induce,nullable,partial,arity3,aux,provenance,collection,chunked,
+read_block,stream_reduce,fused_view,js}.sh`. These test each binding as a **producer**, not just a
+consumer: every rich encoding is *authored from scratch* in Python, R, and (for the core encodings) JS,
+then **cross-read by a different language** asserting native type + exact values — see
+[`conformance/README.md`](conformance/README.md) ("Origin coverage"). (The JS-write → Python/C++-read leg
+is in `js.sh`.)
 
 ---
 
@@ -207,4 +211,5 @@ Prioritized, with **where** the gap is (profile / real corpus / synthetic fixtur
 - [`conformance/sweep/REPORT.md`](conformance/sweep/REPORT.md) — the breadth sweep over whole
   repositories, and every bug it caught.
 - [`conformance/`](conformance/) — the cross-language / cross-format round-trip suite that backs the
-  language matrix.
+  language matrix; [`conformance/README.md`](conformance/README.md) documents the **origin-coverage** rule
+  (test every producer, not just consumers) and the per-test coverage matrix.
