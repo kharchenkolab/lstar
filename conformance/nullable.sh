@@ -4,6 +4,7 @@
 # value-vs-missing distinction intact (distinct from categorical -1 and from float NaN). Python writes a
 # masked integer + a masked string; the C++ core (via R) reconstructs NA-bearing vectors and re-writes;
 # Python reads the mask + values back byte-identical.
+# Origin coverage: Py-authored ✓ | R-authored ✓ (each cross-read by the other language) — see conformance/README.md
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RLIB="$ROOT/.Rlib"
@@ -46,4 +47,32 @@ assert list(np.asarray(d.values)[[0, 2, 4]]) == ["d1", "d2", "d1"]
 assert ds.field("size").mask is None                                       # unmasked field stays unmasked
 assert not lstar.validate(ds)
 print("  [py] read R-written masks back: integer + string validity masks byte-identical")
+PY
+
+# R-AUTHORED nullable (origin coverage): R builds NA-bearing numeric + character vectors from scratch ->
+# Python reads the validity masks. The Py-origin flow above exercises R only as a rewriter of Python masks.
+R2=/tmp/nullable_r2.lstar.zarr
+Rscript -e '.libPaths(c("'"$RLIB"'", .libPaths())); suppressMessages(library(lstar))
+ds <- structure(list(kind="sample", spec_version="0.1", profiles=character(0), dropped=character(0),
+  axes=list(cells=list(labels=paste0("c",1:5), origin="observed", role="observation")),
+  fields=list(
+    n   = list(values=c(10, NA, 7, NA, 3), role="measure", span="cells"),
+    lab = list(values=c("d1", NA, "d2", NA, "d1"), role="label", span="cells"))),
+  class="lstar_dataset")
+lstar_write(ds, "'"$R2"'")
+ds2 <- lstar_read("'"$R2"'"); n <- field_value(ds2,"n"); d <- field_value(ds2,"lab")
+stopifnot(is.na(n[2]), is.na(n[4]), n[1]==10, n[3]==7, is.na(d[2]), identical(d[c(1,3,5)], c("d1","d2","d1")))
+cat("  [R ] authored NA-bearing numeric + character (NA at 2,4) from scratch, rewrote\n")' \
+  2>&1 | grep -vE "^Warning|deprecat|masked|following object|Attaching|^$"
+
+PYTHONPATH="$ROOT/python/src" python3 - "$R2" <<'PY'
+import sys, warnings; warnings.filterwarnings("ignore")
+import numpy as np, lstar
+ds = lstar.read(sys.argv[1]); n, d = ds.field("n"), ds.field("lab")
+assert n.mask is not None and list(np.asarray(n.mask)) == [0, 1, 0, 1, 0]
+assert list(np.asarray(n.values)[[0, 2, 4]]) == [10, 7, 3]
+assert d.mask is not None and list(np.asarray(d.mask)) == [0, 1, 0, 1, 0]
+assert list(np.asarray(d.values)[[0, 2, 4]]) == ["d1", "d2", "d1"]
+assert not lstar.validate(ds)
+print("  [py] read R-authored validity masks: numeric + string value-vs-missing exact (R-origin cross-read)")
 PY

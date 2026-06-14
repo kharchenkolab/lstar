@@ -5,6 +5,7 @@
 # as a native **named list** <-> JSON object (matching Python's dict), incl. provenance ORIGINATING as an
 # R list (pagoda2's facet/recipe + a joint product's input_axes -- the case the axis->facet fallback can't
 # recover). Also guards that a malformed dataset raises a clean R error instead of a core dump.
+# Origin coverage: Py-authored ✓ | R-authored ✓ (case 6 originates in R; each cross-read) — see conformance/README.md
 set -eo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RLIB="$ROOT/.Rlib"

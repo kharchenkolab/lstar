@@ -3,6 +3,7 @@
 # missing sentinel must round-trip across languages with codes, category order, and missingness intact.
 # Python writes -> Python/C++(via R) read it back as the same factor; R writes a factor -> Python reads
 # the same codes/categories/ordered. This is the Tier-1 dtype-fidelity gate and the factor-axis substrate.
+# Origin coverage: Py-authored ✓ | R-authored ✓ (each cross-read by the other language) — see conformance/README.md
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RLIB="$ROOT/.Rlib"

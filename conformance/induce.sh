@@ -4,6 +4,7 @@
 # reader must be able to *check* the link (validate: axis labels == inducing field's categories). This
 # is the Tier-2 factor-axis gate (per induction_design.md §4): independent per-group results land on one
 # axis and align, and drift between an induced axis and its field is caught, never silent.
+# Origin coverage: Py-authored ✓ | R-authored ✓ (each cross-read by the other language) — see conformance/README.md
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RLIB="$ROOT/.Rlib"

@@ -2,6 +2,8 @@
 # JS/WASM conformance: build the WASM kernels, then verify (in Node) the kernels, the zarrita-based
 # L* reader, and the viewer query API against Python-written stores + references. Skips cleanly when
 # emsdk is absent. Point LSTAR_EMCC_PYTHON at a >=3.10 interpreter if the system python is older.
+# Origin coverage: Py-authored ✓ (JS reads) | JS-authored ✓ (writer_make.ts emits every encoding, Python
+# cross-reads via writer_crossread.py) — see conformance/README.md
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 EMSDK="${EMSDK:-$HOME/emsdk}"

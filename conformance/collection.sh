@@ -5,6 +5,7 @@
 # a union cells axis with a sample label, and a joint graph as a (cells x cells) relation --
 # writes it, and verifies Python reads & validates it with the structure and heavy fields intact.
 # Self-contained: no external datasets (the real-data version is examples/conos_collection_demo.R).
+# Origin coverage: R-authored ✓ (builds the collection) | Python cross-reads — see conformance/README.md
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RLIB="$ROOT/.Rlib"
