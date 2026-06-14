@@ -1,0 +1,84 @@
+---
+title: "Converting between single-cell formats with lstar"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Converting between single-cell formats with lstar}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+```
+
+lstar is a lightweight **interchange** layer for single-cell and spatial omics. A dataset is a set of
+**axes** (labelled sets you index by --- `cells`, `genes`, `pca`) and **fields** (typed data over a tuple
+of axes --- counts, embeddings, graphs, labels), serialized to a portable **Zarr** store that R, Python,
+and C++ all read and write. Format conversion is then just `write_Y(read_X(obj))` with the L\* store as the
+universal intermediate, and what a target cannot hold is recorded in `ds$dropped` rather than silently
+lost.
+
+## The model in R, end to end
+
+Everything below runs with only the base dependencies (`Matrix`); no Seurat/SCE needed.
+
+```{r}
+library(lstar)
+
+cells <- paste0("c", 1:6); genes <- paste0("g", 1:4)
+m <- as(matrix(as.numeric(1:24), 6, 4, dimnames = list(cells, genes)), "CsparseMatrix")  # cells x genes
+
+ds <- list(
+  kind = "sample",
+  axes = list(
+    cells = list(labels = cells, origin = "observed", role = "observation"),
+    genes = list(labels = genes, origin = "observed", role = "feature")),
+  fields = list(
+    counts = list(role = "measure", span = c("cells", "genes"), state = "raw", values = m),
+    cluster = list(role = "label", span = "cells", values = factor(c("a", "a", "b", "b", "a", "b")))))
+class(ds) <- "lstar_dataset"
+
+p <- tempfile(fileext = ".lstar.zarr")
+lstar_write(ds, p)            # -> a portable Zarr store (also readable from Python and C++)
+ds2 <- lstar_read(p)
+ds2
+```
+
+A categorical `label` over `cells` induces a **factor axis** whose labels are its categories, so
+independent per-group results align on one axis.
+
+## Converting to and from Seurat / SingleCellExperiment
+
+The profiles map the shared-vocabulary core --- counts, normalized/scaled expression, PCA (scores **and**
+gene loadings), UMAP/t-SNE, clusterings, cell/gene metadata --- between formats. (Not evaluated here, to
+keep the vignette dependency-free.)
+
+```{r, eval = FALSE}
+so  <- write_seurat(ds)          # L* dataset  -> Seurat object
+ds3 <- read_seurat(so)           # Seurat       -> L* dataset
+sce <- write_sce(read_seurat(so))   # Seurat -> SingleCellExperiment, in one line
+```
+
+Cross-language conversions go through the on-disk store --- write it on one side, read it on the other,
+no shared memory and no format re-implementation:
+
+```{r, eval = FALSE}
+# Python:  lstar.write(read_anndata(ad.read_h5ad("pbmc.h5ad")), "pbmc.lstar.zarr")
+ds_from_h5ad <- lstar_read("pbmc.lstar.zarr")
+saveRDS(write_seurat(ds_from_h5ad), "pbmc.rds")
+```
+
+## The `lstar convert` command line
+
+The Python package ships a one-command CLI that detects formats by path, bridges R and Python through the
+store automatically, and reports what crossed (and what was `dropped`):
+
+```sh
+lstar convert pbmc.h5ad pbmc.rds --report        # AnnData -> Seurat, with a fidelity report
+lstar convert pbmc.rds  pbmc.h5ad --check        # + open the result in its native library and smoke-test it
+```
+
+`--backend auto|native|direct` adds a **package-free fallback**: `.h5ad` converts with only `h5py` (no
+anndata), and a Seurat `.rds` reads *and* writes with base R + this package (no SeuratObject); an SCE
+`.rds` *reads* package-free. See `vignette` topics and the package website for the full conversion matrix.
+```
