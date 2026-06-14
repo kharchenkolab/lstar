@@ -2,12 +2,12 @@
 
 ``lstar convert SRC DST`` detects each format from its path, reads SRC into the L* model, and writes DST
 from it. The L* dataset is the universal intermediate, so a conversion is just ``write_Y(read_X(obj))``
-and what a target cannot hold is recorded in ``ds.dropped`` (visible, never silently lost) rather than
-dropped on the floor.
+and what a target cannot hold is recorded in ``ds.dropped`` (visible, never silently lost).
 
-Same-language conversions (AnnData / MuData / store, all Python-side) run in-process. Cross-language ones
-(Seurat / SCE, materialized in R) are bridged by a temporary on-disk store — wired in a later step; this
-build handles the Python-side formats.
+Each format has two backends: a **native** one (uses the domain package — anndata / SeuratObject / …) and,
+where implemented, a **direct** one (lstar's own package-free codec over a base engine: h5py for HDF5,
+base R for ``.rds``). ``--backend auto`` (default) prefers native when the package is importable and falls
+back to the direct codec otherwise; when neither can handle something, lstar says exactly what to install.
 
 Format detection (override with ``--from`` / ``--to``):
   ``.h5ad`` → anndata · ``.h5mu`` → mudata · ``.rds`` → rds (Seurat/SCE, sniffed R-side) ·
@@ -28,9 +28,38 @@ class ConvertError(Exception):
     """A user-facing conversion error (bad path, undetectable format, unsupported route)."""
 
 
+class NeedsPackage(ConvertError):
+    """A wall the package-free path can't cross — names the package + install command to handle it.
+
+    Raised at dispatch (no backend can handle the format) or inside a direct backend (it hit something
+    only the native package can represent, e.g. an external-pointer-backed matrix)."""
+
+    def __init__(self, thing: str, package: str, install_cmd: str):
+        self.thing, self.package, self.install_cmd = thing, package, install_cmd
+        super().__init__(
+            f"{thing} needs the '{package}' package. Install it and re-run — lstar uses it "
+            f"automatically when present:\n    {install_cmd}")
+
+
 # Which language materializes each format.
 _PY = {"anndata", "mudata", "store"}
 _R = {"seurat", "sce", "rds"}
+
+# Native backend per format: (python_pkg | None, r_pkg | None, install_cmd | None).
+_PKG = {
+    "anndata": ("anndata", None, "pip install anndata"),
+    "mudata":  ("mudata", None, "pip install mudata"),
+    "seurat":  (None, "SeuratObject", "Rscript -e 'install.packages(\"SeuratObject\")'"),
+    "sce":     (None, "SingleCellExperiment", "Rscript -e 'BiocManager::install(\"SingleCellExperiment\")'"),
+    "rds":     (None, "SeuratObject", "Rscript -e 'install.packages(\"SeuratObject\")'"),
+    "store":   (None, None, None),
+}
+
+# Package-free (direct) backends — registered as the Tier-A loops land them; empty == "native only".
+_DIRECT_PY_READ: dict = {}     # fmt -> (src) -> Dataset
+_DIRECT_PY_WRITE: dict = {}    # fmt -> (ds, dst) -> None
+_DIRECT_R_READ: dict = {}      # fmt -> (src, bridge_store) -> None  (writes the store)
+_DIRECT_R_WRITE: dict = {}     # fmt -> (bridge_store, dst) -> None
 
 # Extension → format (longest/most-specific first).
 _EXT = [(".h5ad", "anndata"), (".h5mu", "mudata"), (".rds", "rds"),
@@ -60,50 +89,91 @@ def detect_format(path: str, explicit: str | None = None) -> str:
         f"(anndata | mudata | store | seurat | sce)")
 
 
-def _load_py(src: str, fmt: str):
-    """Read a Python-side source into an L* :class:`Dataset`."""
-    if not os.path.exists(src):
-        raise ConvertError(f"source not found: {src}")
-    import lstar
-    if fmt == "store":
-        return lstar.read(src)
-    if fmt == "anndata":
-        try:
-            import anndata as ad
-        except ImportError:
-            raise ConvertError("reading AnnData (.h5ad) needs the 'anndata' package (pip install anndata)")
-        from lstar.profiles.anndata import read_anndata
-        return read_anndata(ad.read_h5ad(src))
-    if fmt == "mudata":
-        try:
-            import mudata as md
-        except ImportError:
-            raise ConvertError("reading MuData (.h5mu) needs the 'mudata' package (pip install mudata)")
-        from lstar.profiles.mudata import read_mudata
-        return read_mudata(md.read_h5mu(src))
-    raise ConvertError(f"{fmt!r} is not a Python-side source format")
+# ── backend dispatch ────────────────────────────────────────────────────────────────────────────────
+
+def _has_direct(fmt: str, direction: str) -> bool:
+    if fmt in _R:
+        return fmt in (_DIRECT_R_READ if direction == "read" else _DIRECT_R_WRITE)
+    return fmt in (_DIRECT_PY_READ if direction == "read" else _DIRECT_PY_WRITE)
 
 
-def _emit_py(ds, dst: str, fmt: str) -> None:
-    """Write an L* :class:`Dataset` out to a Python-side target."""
-    import lstar
+def _native_available(fmt: str) -> bool:
+    pkg_py, pkg_r, _ = _PKG[fmt]
+    if pkg_py is not None:
+        import importlib.util
+        return importlib.util.find_spec(pkg_py) is not None
+    if pkg_r is not None:
+        if fmt == "rds":                              # a bare .rds source: Seurat *or* SCE class suffices
+            return _r_pkg_available("SeuratObject") or _r_pkg_available("SingleCellExperiment")
+        return _r_pkg_available(pkg_r)
+    return True                                       # store: always native
+
+
+def _choose_backend(fmt: str, pref: str, direction: str) -> str:
+    """Return 'native' or 'direct' for *fmt* under *pref* (auto|native|direct); raise with guidance."""
     if fmt == "store":
-        lstar.write(ds, dst)
-        return
-    if fmt == "anndata":
-        from lstar.profiles.anndata import write_anndata
-        write_anndata(ds).write_h5ad(dst)
-        return
-    if fmt == "mudata":
-        from lstar.profiles.mudata import write_mudata
-        write_mudata(ds).write(dst)
-        return
-    raise ConvertError(f"{fmt!r} is not a Python-side target format")
+        return "native"
+    has_direct = _has_direct(fmt, direction)
+    pkg_py, pkg_r, install = _PKG[fmt]
+    if pref == "direct":
+        if not has_direct:
+            raise ConvertError(f"no package-free backend for {fmt!r} yet — use --backend native (or auto)")
+        return "direct"
+    native_ok = _native_available(fmt)
+    if pref == "native":
+        if native_ok:
+            return "native"
+        raise NeedsPackage(f"the native {fmt} backend", pkg_py or pkg_r, install)
+    # auto: prefer native, fall back to the package-free codec, else say exactly what to install
+    if native_ok:
+        return "native"
+    if has_direct:
+        return "direct"
+    raise NeedsPackage(f"reading/writing {fmt}", pkg_py or pkg_r, install)
+
+
+# ── the R engine seam (system Rscript today; webR / R-in-WASM can plug in here for JS/Node hosts) ──────
+
+def run_r_driver(src: str, *args) -> "subprocess.CompletedProcess":
+    """Run an R driver (source string) under the configured engine and return the completed process.
+    This is the seam where webR can later drop in as an alternate engine; today it is system ``Rscript``."""
+    rscript = os.environ.get("LSTAR_RSCRIPT", "Rscript")
+    fh = tempfile.NamedTemporaryFile("w", suffix=".R", delete=False)
+    fh.write(src)
+    fh.close()
+    try:
+        return subprocess.run([rscript, fh.name, *map(str, args)],
+                              stdin=subprocess.DEVNULL, capture_output=True, text=True)
+    except FileNotFoundError:
+        raise ConvertError(
+            "Rscript not found — Seurat/SCE conversion needs R with the lstar package "
+            "(set LSTAR_RSCRIPT / LSTAR_RLIB if they're not on the default path)")
+    finally:
+        os.unlink(fh.name)
+
+
+_R_AVAIL_CACHE: dict = {}
+
+
+def _r_pkg_available(pkg: str) -> bool:
+    if not pkg:
+        return True
+    if pkg in _R_AVAIL_CACHE:
+        return _R_AVAIL_CACHE[pkg]
+    src = ('rlib <- Sys.getenv("LSTAR_RLIB", ""); if (nzchar(rlib)) .libPaths(c(rlib, .libPaths()));'
+           f' cat(if (requireNamespace("{pkg}", quietly = TRUE)) "YES" else "NO")')
+    try:
+        proc = run_r_driver(src)
+        ok = "YES" in (proc.stdout or "")
+    except ConvertError:
+        ok = False                                    # no Rscript at all
+    _R_AVAIL_CACHE[pkg] = ok
+    return ok
 
 
 # An R driver run via `Rscript <file>` (a temp file, not `-e` — R's `-e` buffer is ~8 KB and silently
-# truncates). It bridges Seurat/SCE <-> the L* store: read_seurat/read_sce -> lstar_write (a .rds source),
-# or lstar_read -> write_seurat/write_sce (a .rds target). LSTAR_RLIB prepends the lstar R library path.
+# truncates). It bridges Seurat/SCE <-> the L* store via the native class packages. LSTAR_RLIB prepends
+# the lstar R library path.
 _R_DRIVER = r'''
 args  <- commandArgs(trailingOnly = TRUE)
 mode  <- args[1]; path <- args[2]; store <- args[3]
@@ -129,50 +199,98 @@ cat("LSTAR_R_OK\n")
 
 
 def _run_r(mode: str, path: str, store: str, fmt: str = "") -> None:
-    """Run the R driver for one bridge leg; raise a clean :class:`ConvertError` on any R failure."""
-    rscript = os.environ.get("LSTAR_RSCRIPT", "Rscript")
-    fh = tempfile.NamedTemporaryFile("w", suffix=".R", delete=False)
-    fh.write(_R_DRIVER)
-    fh.close()
-    try:
-        proc = subprocess.run([rscript, fh.name, mode, path, store, fmt],
-                              stdin=subprocess.DEVNULL, capture_output=True, text=True)
-    except FileNotFoundError:
-        raise ConvertError(
-            "Rscript not found — Seurat/SCE conversion needs R with the lstar package "
-            "(set LSTAR_RSCRIPT / LSTAR_RLIB if they're not on the default path)")
-    finally:
-        os.unlink(fh.name)
+    """Run the native R bridge driver for one leg; raise a clean error on any R failure."""
+    proc = run_r_driver(_R_DRIVER, mode, path, store, fmt)
     if proc.returncode != 0 or "LSTAR_R_OK" not in proc.stdout:
         tail = "\n".join((proc.stderr or proc.stdout).strip().splitlines()[-8:])
         raise ConvertError(f"R conversion step failed ({mode}):\n{tail}")
+
+
+# ── Python-side load / emit (native or direct, per dispatch) ──────────────────────────────────────────
+
+def _load_py(src: str, fmt: str, backend: str = "auto"):
+    """Read a Python-side source into an L* :class:`Dataset`."""
+    if not os.path.exists(src):
+        raise ConvertError(f"source not found: {src}")
+    import lstar
+    if fmt == "store":
+        return lstar.read(src)
+    if _choose_backend(fmt, backend, "read") == "direct":
+        return _DIRECT_PY_READ[fmt](src)
+    if fmt == "anndata":
+        import anndata as ad
+        from lstar.profiles.anndata import read_anndata
+        return read_anndata(ad.read_h5ad(src))
+    if fmt == "mudata":
+        import mudata as md
+        from lstar.profiles.mudata import read_mudata
+        return read_mudata(md.read_h5mu(src))
+    raise ConvertError(f"{fmt!r} is not a Python-side source format")
+
+
+def _emit_py(ds, dst: str, fmt: str, backend: str = "auto") -> None:
+    """Write an L* :class:`Dataset` out to a Python-side target."""
+    import lstar
+    if fmt == "store":
+        lstar.write(ds, dst)
+        return
+    if _choose_backend(fmt, backend, "write") == "direct":
+        _DIRECT_PY_WRITE[fmt](ds, dst)
+        return
+    if fmt == "anndata":
+        from lstar.profiles.anndata import write_anndata
+        write_anndata(ds).write_h5ad(dst)
+        return
+    if fmt == "mudata":
+        from lstar.profiles.mudata import write_mudata
+        write_mudata(ds).write(dst)
+        return
+    raise ConvertError(f"{fmt!r} is not a Python-side target format")
+
+
+# ── R-side legs (native bridge or direct base-R codec, per dispatch) ──────────────────────────────────
+
+def _r_read_to_store(src: str, fmt: str, bridge: str, backend: str) -> None:
+    if _choose_backend(fmt, backend, "read") == "direct":
+        _DIRECT_R_READ[fmt](src, bridge)
+    else:
+        _run_r("to_store", src, bridge)
+
+
+def _r_write_from_store(bridge: str, dst: str, fmt: str, backend: str) -> None:
+    if _choose_backend(fmt, backend, "write") == "direct":
+        _DIRECT_R_WRITE[fmt](bridge, dst)
+    else:
+        _run_r("from_store", dst, bridge, "sce" if fmt == "sce" else "seurat")
 
 
 def _bridge_store() -> str:
     return os.path.join(tempfile.mkdtemp(prefix="lstar-convert-"), "bridge.lstar.zarr")
 
 
-def _read_dataset(src: str, ff: str):
+def _read_dataset(src: str, ff: str, backend: str = "auto"):
     """Read any source into an L* :class:`Dataset` — Python in-process, or R (Seurat/SCE) via a temp
     bridge store. Used by ``inspect`` (read-only); ``convert`` keeps its own write-coupled bridging."""
     if ff not in _R:
-        return _load_py(src, ff)
+        return _load_py(src, ff, backend)
     if not os.path.exists(src):
         raise ConvertError(f"source not found: {src}")
     import lstar
     bridge = _bridge_store()
     try:
-        _run_r("to_store", src, bridge)
-        return lstar.read(bridge)                   # arrays land in memory; the bridge can be removed
+        _r_read_to_store(src, ff, bridge, backend)
+        return lstar.read(bridge)                    # arrays land in memory; the bridge can be removed
     finally:
         shutil.rmtree(os.path.dirname(bridge), ignore_errors=True)
 
 
-def convert(src: str, dst: str, from_fmt: str | None = None, to_fmt: str | None = None):
+def convert(src: str, dst: str, from_fmt: str | None = None, to_fmt: str | None = None,
+            backend: str = "auto"):
     """Convert *src* → *dst*. Returns ``(ds, from_fmt, to_fmt)`` with the bridging L* dataset.
 
     Python-side ↔ Python-side runs in-process; any leg in R (Seurat/SCE) is bridged through a temporary
-    on-disk L* store and a short ``Rscript`` driver — the same store, no format re-implementation."""
+    on-disk L* store. *backend* (auto|native|direct) selects the native package vs. lstar's package-free
+    codec per leg."""
     import lstar
     ff = detect_format(src, from_fmt)
     tf = detect_format(dst, to_fmt)
@@ -180,23 +298,23 @@ def convert(src: str, dst: str, from_fmt: str | None = None, to_fmt: str | None 
         tf = "seurat"                              # a bare .rds *target* defaults to Seurat (use --to sce)
     src_r, dst_r = ff in _R, tf in _R
     if not src_r and not dst_r:                    # in-process Python path
-        ds = _load_py(src, ff)
-        _emit_py(ds, dst, tf)
+        ds = _load_py(src, ff, backend)
+        _emit_py(ds, dst, tf, backend)
         return ds, ff, tf
     if not os.path.exists(src):
         raise ConvertError(f"source not found: {src}")
     bridge = _bridge_store()                        # cross-language: bridge through a temp L* store
     try:
         if src_r:
-            _run_r("to_store", src, bridge)
+            _r_read_to_store(src, ff, bridge, backend)
             ds = lstar.read(bridge)
         else:
-            ds = _load_py(src, ff)
-            _emit_py(ds, bridge, "store")
+            ds = _load_py(src, ff, backend)
+            _emit_py(ds, bridge, "store", backend)
         if dst_r:
-            _run_r("from_store", dst, bridge, "sce" if tf == "sce" else "seurat")
+            _r_write_from_store(bridge, dst, tf, backend)
         else:
-            _emit_py(ds, dst, tf)
+            _emit_py(ds, dst, tf, backend)
         return ds, ff, tf
     finally:
         shutil.rmtree(os.path.dirname(bridge), ignore_errors=True)
@@ -303,6 +421,8 @@ def main(argv=None) -> int:
     c.add_argument("dst")
     c.add_argument("--from", dest="from_fmt", default=None, help="override the source format")
     c.add_argument("--to", dest="to_fmt", default=None, help="override the target format")
+    c.add_argument("--backend", choices=("auto", "native", "direct"), default="auto",
+                   help="native (domain package), direct (lstar's package-free codec), or auto [default]")
     c.add_argument("--report", action="store_true", help="print the full fidelity report")
     c.add_argument("--report-json", dest="report_json", metavar="FILE", default=None,
                    help="write the fidelity report as JSON to FILE")
@@ -317,13 +437,15 @@ def main(argv=None) -> int:
     i = sub.add_parser("inspect", help="read SRC and report its L* structure (no write)")
     i.add_argument("src")
     i.add_argument("--from", dest="from_fmt", default=None, help="override the source format")
+    i.add_argument("--backend", choices=("auto", "native", "direct"), default="auto",
+                   help="native, direct (package-free), or auto [default]")
     i.add_argument("--report-json", dest="report_json", metavar="FILE", default=None,
                    help="write the report as JSON to FILE")
 
     args = p.parse_args(argv)
     try:
         if args.cmd == "convert":
-            ds, ff, tf = convert(args.src, args.dst, args.from_fmt, args.to_fmt)
+            ds, ff, tf = convert(args.src, args.dst, args.from_fmt, args.to_fmt, args.backend)
             rep = build_report(ds, args.src, ff, args.dst, tf)
             nc = None
             if args.check:
@@ -343,7 +465,7 @@ def main(argv=None) -> int:
                 return 3
         elif args.cmd == "inspect":
             ff = detect_format(args.src, args.from_fmt)
-            ds = _read_dataset(args.src, ff)
+            ds = _read_dataset(args.src, ff, args.backend)
             rep = build_report(ds, args.src, ff, None, None)
             if args.report_json:
                 _dump_json(rep, args.report_json)
