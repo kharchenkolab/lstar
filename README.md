@@ -1,6 +1,6 @@
 # L★
 
-**A general model for single-cell and spatial omics data — built from *axes* and *fields* — and the
+**A general model for single-cell omics data — built from *axes* and *fields* — and the
 lightweight glue that moves data losslessly between AnnData, Seurat, SingleCellExperiment, and
 pagoda/conos, including their disk-backed forms (backed AnnData, Seurat v5/BPCells, SCE/HDF5Array) — so
 even datasets too large for memory convert in bounded memory.**
