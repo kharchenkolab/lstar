@@ -71,6 +71,38 @@ assert nc["format"] == "anndata" and nc["status"] in ("pass", "skip"), nc
 print(f"  [py] native-acceptance (anndata): {nc['status']} — {nc['detail'][:64]}")
 PY
 
+# Tier-A / P1: the package-free h5py reader (--backend direct) must produce a store value-equal to the
+# native (anndata) read on the core. Forcing --backend direct exercises the fallback even though anndata
+# IS present, so CI covers the path that would otherwise run only on package-absent machines.
+if python3 -c 'import h5py' 2>/dev/null; then
+  SN="$TMP/ta_native.lstar.zarr"; SD="$TMP/ta_direct.lstar.zarr"
+  python3 -m lstar convert "$H5AD" "$SN" --backend native --no-check -q
+  python3 -m lstar convert "$H5AD" "$SD" --backend direct --no-check -q
+  python3 - "$SN" "$SD" <<'PY'
+import sys, warnings; warnings.filterwarnings("ignore")
+import numpy as np, scipy.sparse as sp, lstar
+from lstar import Categorical
+n = lstar.read(sys.argv[1]); d = lstar.read(sys.argv[2])
+dense = lambda f: (f.values.toarray() if sp.issparse(f.values) else np.asarray(f.values))
+assert list(np.asarray(n.axis("cells").labels)) == list(np.asarray(d.axis("cells").labels))
+assert list(np.asarray(n.axis("genes").labels)) == list(np.asarray(d.axis("genes").labels))
+assert np.allclose(dense(n.field("X")), dense(d.field("X"))), "X differs (direct vs native)"
+for nm in d.fields:                                  # every core field present in both must match
+    if nm not in n.fields:
+        continue
+    fn, fd = n.field(nm), d.field(nm)
+    if isinstance(fd.values, Categorical):
+        assert list(fd.values.codes) == list(fn.values.codes), nm
+    else:
+        assert np.allclose(dense(fd), dense(fn), equal_nan=True), nm
+assert d.axis("leiden").role == "factor", "induction missing on the direct path"
+assert not [e for e in lstar.validate(d) if e.startswith("ERROR")]
+print("  [py] Tier-A direct: package-free h5py read == native read on the core (X, obs/var, obsm, induction)")
+PY
+else
+  echo "  [skip] h5py absent — skipping the package-free (direct) AnnData read check"
+fi
+
 # L2: cross-language routing (h5ad <-> Seurat .rds, bridged by the store + an Rscript driver). Needs R
 # with the lstar package (.Rlib) + SeuratObject; SKIPs cleanly otherwise.
 if command -v Rscript >/dev/null 2>&1 && [ -d "$ROOT/.Rlib/lstar" ] && \

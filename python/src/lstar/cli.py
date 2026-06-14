@@ -61,6 +61,14 @@ _DIRECT_PY_WRITE: dict = {}    # fmt -> (ds, dst) -> None
 _DIRECT_R_READ: dict = {}      # fmt -> (src, bridge_store) -> None  (writes the store)
 _DIRECT_R_WRITE: dict = {}     # fmt -> (bridge_store, dst) -> None
 
+
+def _direct_anndata_read(src):                      # lazy: only imports h5py/the codec when used
+    from .profiles.anndata_direct import read_h5ad_direct
+    return read_h5ad_direct(src)
+
+
+_DIRECT_PY_READ["anndata"] = _direct_anndata_read
+
 # Extension → format (longest/most-specific first).
 _EXT = [(".h5ad", "anndata"), (".h5mu", "mudata"), (".rds", "rds"),
         (".lstar.zarr", "store"), (".zarr", "store")]
