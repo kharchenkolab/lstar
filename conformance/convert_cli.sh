@@ -58,4 +58,33 @@ assert all({"role", "span", "encoding", "coverage", "nullable"} <= set(f) for f 
 print(f"  [py] report JSON: {len(r['axes'])} axes, {len(r['fields'])} fields, "
       f"dropped={len(r['dropped'])}; roles + structure correct")
 PY
-echo "convert-cli (L0+L1) PASSED."
+
+# L2: cross-language routing (h5ad <-> Seurat .rds, bridged by the store + an Rscript driver). Needs R
+# with the lstar package (.Rlib) + SeuratObject; SKIPs cleanly otherwise.
+if command -v Rscript >/dev/null 2>&1 && [ -d "$ROOT/.Rlib/lstar" ] && \
+   Rscript -e '.libPaths(c("'"$ROOT"'/.Rlib", .libPaths())); quit(status=!requireNamespace("SeuratObject", quietly=TRUE))' </dev/null >/dev/null 2>&1; then
+  export LSTAR_RLIB="$ROOT/.Rlib"
+  RDS="$TMP/mid.rds"; BACK="$TMP/back.h5ad"
+  python3 -m lstar convert "$H5AD" "$RDS"  | sed 's/^/  /'       # h5ad -> Seurat .rds (via R)
+  python3 -m lstar convert "$RDS" "$BACK"  | sed 's/^/  /'       # Seurat .rds -> h5ad (via R)
+  python3 - "$H5AD" "$BACK" <<'PY'
+import sys, warnings; warnings.filterwarnings("ignore")
+import numpy as np, scipy.sparse as sp, anndata as ad
+a = ad.read_h5ad(sys.argv[1]); b = ad.read_h5ad(sys.argv[2])
+assert a.shape == b.shape, (a.shape, b.shape)
+assert set(a.obs_names) == set(b.obs_names) and set(a.var_names) == set(b.var_names)
+den = lambda M: M.toarray() if sp.issparse(M) else np.asarray(M)
+bi = [list(b.obs_names).index(n) for n in a.obs_names]          # align order (Seurat may reorder)
+bj = [list(b.var_names).index(n) for n in a.var_names]
+ax = den(a.X)
+# the Seurat path reshapes the raw measure into an Assay5 `counts` layer, so the matrix comes back in
+# X *or* layers["counts"] -- accept either; we're checking the values survived, not their slot.
+cands = ([den(b.X)] if b.X is not None else []) + [den(b.layers[L]) for L in b.layers]
+ok = any(c.ndim == 2 and c.shape == ax.shape and np.allclose(ax, c[np.ix_(bi, bj)]) for c in cands)
+assert ok, f"expression values not recovered (checked X + layers {list(b.layers)})"
+print(f"  [py] h5ad -> Seurat(.rds) -> h5ad: shape {b.shape}, expression intact (cross-language round-trip)")
+PY
+else
+  echo "  [skip] R / .Rlib / SeuratObject unavailable — skipping the cross-language (Seurat) leg"
+fi
+echo "convert-cli (L0-L2) PASSED."

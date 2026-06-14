@@ -18,7 +18,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
+import subprocess
 import sys
+import tempfile
 
 
 class ConvertError(Exception):
@@ -98,17 +101,105 @@ def _emit_py(ds, dst: str, fmt: str) -> None:
     raise ConvertError(f"{fmt!r} is not a Python-side target format")
 
 
+# An R driver run via `Rscript <file>` (a temp file, not `-e` — R's `-e` buffer is ~8 KB and silently
+# truncates). It bridges Seurat/SCE <-> the L* store: read_seurat/read_sce -> lstar_write (a .rds source),
+# or lstar_read -> write_seurat/write_sce (a .rds target). LSTAR_RLIB prepends the lstar R library path.
+_R_DRIVER = r'''
+args  <- commandArgs(trailingOnly = TRUE)
+mode  <- args[1]; path <- args[2]; store <- args[3]
+fmt   <- if (length(args) >= 4) args[4] else ""
+rlib  <- Sys.getenv("LSTAR_RLIB", "")
+if (nzchar(rlib)) .libPaths(c(rlib, .libPaths()))
+suppressMessages({
+  library(lstar)
+  if (requireNamespace("SeuratObject", quietly = TRUE)) library(SeuratObject)
+  if (requireNamespace("SingleCellExperiment", quietly = TRUE)) library(SingleCellExperiment)
+})
+if (identical(mode, "to_store")) {                 # R source (.rds) -> L* store
+  obj <- readRDS(path)
+  ds  <- if (inherits(obj, "SingleCellExperiment")) read_sce(obj) else read_seurat(obj)
+  lstar_write(ds, store)
+} else {                                           # L* store -> R target (.rds)
+  ds  <- lstar_read(store)
+  obj <- if (identical(fmt, "sce")) write_sce(ds) else write_seurat(ds)
+  saveRDS(obj, path)
+}
+cat("LSTAR_R_OK\n")
+'''
+
+
+def _run_r(mode: str, path: str, store: str, fmt: str = "") -> None:
+    """Run the R driver for one bridge leg; raise a clean :class:`ConvertError` on any R failure."""
+    rscript = os.environ.get("LSTAR_RSCRIPT", "Rscript")
+    fh = tempfile.NamedTemporaryFile("w", suffix=".R", delete=False)
+    fh.write(_R_DRIVER)
+    fh.close()
+    try:
+        proc = subprocess.run([rscript, fh.name, mode, path, store, fmt],
+                              stdin=subprocess.DEVNULL, capture_output=True, text=True)
+    except FileNotFoundError:
+        raise ConvertError(
+            "Rscript not found — Seurat/SCE conversion needs R with the lstar package "
+            "(set LSTAR_RSCRIPT / LSTAR_RLIB if they're not on the default path)")
+    finally:
+        os.unlink(fh.name)
+    if proc.returncode != 0 or "LSTAR_R_OK" not in proc.stdout:
+        tail = "\n".join((proc.stderr or proc.stdout).strip().splitlines()[-8:])
+        raise ConvertError(f"R conversion step failed ({mode}):\n{tail}")
+
+
+def _bridge_store() -> str:
+    return os.path.join(tempfile.mkdtemp(prefix="lstar-convert-"), "bridge.lstar.zarr")
+
+
+def _read_dataset(src: str, ff: str):
+    """Read any source into an L* :class:`Dataset` — Python in-process, or R (Seurat/SCE) via a temp
+    bridge store. Used by ``inspect`` (read-only); ``convert`` keeps its own write-coupled bridging."""
+    if ff not in _R:
+        return _load_py(src, ff)
+    if not os.path.exists(src):
+        raise ConvertError(f"source not found: {src}")
+    import lstar
+    bridge = _bridge_store()
+    try:
+        _run_r("to_store", src, bridge)
+        return lstar.read(bridge)                   # arrays land in memory; the bridge can be removed
+    finally:
+        shutil.rmtree(os.path.dirname(bridge), ignore_errors=True)
+
+
 def convert(src: str, dst: str, from_fmt: str | None = None, to_fmt: str | None = None):
-    """Convert *src* → *dst*. Returns ``(ds, from_fmt, to_fmt)`` with the bridging L* dataset."""
+    """Convert *src* → *dst*. Returns ``(ds, from_fmt, to_fmt)`` with the bridging L* dataset.
+
+    Python-side ↔ Python-side runs in-process; any leg in R (Seurat/SCE) is bridged through a temporary
+    on-disk L* store and a short ``Rscript`` driver — the same store, no format re-implementation."""
+    import lstar
     ff = detect_format(src, from_fmt)
     tf = detect_format(dst, to_fmt)
-    if ff in _R or tf in _R:
-        raise ConvertError(
-            "Seurat/SCE (R-side) conversion is not wired in this build yet — "
-            "use the Python formats (anndata | mudata | store) for now")
-    ds = _load_py(src, ff)
-    _emit_py(ds, dst, tf)
-    return ds, ff, tf
+    if tf == "rds":
+        tf = "seurat"                              # a bare .rds *target* defaults to Seurat (use --to sce)
+    src_r, dst_r = ff in _R, tf in _R
+    if not src_r and not dst_r:                    # in-process Python path
+        ds = _load_py(src, ff)
+        _emit_py(ds, dst, tf)
+        return ds, ff, tf
+    if not os.path.exists(src):
+        raise ConvertError(f"source not found: {src}")
+    bridge = _bridge_store()                        # cross-language: bridge through a temp L* store
+    try:
+        if src_r:
+            _run_r("to_store", src, bridge)
+            ds = lstar.read(bridge)
+        else:
+            ds = _load_py(src, ff)
+            _emit_py(ds, bridge, "store")
+        if dst_r:
+            _run_r("from_store", dst, bridge, "sce" if tf == "sce" else "seurat")
+        else:
+            _emit_py(ds, dst, tf)
+        return ds, ff, tf
+    finally:
+        shutil.rmtree(os.path.dirname(bridge), ignore_errors=True)
 
 
 def _print_summary(ds, src: str, ff: str, dst: str | None, tf: str | None) -> None:
@@ -232,9 +323,7 @@ def main(argv=None) -> int:
                 _print_summary(ds, args.src, ff, args.dst, tf)
         elif args.cmd == "inspect":
             ff = detect_format(args.src, args.from_fmt)
-            if ff in _R:
-                raise ConvertError("inspecting Seurat/SCE (R-side) is not wired in this build yet")
-            ds = _load_py(args.src, ff)
+            ds = _read_dataset(args.src, ff)
             rep = build_report(ds, args.src, ff, None, None)
             if args.report_json:
                 _dump_json(rep, args.report_json)
