@@ -52,29 +52,43 @@ lstar. Points 2 and 3 are why the model is shaped the way it is.
 
 ## Converting between formats (the common case)
 
-You convert format **X** to format **Y** by reading X into L★ and writing L★ out as Y —
-`write_Y(read_X(...))`. For example, AnnData (Python) → Seurat (R), with the on-disk L★ store acting as
-the bridge between the two languages:
+One command — `lstar convert` detects each format from its path, routes through the L★ store (in-process
+for Python formats, an `Rscript` bridge for Seurat/SCE), and reports what crossed:
 
 ```bash
-# (1) Python: AnnData -> a portable L* store
-python3 -c '
-import anndata as ad, lstar
-from lstar.profiles.anndata import read_anndata
-lstar.write(read_anndata(ad.read_h5ad("pbmc.h5ad")), "pbmc.lstar.zarr")'
+lstar convert pbmc.h5ad pbmc.rds              # AnnData (Python) -> Seurat (R), bridged automatically
+lstar convert atlas.h5ad atlas.lstar.zarr     # -> a portable L* store  (--to sce for SingleCellExperiment)
+lstar convert pbmc.rds  pbmc.h5ad --report    # + a fidelity report (every field, and what was `dropped`)
+```
 
-# (2) R: the L* store -> a Seurat object (.rds)
-Rscript -e 'library(lstar); saveRDS(write_seurat(lstar_read("pbmc.lstar.zarr")), "pbmc.rds")'
+Two things make it more than a one-liner:
+
+- a **fidelity report** (`--report` / `--report-json`) lists every axis and field with its role, state,
+  and `provenance`, and — crucially — **`dropped`**: what the target couldn't represent, made visible
+  rather than silently lost.
+- a **native-acceptance check** (`--check`, on by default; `--strict` to gate the exit code) opens the
+  result in its *own* library and runs a canonical-ops smoke (scanpy / Seurat / scran), so you know the
+  native analysis tools will accept it — not just that the bytes round-tripped.
+
+Under the hood it is just `write_Y(read_X(...))` with the on-disk L★ store as the bridge between the two
+languages, which you can also drive directly:
+
+```bash
+python3 -c 'import anndata as ad, lstar; from lstar.profiles.anndata import read_anndata
+lstar.write(read_anndata(ad.read_h5ad("pbmc.h5ad")), "pbmc.lstar.zarr")'      # AnnData -> L* store
+Rscript -e 'library(lstar); saveRDS(write_seurat(lstar_read("pbmc.lstar.zarr")), "pbmc.rds")'  # -> Seurat
 ```
 
 The shared-vocabulary core — raw counts, normalized/scaled expression, PCA (scores **and** gene
-loadings), UMAP/t-SNE, clusterings, cell/gene metadata — survives. Whatever the target can't hold
-(e.g. neighbor graphs through Seurat) is written to its sidecar and listed in the dataset's `dropped`
-manifest, so nothing vanishes unannounced. A runnable, commented version is
+loadings), UMAP/t-SNE, clusterings, cell/gene metadata — survives. Whatever the target can't hold (e.g.
+neighbor graphs through Seurat) is listed in the dataset's `dropped` manifest, so nothing vanishes
+unannounced. A runnable, commented version is
 [`examples/convert_h5ad_to_seurat.sh`](examples/convert_h5ad_to_seurat.sh).
 
-See **[docs/conversions.md](docs/conversions.md)** for the full glue guide: every reader/writer, the
-conversion matrix, exactly what is preserved vs. recorded as dropped, and how versions are detected.
+See **[docs/conversions.md](docs/conversions.md)** for the full glue guide (every reader/writer, the
+conversion matrix, what is preserved vs. recorded as dropped, version detection) and
+**[docs/mapping.md](docs/mapping.md)** for the deterministic role→slot contract — what lands where in
+each target, and the native-acceptance check that verifies the native tools won't choke.
 
 ## Building a dataset directly
 
@@ -178,7 +192,8 @@ misc/         the design proposal (Lstar_proposal.md) + plans
 ## Documentation
 
 - **[docs/principles.md](docs/principles.md)** — the idea and the reasoning. *Start here.*
-- **[docs/conversions.md](docs/conversions.md)** — using lstar as glue between formats.
+- **[docs/conversions.md](docs/conversions.md)** — using lstar as glue between formats (incl. the `lstar convert` CLI).
+- **[docs/mapping.md](docs/mapping.md)** — the deterministic role→slot conversion contract + native-acceptance.
 - **[docs/model.md](docs/model.md)** — the model: axes, fields, roles, collections.
 - **[docs/format.md](docs/format.md)** — the on-disk Zarr layout.
 - **[docs/examples.md](docs/examples.md)** — worked, commented examples (Python, R, C++, browser).

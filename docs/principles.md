@@ -87,6 +87,14 @@ recoverable; silent loss is a bug.
 > **Example.** AnnData → L★ → AnnData over a real 40k-cell dataset is a fixed point across repeated
 > cycles: `X`, `obs`, `obsm`, and `obsp` come back identical; `uns` shows up in `ds.dropped`.
 
+A round-trip back to the *same* format, though, only proves L★ preserved its own representation — it
+says nothing about whether the object handed to Seurat is *canonical Seurat that Seurat's own tools
+accept*. So conversion is also **deterministic and native-valid by construction**: a field's typed
+`(role, state, span)` fixes its canonical slot in each target (a `DimReduc` with a `_`-terminated key, a
+categorical `groupby`, the `logcounts` assay scran looks for), and `lstar convert --check` verifies it by
+opening the result in its *own* library and running a canonical-ops smoke. The full role→slot contract is
+**[mapping.md](mapping.md)**.
+
 This is the practical, near-term reason to use lstar — moving data between AnnData, Seurat, and SCE
 without losing your analysis. The dedicated guide is **[conversions.md](conversions.md)**.
 

@@ -11,8 +11,11 @@ container.
 - [**Principles**](principles.md) — the idea, the design philosophy, the long tail, and why a
   collection is not a tensor. Start here.
 - [**Conversions**](conversions.md) — using lstar as **glue between formats** (AnnData, Seurat, SCE,
-  Conos): the functions, the conversion matrix, what is preserved vs. recorded as dropped. *The
-  near-term reason to use lstar.*
+  Conos): the one-command `lstar convert` CLI, the functions, the conversion matrix, what is preserved
+  vs. recorded as dropped. *The near-term reason to use lstar.*
+- [**Mapping**](mapping.md) — the **deterministic role→slot contract**: what lands where in each target
+  (and why it is deterministic), the per-format conventions native tools require, and the
+  **native-acceptance** check (`lstar convert --check`) that verifies the output, not just the round-trip.
 - [**Model**](model.md) — a precise, worked description of axes, fields, roles, the induction rules,
   and collections, building on the proposal.
 - [**Format**](format.md) — the Zarr store layout (the on-disk spec).
@@ -40,6 +43,10 @@ ds.add_field("counts", sp.random(100, 50, density=0.1, format="csc"),
 lstar.write(ds, "sample.lstar.zarr")
 ds2 = lstar.read("sample.lstar.zarr")
 ```
+
+To **convert** an existing file rather than author data, it is one command —
+`lstar convert in.h5ad out.rds` detects the formats, bridges Python↔R through the store, reports what was
+`dropped`, and checks the result opens in its native tools (see [Conversions](conversions.md)).
 
 ## Design tenets (the short version)
 
