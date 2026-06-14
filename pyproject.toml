@@ -23,7 +23,10 @@ dependencies = ["numpy", "scipy", "zarr<3"]
 
 [project.optional-dependencies]
 anndata = ["anndata"]
-test = ["anndata", "numcodecs"]
+mudata = ["mudata"]
+direct = ["h5py"]                       # the package-free AnnData backend (lstar convert --backend direct)
+all = ["anndata", "mudata", "h5py"]
+test = ["anndata", "mudata", "h5py", "numcodecs"]
 
 [project.scripts]
 lstar = "lstar.cli:main"
@@ -34,6 +37,9 @@ Source = "https://github.com/kharchenkolab/lstar"
 
 [tool.setuptools]
 package-dir = { "" = "python/src" }
+
+[tool.setuptools.package-data]
+lstar = ["py.typed"]                    # PEP 561: ship the type hints to consumers
 
 [tool.setuptools.packages.find]
 where = ["python/src"]

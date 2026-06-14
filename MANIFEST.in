@@ -3,3 +3,4 @@ graft core/include
 include python/src/lstar/_accel.cpp
 include README.md LICENSE
 recursive-include python/tests *.py
+include python/src/lstar/py.typed
