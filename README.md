@@ -69,6 +69,20 @@ Two things make it more than a one-liner:
 - a **native-acceptance check** (`--check`, on by default; `--strict` to gate the exit code) opens the
   result in its *own* library and runs a canonical-ops smoke (scanpy / Seurat / scran), so you know the
   native analysis tools will accept it — not just that the bytes round-tripped.
+- a **package-free fallback** (`--backend auto|native|direct`): each conversion uses the format's native
+  package when it's installed, else lstar's own codec — so you don't *need* the domain packages for the
+  common cases. What works **without** the native packages:
+
+  | convert (no native package) | needs only |
+  |---|---|
+  | `.h5ad` ↔ store — read **and** write | `lstar` + `h5py` |
+  | Seurat `.rds` ↔ store — read **and** write | `lstar` + base R (no SeuratObject) |
+  | SCE `.rds` → store — **read** | `lstar` + base R (no SingleCellExperiment) |
+  | store → SCE `.rds` (write) · `.h5mu` ↔ store | **native-only** — needs `SingleCellExperiment` / `mudata` |
+
+  At a wall (an unknown on-disk version, a `BPCells`-backed matrix) it stops and names exactly what to
+  install. The heavy *analysis* packages (scanpy / full Seurat / scran) are **never** needed to convert —
+  only for the optional `--check`. Details: [docs/conversions.md](docs/conversions.md).
 
 Under the hood it is just `write_Y(read_X(...))` with the on-disk L★ store as the bridge between the two
 languages, which you can also drive directly:
