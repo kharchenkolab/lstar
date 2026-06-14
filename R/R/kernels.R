@@ -59,7 +59,16 @@ stream_col_stats <- function(path, field, block = 4096L, n_threads = 1L, lognorm
 #' chunked CSC store, with the same optional depth-normalized `log1p` view as [stream_col_stats()] (the
 #' counterpart of pagoda2's `colSumByFacView`). `group` is a per-cell integer bucket in `[0, ngroups)`
 #' in store row order (out-of-range cells are skipped; pass NA cells as `0` for an explicit `<NA>` row).
-#' @return a `ngroups x ngenes` numeric matrix (row `g` = group `g`).
+#' @param path path to a `*.lstar.zarr` store.
+#' @param field name of a `(cells, genes)` CSC measure field in the store.
+#' @param group integer per-cell group bucket in `[0, ngroups)`, in store row order.
+#' @param ngroups number of groups (the result has one row per group).
+#' @param lognorm compute over the `log1p` view of the measure (default `FALSE`).
+#' @param depth optional per-cell depth vector (length = n cells, store row order) for the normalized view.
+#' @param depthScale depth scaling factor used with `depth` (default 1).
+#' @param block streaming block size in cells per pass (default 4096).
+#' @param n_threads threads per block reduction: 1 = serial (default), N = N threads, 0 = all cores.
+#' @return a `ngroups x ngenes` numeric matrix (row `g` = the per-gene sums for group `g`).
 #' @export
 lstar_stream_col_sum_by_group <- function(path, field, group, ngroups, lognorm = FALSE, depth = NULL,
                                           depthScale = 1, block = 4096L, n_threads = 1L) {
@@ -74,6 +83,11 @@ lstar_stream_col_sum_by_group <- function(path, field, group, ngroups, lognorm =
 #' Reads genes `[g_lo, g_hi)` (0-based, half-open) of a CSC measure as a `dgCMatrix` (cells x genes),
 #' decoding only the store chunks that overlap the range. The general block-read primitive a consumer
 #' drives to build out-of-core reductions over an L* store without implementing them in lstar.
+#' @param path path to a `*.lstar.zarr` store.
+#' @param field name of a `(cells, genes)` CSC measure field in the store.
+#' @param g_lo,g_hi 0-based, half-open gene (column) range `[g_lo, g_hi)` to read.
+#' @param cell_names,gene_names optional dimnames for the returned matrix (default `NULL`).
+#' @return a `dgCMatrix` (cells x genes) holding the requested gene columns.
 #' @export
 lstar_read_block <- function(path, field, g_lo, g_hi, cell_names = NULL, gene_names = NULL) {
   b <- lstar_cpp_read_csc_block(path, field, as.integer(g_lo), as.integer(g_hi))
@@ -90,6 +104,12 @@ lstar_read_block <- function(path, field, g_lo, g_hi, cell_names = NULL, gene_na
 #' once** (an ascending sweep over sorted-unique columns), then restores the caller's order. Efficient
 #' for scattered subsets (e.g. overdispersed genes for PCA) -- unlike a per-column read it does not
 #' re-decode a chunk once per gene it contains.
+#' @param path path to a `*.lstar.zarr` store.
+#' @param field name of a `(cells, genes)` CSC measure field in the store.
+#' @param genes the gene columns to gather, as names (matched against `all_genes`) or 1-based indices.
+#' @param all_genes the field's full gene-label vector, used to resolve `genes` to column positions.
+#' @param cell_names optional row names (cells) for the returned matrix (default `NULL`).
+#' @return a `dgCMatrix` (cells x `length(genes)`) in the caller's requested gene order.
 #' @export
 lstar_read_genes <- function(path, field, genes, all_genes, cell_names = NULL) {
   idx <- if (is.character(genes)) match(genes, all_genes) else as.integer(genes)

@@ -4,12 +4,28 @@
 \alias{lstar_write}
 \title{Write an R dataset to an L* Zarr store.}
 \usage{
-lstar_write(ds, path)
+lstar_write(
+  ds,
+  path,
+  chunk_elems = NULL,
+  compression = c("none", "gzip", "zlib"),
+  level = 5L
+)
 }
 \arguments{
 \item{ds}{an \code{lstar_dataset} (as returned by \code{\link[=lstar_read]{lstar_read()}} or a profile reader)}
 
 \item{path}{output store path (a \verb{*.lstar.zarr} directory)}
+
+\item{chunk_elems}{if non-NULL, chunk each array along its first axis so each chunk holds about
+this many elements (e.g. \code{1e6}). This is what lets a reader stream/block-read only the touched
+chunks (e.g. \code{\link[=lstar_read_block]{lstar_read_block()}}, \code{stream_col_stats()}); the default (NULL) writes each array as
+a single chunk -- the portable, byte-identical-to-before default.}
+
+\item{compression}{chunk codec: \code{"none"} (default), \code{"gzip"}, or \code{"zlib"} (numcodecs-compatible;
+readable by the C++ core and zarr-python).}
+
+\item{level}{compression level 1-9 (default 5), used when \code{compression} is \code{"gzip"}/\code{"zlib"}.}
 }
 \value{
 the output \code{path}, invisibly.
@@ -18,5 +34,5 @@ the output \code{path}, invisibly.
 Write an R dataset to an L* Zarr store.
 }
 \seealso{
-\code{\link[=lstar_read]{lstar_read()}}
+\code{\link[=lstar_read]{lstar_read()}}, \code{\link[=lstar_read_block]{lstar_read_block()}}
 }
