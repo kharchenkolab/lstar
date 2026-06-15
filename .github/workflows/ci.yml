@@ -106,6 +106,8 @@ jobs:
         run: bash conformance/real_corpus_r.sh
       - name: collection conformance (collection of samples R -> L* -> Python)
         run: bash conformance/collection.sh
+      - name: true-collection conformance (collection_from divergent + disjoint/cross-species; Py<->R; pseudobulk)
+        run: bash conformance/collection_true.sh
       - name: blocked-reader conformance (R/C++ bounded col stats == full read)
         run: bash conformance/stream_reduce.sh
       - name: fused-view reducer conformance (depth+log1p mean/var + grouped sum == in-memory)

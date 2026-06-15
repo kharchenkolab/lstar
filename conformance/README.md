@@ -64,6 +64,7 @@ same `lstar::write`).
 | `provenance.sh` | field provenance (recipe / facet) | ✓ | ✓ (case 6 originates in R) | — |
 | `induce.sh` | induced factor-axis link | ✓ | ✓ | ✓ (writer) |
 | `collection.sh` | collection-of-samples (not a tensor) | reads | ✓ (R origin) | — |
+| `collection_true.sh` | `collection_from` heterogeneity (divergent + disjoint/cross-species genes) | ✓ | ✓ | — |
 | `de.sh` | DE bundle (`rank_genes_groups`) | ✓ | reads | — | one-directional by design |
 | `js.sh` (writer) | every encoding, chunked + gzip | reads | — | ✓ |
 
