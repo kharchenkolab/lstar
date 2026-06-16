@@ -107,7 +107,7 @@ test_that("Conos profile reconstructs a collection (read_conos)", {
   expect_s3_class(con, "Conos")
   expect_equal(length(con$samples), 2L)
   expect_true(all(vapply(con$samples, function(s) inherits(s, "Pagoda2"), logical(1))))
-  expect_equal(nrow(getPca(con$samples[["A"]])), 8L)        # per-sample PCA restored
+  expect_equal(nrow(con$samples[["A"]]$reductions$PCA), 8L) # per-sample PCA restored (read_conos -> $reductions$PCA)
   expect_false(is.null(con$graph))                          # joint graph restored
   expect_false(is.null(con$embedding))                      # joint embedding restored
   expect_equal(nlevels(con$clusters$leiden$groups), 2L)     # joint clustering restored

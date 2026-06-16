@@ -38,12 +38,15 @@ sn <- names(con$samples)
 for (s in sn) stopifnot(!is.null(ds$axes[[paste0("cells.", s)]]), !is.null(ds$fields[[paste0("counts.", s)]]))
 stopifnot(!is.null(ds$axes$cells), !is.null(ds$fields$graph),     # the joint layer is graph/embedding/cluster
           !is.null(ds$fields$embedding), identical(ds$fields$sample$subtype, "design"))
-cat(sprintf("  [R ] write_conos: %d samples, joint graph(%d edges)+embedding+clusters, NO corrected matrix\n",
-            length(sn), Matrix::nnzero(ds$fields$graph$values)))
+gstat <- function(m) { m <- methods::as(m, "CsparseMatrix"); c(nnz = Matrix::nnzero(m), sum = sum(m@x)) }
+g0 <- gstat(ds$fields$graph$values)                              # the integration graph IS the conos result:
+cat(sprintf("  [R ] write_conos: %d samples, joint graph(nnz=%d, w=%.3f)+embedding+clusters, NO corrected matrix\n",
+            length(sn), g0["nnz"], g0["sum"]))                   #     track its nnz + weight-sum through every hop
 
-co2 <- read_conos(ds)                                             # L* -> Conos (round-trip)
-stopifnot(inherits(co2, "Conos"), length(co2$samples) == length(sn), !is.null(co2$graph))
-cat("  [R ] read_conos round-trip: live Conos object (samples + joint graph restored)\n")
+co2 <- read_conos(ds)                                            # L* -> Conos (round-trip)
+stopifnot(inherits(co2, "Conos"), length(co2$samples) == length(sn),
+          igraph::ecount(co2$graph) == g0["nnz"] / 2)            # undirected: nnz symmetric entries == 2*edges
+cat("  [R ] read_conos round-trip: live Conos object (samples + joint graph edges intact)\n")
 
 so <- write_seurat(ds)                                            # collection -> Seurat v5 split
 stopifnot(inherits(so, "Seurat"), isTRUE(validObject(so)), inherits(so[["RNA"]], "Assay5"))
@@ -53,11 +56,14 @@ stopifnot(length(lyr) == length(sn),                             # per-sample ra
           "embedding" %in% SeuratObject::Reductions(so),        # joint embedding as a DimReduc
           all(c("sample", "leiden") %in% colnames(so[[]])))     # clusters + sample in metadata
 back <- read_seurat(so)                                          # native acceptance: reads BACK as collection
+g1 <- gstat(back$fields$graph$values)                            # the JOINT GRAPH (the alignment result) must
 stopifnot(identical(back$kind, "collection"), length(grep("^cells\\.", names(back$axes))) == length(sn),
-          !is.null(back$fields$graph))                           # the JOINT GRAPH survives Seurat -> L* (not just the layers)
+          g1["nnz"] == g0["nnz"], abs(g1["sum"] - g0["sum"]) < 1e-4)  # survive Seurat->L* with FULL fidelity
 co3 <- read_conos(back)                                          # ... and reconstitutes a live Conos with the graph
-stopifnot(inherits(co3, "Conos"), length(co3$samples) == length(sn), !is.null(co3$graph))
-cat(sprintf("  [R ] -> Seurat v5: %d split layers + Graphs + DimReduc + meta; read_seurat -> read_conos -> Conos (graph restored)\n", length(lyr)))
+stopifnot(inherits(co3, "Conos"), length(co3$samples) == length(sn),
+          igraph::ecount(co3$graph) == g0["nnz"] / 2)            # edges intact after the whole chain
+cat(sprintf("  [R ] -> Seurat v5: %d layers + Graphs + DimReduc + meta; graph survives Seurat->L* (nnz=%d, w=%.3f) -> live Conos\n",
+            length(lyr), g1["nnz"], g1["sum"]))
 saveRDS(sn, "/tmp/conos_sn.rds")
 lstar_write(ds, "'"$CS"'")' 2>&1 | grep -E "^  \[(R|skip)"
 
@@ -65,20 +71,25 @@ lstar_write(ds, "'"$CS"'")' 2>&1 | grep -E "^  \[(R|skip)"
 if [ -d "$CS" ]; then
 PYTHONPATH="$ROOT/python/src" python3 - "$CS" <<'PY'
 import sys, warnings; warnings.filterwarnings("ignore")
-import numpy as np, lstar
+import numpy as np, scipy.sparse as sp, lstar
 from lstar import write_anndata, read_anndata
 import scanpy as sc
 c = lstar.read(sys.argv[1])
+g0 = sp.csc_matrix(c.field("graph").values)                     # the integration graph = the conos result
 a = write_anndata(c)                                             # collection -> single AnnData (flattening)
 assert a.X is not None and float(a.X.min()) >= 0                 # X = RAW joint counts (no corrected matrix)
 assert {"sample", "leiden"} <= set(a.obs.columns)
 assert any(k.startswith("X_") for k in a.obsm) and "connectivities" in a.obsp and "neighbors" in a.uns
+gA = sp.csc_matrix(a.obsp["graph"])                             # graph -> obsp with FULL fidelity (nnz + weights)
+assert gA.nnz == g0.nnz and abs(float(gA.data.sum()) - float(g0.data.sum())) < 1e-4, (gA.nnz, g0.nnz)
+gB = sp.csc_matrix(read_anndata(a).field("graph").values)      # ... and survives the round-trip back to L*
+assert gB.nnz == g0.nnz, (gB.nnz, g0.nnz)
 drop = set(a.uns.get("lstar/dropped", []))
 assert any(d.startswith("pca.") for d in drop), drop          # per-sample latent spaces honestly dropped
 sc.tl.umap(a)                                                   # scanpy CONSUMES the conos graph, no extra prep
 assert a.obsm["X_umap"].shape[0] == a.n_obs
-print(f"  [py] -> AnnData: X={a.shape} raw joint counts, obsp graph+connectivities, obsm embedding, "
-      f"obs sample/leiden; scanpy umap ran on the conos graph; dropped per-sample pca")
+print(f"  [py] -> AnnData: X={a.shape} raw joint counts; graph -> obsp (nnz={gA.nnz}, faithful) survives the "
+      f"round-trip back to L*; scanpy umap ran on the conos graph; per-sample pca dropped")
 PY
 fi
 
@@ -86,7 +97,7 @@ fi
 # A Conos-shaped collection assembled by R collection_from: 3 samples, divergent gene sets, a joint kNN
 # graph + embedding + clustering over the union -- exactly write_conos's output shape, but with no Conos
 # dependency. Convert to Seurat v5 (R) and AnnData (Python) and assert the structure survives.
-Rscript -e '.libPaths(c("'"$RLIB"'", .libPaths())); suppressMessages({library(lstar); library(Matrix); library(SeuratObject)})
+Rscript -e '.libPaths(c("'"$RLIB"'", .libPaths())); suppressMessages({library(lstar); library(Matrix); library(SeuratObject)}); set.seed(1)
 mk <- function(s, nc, genes) { d <- list(kind="sample", axes=list(), fields=list())
   d$axes$cells <- list(labels=paste0("c",seq_len(nc)), origin="observed", role="observation")
   d$axes$genes <- list(labels=genes, origin="observed", role="feature")
@@ -100,6 +111,7 @@ samp <- list(A=mk("A",80, c(shared,paste0("Aonly",1:30))),
 ntot <- 80+100+70
 g <- as(Matrix::Matrix(Matrix::rsparsematrix(ntot,ntot,0.05,symmetric=TRUE),sparse=TRUE),"CsparseMatrix")
 g <- abs(g); diag(g) <- 0
+g0 <- Matrix::nnzero(g)                                          # track the joint graph through the conversion
 col <- collection_from(samp, joint=list(umap=matrix(rnorm(ntot*2),ntot,2),
                                         graph=g,
                                         clusters=factor(sample(paste0("k",1:4),ntot,replace=TRUE))))
@@ -111,24 +123,29 @@ ug <- length(union(union(c(shared,paste0("Aonly",1:30)),paste0("Bonly",1:20)),pa
 stopifnot(length(lyr)==3, nrow(so)==ug,                         # 3 split layers over the UNION gene set
           "graph" %in% SeuratObject::Graphs(so), "umap" %in% SeuratObject::Reductions(so),
           "clusters" %in% colnames(so[[]]))
+g1 <- Matrix::nnzero(read_seurat(so)$fields$graph$values)       # joint graph survives Seurat->L* with fidelity
+stopifnot(g1 == g0)
 # divergent genes unioned (absent-in-sample genes are 0 in that layer, present in the union features)
 stopifnot("Aonly1" %in% rownames(so), "Conly1" %in% rownames(so))
-cat(sprintf("  [R ] synthetic divergent collection -> Seurat v5: 3 layers over %d union genes + graph + umap\n", ug))
+cat(sprintf("  [R ] synthetic divergent collection -> Seurat v5: 3 layers over %d union genes + graph(nnz=%d, faithful) + umap\n", ug, g1))
 lstar_write(col, "'"$SS"'")' 2>&1 | grep -E "^  \[R"
 
 PYTHONPATH="$ROOT/python/src" python3 - "$SS" <<'PY'
 import sys, warnings; warnings.filterwarnings("ignore")
-import numpy as np, lstar
-from lstar import write_anndata
+import numpy as np, scipy.sparse as sp, lstar
+from lstar import write_anndata, read_anndata
 c = lstar.read(sys.argv[1])
 assert c.kind == "collection" and "genes" not in c.axes        # per-sample genes.<s>, no shared genes axis
+g0 = sp.csc_matrix(c.field("graph").values)
 a = write_anndata(c)                                            # -> single union-genes AnnData
 ng_union = len({g for s in "ABC" for g in np.asarray(c.axis(f"genes.{s}").labels)})
 assert a.shape == (250, ng_union), (a.shape, ng_union)
 assert a.X is not None and {"sample", "clusters"} <= set(a.obs.columns)
 assert any(k.startswith("X_") for k in a.obsm) and "connectivities" in a.obsp
+gA = sp.csc_matrix(a.obsp["graph"])                            # joint graph -> obsp, edges intact, survives round-trip
+assert gA.nnz == g0.nnz and sp.csc_matrix(read_anndata(a).field("graph").values).nnz == g0.nnz
 # the per-sample heterogeneity is unioned into one matrix (an AnnData is one matrix, by construction)
 assert "Aonly1" in set(a.var_names) and "Conly1" in set(a.var_names)
-print(f"  [py] synthetic divergent collection -> AnnData: X=(250 x {ng_union}) union, obsp graph, obsm embedding, obs sample/clusters")
+print(f"  [py] synthetic divergent collection -> AnnData: X=(250 x {ng_union}) union, obsp graph(nnz={gA.nnz}, faithful), obsm embedding, obs sample/clusters")
 PY
 echo "conos conversion conformance PASSED."
