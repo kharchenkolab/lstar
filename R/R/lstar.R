@@ -135,6 +135,11 @@ lstar_write <- function(ds, path, chunk_elems = NULL, compression = c("none", "g
                 state = f$state %||% "", subtype = f$subtype %||% "")
     if (enc %in% c("csc", "csr")) {
       m <- if (enc == "csc") as(v, "CsparseMatrix") else as(v, "RsparseMatrix")
+      # A symmetric (dsCMatrix) or triangular sparse matrix stores only ONE triangle; the store holds
+      # explicit entries and other readers (Py/C++/JS) don't know about R's symmetric compression, so
+      # materialize BOTH triangles -- otherwise an undirected graph/relation loses half its edges cross-language.
+      if (methods::is(m, "symmetricMatrix") || methods::is(m, "triangularMatrix"))
+        m <- methods::as(m, "generalMatrix")
       out$data <- as.numeric(m@x)
       out$indices <- if (enc == "csc") as.numeric(m@i) else as.numeric(m@j)
       out$indptr <- as.numeric(m@p)
