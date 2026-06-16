@@ -87,6 +87,11 @@ bash conformance/collection_true.sh >/tmp/lstar_coltrue.log 2>&1 \
   && pass "heterogeneous collections (divergent/disjoint genes) round-trip Py<->R, never flattened" \
   || { echo "  FAIL collection_true"; tail -20 /tmp/lstar_coltrue.log; exit 1; }
 
+echo "== conos conversions (Conos<->L*; collection -> Seurat v5 split + AnnData; graph-only, no corrected matrix) =="
+bash conformance/conos.sh >/tmp/lstar_conos.log 2>&1 \
+  && { pass "Conos collection round-trips + converts to Seurat v5 / AnnData"; grep "\[skip\]" /tmp/lstar_conos.log | sed 's/^/      /'; } \
+  || { echo "  FAIL conos"; tail -25 /tmp/lstar_conos.log; exit 1; }
+
 echo "== chunked+gzip conformance (Python -> C++ -> Python) =="
 bash conformance/chunked.sh >/tmp/lstar_chunk.log 2>&1 \
   && pass "chunked+compressed cross-impl + transpose" || { echo "  FAIL chunked"; tail -15 /tmp/lstar_chunk.log; exit 1; }

@@ -80,15 +80,22 @@ write_seurat <- function(ds) {
   cells <- as.character(ds$axes$cells$labels)
   genes <- as.character(ds$axes$genes$labels)
 
-  # Collection (a Seurat v5 *split*/integration object reads as per-sample measures over
-  # (cells.<s>, genes)). Join them into the union (cells, genes) measure(s) so a single assay can be
-  # built, recording each cell's sample so the assay can be re-split into v5 layers below.
+  # Collection -> a Seurat v5 *split* assay. Per-sample measures live over (cells.<s>, genes[.<s>]): a
+  # Seurat-v5-split origin shares the `genes` axis across samples, whereas a Conos collection gives each
+  # sample its OWN genes.<s> axis (gene sets that overlap, differ, or are entirely disjoint). Either way,
+  # union the gene sets, place each sample's counts into the union columns BY NAME (so divergent genes are
+  # tolerated, absent genes left 0), and record each cell's sample so the assay re-splits into v5 layers.
+  # No corrected/integrated expression is fabricated -- the joint layer is the graph + embedding + clusters.
   split_by <- NULL
   persamp <- Filter(function(nm) {
     f <- ds$fields[[nm]]; sp <- as.character(f$span)
-    identical(f$role, "measure") && length(sp) == 2 && sp[2] == "genes" && startsWith(sp[1], "cells.")
+    identical(f$role, "measure") && length(sp) == 2 && startsWith(sp[1], "cells.") &&
+      (sp[2] == "genes" || startsWith(sp[2], "genes."))
   }, names(ds$fields))
   if (length(persamp)) {
+    if (!length(genes))                                  # no shared genes axis (Conos): union per-sample sets
+      genes <- Reduce(union, lapply(persamp, function(nm)
+        as.character(ds$axes[[as.character(ds$fields[[nm]]$span)[2]]]$labels)))
     soc <- stats::setNames(rep(NA_character_, length(cells)), cells)
     roots <- sub("\\.[^.]+$", "", persamp)
     for (root in unique(roots)) {
@@ -96,16 +103,25 @@ write_seurat <- function(ds) {
                           dimnames = list(cells, genes))
       st <- "raw"
       for (nm in persamp[roots == root]) {
-        ca <- as.character(ds$fields[[nm]]$span)[1]
-        sc <- as.character(ds$axes[[ca]]$labels)
-        M[sc, ] <- as(ds$fields[[nm]]$values, "CsparseMatrix")
-        soc[sc] <- sub("^cells\\.", "", ca)
+        sp <- as.character(ds$fields[[nm]]$span)
+        sc <- as.character(ds$axes[[sp[1]]]$labels)
+        sg <- as.character(ds$axes[[sp[2]]]$labels)
+        M[sc, sg] <- as(ds$fields[[nm]]$values, "CsparseMatrix")   # by name -> tolerates divergent genes
+        soc[sc] <- sub("^cells\\.", "", sp[1])
         st <- ds$fields[[nm]]$state %||% st
         ds$fields[[nm]] <- NULL
       }
       ds$fields[[root]] <- list(values = M, role = "measure", span = c("cells", "genes"), state = st)
     }
     split_by <- soc
+    # per-sample latent spaces (pca.<s>) are sample-local rotations, not a joint reduction: not
+    # representable as one Seurat DimReduc over all cells, so drop them rather than fabricate a joint space.
+    for (nm in names(ds$fields)) {
+      sp <- as.character(ds$fields[[nm]]$span)
+      if (identical(ds$fields[[nm]]$role, "embedding") && length(sp) == 2 && startsWith(sp[1], "cells.")) {
+        ds$dropped <- c(ds$dropped, nm); ds$fields[[nm]] <- NULL
+      }
+    }
   }
 
   meas <- .fields_over(ds, c("cells", "genes"), role = "measure")
@@ -176,6 +192,19 @@ write_seurat <- function(ds) {
     }
   }
 
+  # joint cell-cell graphs (relation over (cells, cells)) -> Seurat Graph objects. For a Conos collection
+  # this is the integration graph -- the substance of the joint analysis, carried natively (no corrected
+  # expression needed; Seurat stores graphs independently of any assay matrix).
+  for (nm in names(ds$fields)) {
+    f <- ds$fields[[nm]]
+    if (identical(f$role, "relation") && length(f$span) == 2 && all(as.character(f$span) == "cells")) {
+      A <- as(f$values, "CsparseMatrix"); dimnames(A) <- list(cells, cells)
+      g <- SeuratObject::as.Graph(A)
+      SeuratObject::DefaultAssay(g) <- "RNA"
+      so[[nm]] <- g
+    }
+  }
+
   if (!is.null(ds$fields[["ident"]])) {            # restore the active identity (Idents)
     iv <- ds$fields[["ident"]]$values
     if (!is.factor(iv)) iv <- as.factor(iv)
@@ -205,6 +234,7 @@ write_seurat <- function(ds) {
   if (!is.null(split_by) && inherits(so[["RNA"]], "Assay5")) {   # re-split a v5 integration object
     so[["RNA"]] <- split(so[["RNA"]], f = unname(split_by[cells]))
   }
+  if (length(ds$dropped)) so@misc$lstar_dropped <- unique(as.character(ds$dropped))  # never silently lose
   so
 }
 

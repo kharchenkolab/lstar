@@ -544,10 +544,103 @@ def _restore_uns(adata, ds):
             adata.uns[k] = v
 
 
+def _flatten_collection(ds):
+    """Flatten a `kind='collection'` Dataset into a single union-genes `sample` Dataset that AnnData can
+    hold. Per-sample raw measures (``<f>.<s>`` over ``(cells.<s>, genes.<s>)``) are assembled BY NAME into
+    one ``(union cells x union genes)`` matrix --- exactly what Conos' own ``getJointCountMatrix()`` does ---
+    and placed in ``X``; the joint layer carries over unchanged (embedding -> obsm, clustering -> obs,
+    integration graph -> obsp). Crucially this does NOT invent a corrected expression space: ``X`` is the
+    raw joint counts and the integration lives in the graph/embedding, just as scanpy stores a graph-
+    integrated dataset (Harmony/BBKNN/scVI: corrected rep in obsm, raw X, graph in obsp). Per-sample latent
+    spaces (``pca.<s>``) and the ``samples`` axis have no AnnData slot and are recorded in ``dropped``."""
+    import scipy.sparse as sp
+
+    from ..model import Dataset
+
+    cells = list(np.asarray(ds.axis("cells").labels, dtype=str))
+    cpos = {c: i for i, c in enumerate(cells)}
+    # group per-sample measures by their root field name (counts.<s> -> "counts")
+    persamp = {}
+    for nm, f in ds.fields.items():
+        sp1 = f.span or []
+        if f.role == "measure" and len(sp1) == 2 and sp1[0].startswith("cells.") and \
+           (sp1[1] == "genes" or sp1[1].startswith("genes.")):
+            persamp.setdefault(nm.rsplit(".", 1)[0], []).append(nm)
+    if not persamp:
+        raise ValueError("write_anndata: collection has no per-sample (cells.<s>, genes.<s>) measure to assemble")
+    union_genes = []                                            # stable union of per-sample gene sets
+    seen = set()
+    for members in persamp.values():
+        for nm in members:
+            for g in np.asarray(ds.axis(ds.field(nm).span[1]).labels, dtype=str):
+                if g not in seen:
+                    seen.add(g); union_genes.append(g)
+    gpos = {g: i for i, g in enumerate(union_genes)}
+
+    out = Dataset(kind="sample")
+    out.add_axis("cells", cells, origin=ds.axis("cells").origin, role="observation")
+    out.add_axis("genes", union_genes, role="feature")
+    for root, members in persamp.items():                       # assemble the union matrix per measure root
+        rows, cols, data, state = [], [], [], "raw"
+        for nm in members:
+            f = ds.field(nm)
+            sc = np.asarray(ds.axis(f.span[0]).labels, dtype=str)
+            sg = np.asarray(ds.axis(f.span[1]).labels, dtype=str)
+            m = sp.coo_matrix(f.values)
+            ri = np.fromiter((cpos[c] for c in sc[m.row]), dtype=np.int64, count=m.nnz)
+            ci = np.fromiter((gpos[g] for g in sg[m.col]), dtype=np.int64, count=m.nnz)
+            rows.append(ri); cols.append(ci); data.append(m.data)
+            state = f.state or state
+        M = sp.csr_matrix((np.concatenate(data), (np.concatenate(rows), np.concatenate(cols))),
+                          shape=(len(cells), len(union_genes)))
+        nm_out = "X" if root in ("counts", "X") else root      # primary raw measure -> X (scanpy-idiomatic)
+        out.add_field(nm_out, M.tocsc(), role="measure", span=["cells", "genes"], state=state,
+                      provenance={"anndata": "X"} if nm_out == "X" else None)
+
+    graph_nm = None
+    for nm, f in ds.fields.items():                            # carry the joint layer over the union cells
+        sp1 = f.span or []
+        if sp1 == ["cells"]:                                   # design label / clustering -> obs
+            out.add_field(nm, f.values, role=f.role, span=["cells"], encoding=f.encoding, subtype=f.subtype)
+        elif f.role == "embedding" and len(sp1) == 2 and sp1[0] == "cells":   # joint embedding -> obsm
+            out.add_axis(sp1[1], list(np.asarray(ds.axis(sp1[1]).labels, dtype=str)),
+                         origin=ds.axis(sp1[1]).origin, role="coordinate")
+            out.add_field(nm, f.values, role="embedding", span=["cells", sp1[1]])
+        elif f.role == "relation" and sp1 == ["cells", "cells"]:              # integration graph -> obsp
+            out.add_field(nm, f.values, role="relation", span=["cells", "cells"], subtype=f.subtype)
+            if graph_nm is None:
+                graph_nm = nm
+    # make the integration graph scanpy-native: alias it to obsp['connectivities'] + uns['neighbors'] so
+    # sc.tl.leiden / sc.tl.umap run on the converted object with no extra steps.
+    if graph_nm is not None and graph_nm != "connectivities":
+        out.add_field("connectivities", ds.field(graph_nm).values, role="relation",
+                      span=["cells", "cells"], subtype="knn", provenance={"anndata": "obsp/connectivities"})
+        out.aux["anndata.uns"] = {"neighbors": {"connectivities_key": "connectivities",
+                                                "distances_key": "distances",
+                                                "params": {"method": "conos", "metric": "euclidean"}}}
+    dropped = [nm for nm, f in ds.fields.items()               # per-sample latent + samples-axis measures
+               if (f.span or [])[:1] != ["cells"] and nm not in
+               {m for ms in persamp.values() for m in ms} and not
+               (f.role == "relation" and (f.span or []) == ["cells", "cells"]) and not
+               (f.role == "embedding" and (f.span or [])[:1] == ["cells"])]
+    out._collection_dropped = sorted(set(dropped))
+    return out
+
+
 def write_anndata(ds):
-    """Write an L* Dataset back to an AnnData object (lossy where no slot fits)."""
+    """Write an L* Dataset back to an AnnData object (lossy where no slot fits).
+
+    A ``kind='collection'`` dataset (e.g. from Conos) is first flattened (:func:`_flatten_collection`) into
+    a single union-genes AnnData: ``X`` = raw joint counts, ``obs`` = sample + clustering, ``obsm`` = the
+    joint embedding, ``obsp`` = the integration graph (also aliased to ``connectivities`` for scanpy). No
+    corrected expression matrix is fabricated."""
     import anndata as ad
     import pandas as pd
+
+    col_dropped = []
+    if getattr(ds, "kind", "sample") == "collection":
+        ds = _flatten_collection(ds)
+        col_dropped = getattr(ds, "_collection_dropped", [])
 
     cells = np.asarray(ds.axis("cells").labels, dtype=str)
     genes = np.asarray(ds.axis("genes").labels, dtype=str)
@@ -561,7 +654,7 @@ def write_anndata(ds):
     varm = {k: np.asarray(f.values) for k, f in r["varm"].items()}
     obsp = {k: f.values for k, f in r["obsp"].items()}
     varp = {k: f.values for k, f in r["varp"].items()}
-    dropped = list(r["dropped"])
+    dropped = list(r["dropped"]) + list(col_dropped)
 
     obs_df = pd.DataFrame(obs, index=cells) if obs else pd.DataFrame(index=cells)
     var_df = pd.DataFrame(var, index=genes) if var else pd.DataFrame(index=genes)

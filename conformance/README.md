@@ -65,6 +65,7 @@ same `lstar::write`).
 | `induce.sh` | induced factor-axis link | ✓ | ✓ | ✓ (writer) |
 | `collection.sh` | collection-of-samples (not a tensor) | reads | ✓ (R origin) | — |
 | `collection_true.sh` | `collection_from` heterogeneity (divergent + disjoint/cross-species genes) | ✓ | ✓ | — |
+| `conos.sh` | Conos graph-only collection -> Seurat v5 split + AnnData (no corrected matrix) | reads | ✓ (real Conos + R synth) | — |
 | `de.sh` | DE bundle (`rank_genes_groups`) | ✓ | reads | — | one-directional by design |
 | `js.sh` (writer) | every encoding, chunked + gzip | reads | — | ✓ |
 

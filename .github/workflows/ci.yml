@@ -108,6 +108,8 @@ jobs:
         run: bash conformance/collection.sh
       - name: true-collection conformance (collection_from divergent + disjoint/cross-species; Py<->R; pseudobulk)
         run: bash conformance/collection_true.sh
+      - name: conos conversions (collection -> Seurat v5 split + AnnData; real Conos leg skips, synthetic leg runs)
+        run: bash conformance/conos.sh
       - name: blocked-reader conformance (R/C++ bounded col stats == full read)
         run: bash conformance/stream_reduce.sh
       - name: fused-view reducer conformance (depth+log1p mean/var + grouped sum == in-memory)
