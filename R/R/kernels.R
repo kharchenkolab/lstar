@@ -91,7 +91,7 @@ lstar_stream_col_sum_by_group <- function(path, field, group, ngroups, lognorm =
 #' @export
 lstar_read_block <- function(path, field, g_lo, g_hi, cell_names = NULL, gene_names = NULL) {
   b <- lstar_cpp_read_csc_block(path, field, as.integer(g_lo), as.integer(g_hi))
-  m <- new("dgCMatrix", i = as.integer(b$indices), p = as.integer(b$indptr),
+  m <- methods::new("dgCMatrix", i = as.integer(b$indices), p = as.integer(b$indptr),
            x = as.numeric(b$data), Dim = as.integer(c(b$nrows, b$ncols)))
   if (!is.null(cell_names)) rownames(m) <- cell_names
   if (!is.null(gene_names)) colnames(m) <- gene_names[(g_lo + 1L):g_hi]
@@ -116,7 +116,7 @@ lstar_read_genes <- function(path, field, genes, all_genes, cell_names = NULL) {
   if (anyNA(idx)) stop("some requested genes are not in the store")
   u <- sort(unique(idx))                                    # 1-based, sorted, unique
   b <- lstar_cpp_read_csc_cols(path, field, as.integer(u - 1L))      # decode each chunk once
-  m <- new("dgCMatrix", i = as.integer(b$indices), p = as.integer(b$indptr),
+  m <- methods::new("dgCMatrix", i = as.integer(b$indices), p = as.integer(b$indptr),
            x = as.numeric(b$data), Dim = as.integer(c(b$nrows, length(u))))
   m <- m[, match(idx, u), drop = FALSE]                     # restore caller order (and any duplicates)
   if (!is.null(cell_names)) rownames(m) <- cell_names

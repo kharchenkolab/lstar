@@ -521,24 +521,24 @@ write_seurat <- function(ds) {
   # Guarded: only define when the class isn't already present (so we never clash with a loaded
   # SeuratObject). Direct-write only runs when SeuratObject is absent, so these are normally fresh.
   if (!methods::isClass("JackStrawData"))
-    methods::setClass("JackStrawData", where = .lstar_seurat_classes, representation(empirical.p.values = "matrix",
+    methods::setClass("JackStrawData", where = .lstar_seurat_classes, methods::representation(empirical.p.values = "matrix",
       fake.reduction.scores = "matrix", empirical.p.values.full = "matrix", overall.p.values = "matrix"))
   if (!methods::isClass("DimReduc"))
-    methods::setClass("DimReduc", where = .lstar_seurat_classes, representation(cell.embeddings = "matrix", feature.loadings = "matrix",
+    methods::setClass("DimReduc", where = .lstar_seurat_classes, methods::representation(cell.embeddings = "matrix", feature.loadings = "matrix",
       feature.loadings.projected = "matrix", assay.used = "character", global = "logical",
       stdev = "numeric", jackstraw = "JackStrawData", misc = "list", key = "character"))
   if (!methods::isClass("Assay"))
-    methods::setClass("Assay", where = .lstar_seurat_classes, representation(counts = "ANY", data = "ANY", scale.data = "matrix",
+    methods::setClass("Assay", where = .lstar_seurat_classes, methods::representation(counts = "ANY", data = "ANY", scale.data = "matrix",
       assay.orig = "ANY", var.features = "vector", meta.features = "data.frame", misc = "ANY",
       key = "character"))
   if (!methods::isClass("LogMap"))                       # v5: a logical (entities x layers) membership map
     methods::setClass("LogMap", where = .lstar_seurat_classes, contains = "matrix")
   if (!methods::isClass("Assay5"))
-    methods::setClass("Assay5", where = .lstar_seurat_classes, representation(layers = "list", cells = "LogMap",
+    methods::setClass("Assay5", where = .lstar_seurat_classes, methods::representation(layers = "list", cells = "LogMap",
       features = "LogMap", default = "integer", assay.orig = "character", meta.data = "data.frame",
       misc = "list", key = "character"))
   if (!methods::isClass("Seurat"))
-    methods::setClass("Seurat", where = .lstar_seurat_classes, representation(assays = "list", meta.data = "data.frame",
+    methods::setClass("Seurat", where = .lstar_seurat_classes, methods::representation(assays = "list", meta.data = "data.frame",
       active.assay = "character", active.ident = "factor", graphs = "list", neighbors = "list",
       reductions = "list", images = "list", project.name = "character", misc = "list",
       version = "ANY", commands = "list", tools = "list"))

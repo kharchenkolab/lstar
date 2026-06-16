@@ -36,7 +36,8 @@ from any list of separately-processed samples rather than hand-assembled.
 \examples{
 mk <- function(s, nc, genes) {
   ds <- list(kind = "sample", axes = list(), fields = list())
-  ds$axes$cells <- list(labels = paste0("c", seq_len(nc)), origin = "observed", role = "observation")
+  ds$axes$cells <- list(labels = paste0("c", seq_len(nc)),
+                        origin = "observed", role = "observation")
   ds$axes$genes <- list(labels = genes, origin = "observed", role = "feature")
   m <- as(Matrix::Matrix(matrix(rpois(nc * length(genes), 2), nc), sparse = TRUE), "CsparseMatrix")
   ds$fields$counts <- list(role = "measure", span = c("cells", "genes"), state = "raw", values = m)

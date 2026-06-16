@@ -17,8 +17,8 @@ BugReports: https://github.com/kharchenkolab/lstar/issues
 LinkingTo: cpp11
 Imports: Matrix, methods, stats, utils
 Suggests: SeuratObject, Seurat, SingleCellExperiment, SummarizedExperiment,
-    S4Vectors, GenomicRanges, igraph, BPCells, HDF5Array, testthat (>= 3.0.0),
-    knitr, rmarkdown
+    S4Vectors, GenomicRanges, igraph, conos, pagoda2, BPCells, HDF5Array,
+    testthat (>= 3.0.0), knitr, rmarkdown
 VignetteBuilder: knitr
 SystemRequirements: C++17, zlib
 Roxygen: list(markdown = TRUE)
