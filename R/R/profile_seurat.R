@@ -97,20 +97,27 @@ write_seurat <- function(ds) {
       genes <- Reduce(union, lapply(persamp, function(nm)
         as.character(ds$axes[[as.character(ds$fields[[nm]]$span)[2]]]$labels)))
     soc <- stats::setNames(rep(NA_character_, length(cells)), cells)
+    cell_pos <- stats::setNames(seq_along(cells), cells)            # name -> union row/col, vectorized
+    gene_pos <- stats::setNames(seq_along(genes), genes)
     roots <- sub("\\.[^.]+$", "", persamp)
     for (root in unique(roots)) {
-      M <- Matrix::Matrix(0, nrow = length(cells), ncol = length(genes), sparse = TRUE,
-                          dimnames = list(cells, genes))
-      st <- "raw"
+      # Assemble the union (cells x genes) matrix from triplets in ONE sparseMatrix() call. Each sample's
+      # block is remapped into the union rows/cols BY NAME -- divergent genes tolerated, absent left 0.
+      # (Avoid `M[sc, sg] <- block` subset-assignment into a zeroed sparse matrix: it is O(panel size) per
+      # write and hangs on real panels with ~30k genes.)
+      ii <- integer(0); jj <- integer(0); xx <- numeric(0); st <- "raw"
       for (nm in persamp[roots == root]) {
         sp <- as.character(ds$fields[[nm]]$span)
         sc <- as.character(ds$axes[[sp[1]]]$labels)
         sg <- as.character(ds$axes[[sp[2]]]$labels)
-        M[sc, sg] <- as(ds$fields[[nm]]$values, "CsparseMatrix")   # by name -> tolerates divergent genes
+        tr <- as(as(ds$fields[[nm]]$values, "CsparseMatrix"), "TsparseMatrix")   # 0-based (i, j, x) triplets
+        ii <- c(ii, cell_pos[sc[tr@i + 1L]]); jj <- c(jj, gene_pos[sg[tr@j + 1L]]); xx <- c(xx, tr@x)
         soc[sc] <- sub("^cells\\.", "", sp[1])
         st <- ds$fields[[nm]]$state %||% st
         ds$fields[[nm]] <- NULL
       }
+      M <- Matrix::sparseMatrix(i = ii, j = jj, x = xx, dims = c(length(cells), length(genes)),
+                                dimnames = list(cells, genes))
       ds$fields[[root]] <- list(values = M, role = "measure", span = c("cells", "genes"), state = st)
     }
     split_by <- soc
