@@ -179,6 +179,9 @@ segfault, not profile bugs) after 3 sweep-caught fixes; plus real `ZeiselBrain`.
 |---|:---:|:---:|:---:|---|
 | collection (multi-sample, heterogeneous, even cross-species) | ✓ | ✓ | ✓ | real `conI.rds`/`con.rds` (4 & 8 samples); synthetic collection |
 | joint graph / per-sample embeddings | ✓ | ✓ | ✓ | auto-upgrades an old igraph graph |
+| `read_conos(ds)` → live Conos (round-trip) | ✓ | ✓ | — | rebuilds per-sample Pagoda2 + joint graph/embedding/clusters; `conformance/conos.sh` |
+| collection → **Seurat v5** split assay | ✓ | ✓ | ✓ | per-sample layers over union genes + `Graphs()` + `DimReduc` + meta; reads back as a collection; no corrected matrix |
+| collection → **AnnData** (one matrix; flattens) | ✓ | ✓ | ✓ | X = raw joint counts, graph → `obsp`/`connectivities` (+ `uns['neighbors']`), embedding → `obsm`; per-sample PCA dropped |
 | pagoda2 viewer schema + DE/pseudobulk over a factor axis | ✓ | — | ✓ | mock pagoda2 (no real pagoda2 object in the corpus yet) |
 | real pagoda2 object | ✗ | — | — | none sourced yet |
 

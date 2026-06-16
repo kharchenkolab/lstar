@@ -51,11 +51,26 @@ Cross-format+language: `bash examples/roundtrip_xlang.sh <N> <file.h5ad>`
 ```r
 ds <- lstar::write_conos(conos_obj)          # samples axis + per-sample axes/counts/pca +
                                              # union cells + sample label + joint graph(relation)
+co <- lstar::read_conos(ds)                  # and back: a live Conos (per-sample Pagoda2 + joint layer)
 ```
 ```r
 # Seurat v5 split assay as a collection
 obj[["RNA"]] <- split(obj[["RNA"]], f = obj$sample)
 ds <- lstar::read_seurat(obj)                # kind == "collection"
+```
+
+## Convert a collection to a native collection format (no corrected matrix needed)
+A graph-only integration (Conos) has no corrected expression space; both targets store it natively.
+```r
+so <- lstar::write_seurat(ds)   # -> Seurat v5 SPLIT assay: per-sample raw layers over union genes,
+                                # joint graph -> Graphs(), embedding -> DimReduc, clusters -> meta.data.
+                                # read_seurat(so) reads it back as a collection. per-sample PCA -> dropped.
+```
+```python
+a = lstar.write_anndata(lstar.read("study.lstar.zarr"))   # -> ONE AnnData (flattens to a union matrix):
+# X = raw joint counts; obsp = graph (aliased to connectivities + uns['neighbors']); obsm = embedding;
+# obs = sample + clusters. sc.tl.leiden / sc.tl.umap run with no extra prep. Seurat v5 keeps the
+# collection structure; AnnData flattens it -- keep the L* store to retain per-sample data.
 ```
 
 ## Per-gene mean/variance at scale (lazy, streamed, threaded)

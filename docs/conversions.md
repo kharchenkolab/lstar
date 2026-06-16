@@ -100,7 +100,7 @@ You only need a handful. The reader/writer for each format:
 | **AnnData** (`.h5ad`/`.zarr`) | `read_anndata(adata)` | `write_anndata(ds)` | Python | `lstar.profiles.anndata` |
 | **Seurat** (legacy v2 → v5) | `read_seurat(so)` | `write_seurat(ds)` | R | `lstar` |
 | **SingleCellExperiment** | `read_sce(sce)` | `write_sce(ds)` | R | `lstar` |
-| **Conos** (a collection) | `write_conos(co)` → L★ | *(read-back deferred)* | R | `lstar` |
+| **Conos** (a collection) | `write_conos(co)` → L★ | `read_conos(ds)` → Conos | R | `lstar` |
 | **pagoda2** | *(via Conos members; standalone reader planned)* | | R | `lstar` |
 | **L★ store** | `lstar.read(path)` / `lstar_read(path)` | `lstar.write(ds, path)` / `lstar_write(ds, path)` | Py / R | `lstar` |
 
@@ -308,12 +308,34 @@ ds <- write_conos(conos_object)   # a Conos object -> an L* collection:
 #   a `samples` axis; per-sample cells.{s}/genes.{s} axes + counts.{s} measures;
 #   a union `cells` axis with a `sample` label; the joint embedding, clusters, and integration graph.
 lstar_write(ds, "study.lstar.zarr")   # reads back identically in Python / C++ / the browser
+co  <- read_conos(ds)             # and back: rebuilds a live Conos (per-sample Pagoda2 + joint layer)
 ```
 
 A split Seurat v5 object converts the same way through `read_seurat` (example
 [7 in examples.md](examples.md#7-r-seurat-v5-split-collection)). The heterogeneity these preserve —
 samples with different cells, even different gene sets — is exactly what concatenating into one matrix
 would erase.
+
+**A collection converts to the native collection formats, too** — and *without* a corrected expression
+matrix, which a graph-based integration like Conos never computes (it integrates in graph space only):
+
+```r
+so <- write_seurat(ds)   # -> a Seurat v5 SPLIT assay: per-sample raw layers over the UNION genes,
+#   the joint graph as Graphs(), the embedding as a DimReduc, clusters/sample in meta.data.
+#   read_seurat(so) reads it straight back as an L* collection. Per-sample PCA -> so@misc$lstar_dropped.
+```
+```python
+from lstar import read, write_anndata
+a = write_anndata(read("study.lstar.zarr"))   # -> ONE AnnData (a single matrix, so this flattens):
+#   X = raw joint counts; obs = sample + clusters; obsm["X_*"] = embedding; obsp = the graph (aliased to
+#   `connectivities` + uns["neighbors"] so sc.tl.leiden / sc.tl.umap run with no extra prep).
+```
+
+Neither target needs a corrected matrix — Seurat v5 (un-integrated split) and scanpy (Harmony/BBKNN/scVI
+leave `X` raw and put the integration in `obsm`/`obsp`) both store graph-based integration natively.
+Fidelity asymmetry: **Seurat v5 preserves the collection** (split layers round-trip to a collection);
+**AnnData flattens it** to one union matrix. Keep the L★ store to retain the full per-sample structure.
+Covered by `conformance/conos.sh` (a real Conos object + a synthetic divergent-genes collection).
 
 ---
 

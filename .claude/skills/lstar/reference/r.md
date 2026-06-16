@@ -47,8 +47,14 @@ ds  <- write_conos(conos_obj, clustering = NULL)   # samples axis + per-sample a
 ### Collections
 - Seurat v5: `obj[["RNA"]] <- split(obj[["RNA"]], f = obj$sample)` makes a split assay; `read_seurat`
   reads it as `kind="collection"` (per-sample `cells.<s>` axes + `counts.<s>` + `samples` axis + a
-  `sample` design label).
-- Conos: `write_conos` ingests the whole object as a collection (see `reference/model.md`).
+  `sample` design label). The inverse holds: `write_seurat(collection)` builds a v5 split assay over the
+  **union** genes (per-sample raw layers + joint graph→`Graphs()` + embedding→`DimReduc` + meta), and
+  `read_seurat` reads it straight back as a collection.
+- Conos: `write_conos` ingests the whole object as a collection; `read_conos(ds)` rebuilds a live Conos
+  (per-sample Pagoda2 + the joint graph/embedding/clusters). A Conos integrates in **graph space only** —
+  no corrected expression matrix — and that maps cleanly: the joint graph is a `relation`, carried to
+  Seurat `Graphs()` or AnnData `obsp`. (`write_anndata` flattens a collection to one union-genes AnnData.)
+  See `reference/conversions.md` ("Collections") and `conformance/conos.sh`.
 
 ## Version recognition (graceful)
 - Seurat: `Assay` (v3/v4, fixed counts/data/scale.data slots) vs `Assay5` (v5, layers); a

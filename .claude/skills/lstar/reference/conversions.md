@@ -35,7 +35,7 @@ lstar inspect a.h5ad --report-json r.json  # read + structured report, no write
 | AnnData (`.h5ad`/`.zarr`) | `read_anndata(adata)` | `write_anndata(ds)` | Py | `from lstar.profiles.anndata import read_anndata, write_anndata` |
 | Seurat (legacy v2 → v5) | `read_seurat(so[, assay])` | `write_seurat(ds)` | R | `library(lstar)` |
 | SingleCellExperiment | `read_sce(sce)` | `write_sce(ds)` | R | `library(lstar)` |
-| Conos (collection) | `write_conos(co)` → L★ | *(read-back deferred)* | R | `library(lstar)` |
+| Conos (collection) | `write_conos(co)` → L★ | `read_conos(ds)` → Conos | R | `library(lstar)` |
 | L★ store | `lstar.read(p)` / `lstar_read(p)` | `lstar.write(ds,p)` / `lstar_write(ds,p)` | Py/R | — |
 
 Intermediate value: Python `lstar.Dataset`; R `lstar_dataset` (`$axes`, `$fields`). Either → a
@@ -57,11 +57,37 @@ Survives every AnnData↔Seurat↔SCE conversion: `counts`(raw), `X`/`data`(logn
 `umap`/`tsne`, cell/gene metadata, `label`s (clusters/celltype).
 
 Recorded in `ds.dropped` (written to the target's sidecar, never silent):
-- through **Seurat/SCE**: `relation` fields (neighbor graphs), arity-3 tensors, trees, models — no slot.
+- through **Seurat**: arity-3 tensors, trees, models — no slot. (Cell-cell `relation` graphs **are** kept,
+  as Seurat `Graphs()`.)
+- through **SCE**: `relation` fields (neighbor graphs), arity-3 tensors, trees, models — no slot.
 - through **AnnData**: unrecognized `uns` entries (re-surfaced under `adata.uns['lstar/dropped']`).
 - AnnData↔L★↔AnnData keeps `obsp` graphs + `.raw` (AnnData has slots for them).
 
 Rule: keep the L★ store to lose nothing; convert to a native format to keep its core + a `dropped` manifest.
+
+## Collections (Conos and other multi-sample sets)
+
+A **collection** (`kind="collection"`, e.g. from `write_conos`) is per-sample raw counts over divergent
+`genes.<s>` axes + a **joint layer over the union cells** — a graph, an embedding, clustering(s). A Conos
+object integrates in **graph space only**: there is *no corrected/batch-aligned expression matrix* (it's
+expensive to compute). That's fine — neither native collection format needs one:
+
+- **`write_seurat(collection)` → Seurat v5 split assay** (R). Per-sample counts become split layers
+  (`counts.<s>`) over the **union** gene set (a gene absent in a sample is 0 in its layer); the joint graph
+  → `Graphs()`, the joint embedding → a `DimReduc`, clustering(s)/`sample` → `meta.data`. No integrated
+  assay is fabricated — an un-integrated-but-jointly-analyzed v5 object is exactly this. **`read_seurat`
+  reads it back as a `collection`** (per-sample structure preserved). Per-sample `pca.<s>` (sample-local
+  rotations, not a joint reduction) → `dropped` (recorded in `so@misc$lstar_dropped`).
+- **`write_anndata(collection)` → one AnnData** (Py). A single AnnData *is* one matrix, so this **flattens**:
+  `X` = raw joint counts (== conos `getJointCountMatrix()`), `obs` = `sample` + clustering, `obsm["X_*"]` =
+  embedding, `obsp` = the graph (also aliased to `connectivities` + `uns['neighbors']` so `sc.tl.leiden` /
+  `sc.tl.umap` run with no extra prep — exactly how scanpy stores a graph-integrated dataset). Reading it
+  back gives a `sample`, not a collection. Disjoint (cross-species) gene sets union into one sparse matrix —
+  Seurat v5's split keeps them honestly separate, so prefer Seurat there.
+
+Fidelity asymmetry: **Seurat v5 preserves the collection** (split layers round-trip); **AnnData flattens it**
+(one matrix). Keep the L★ store to retain the full per-sample structure. Tested in `conformance/conos.sh`
+(real Conos `small_panel` + a synthetic divergent-genes collection).
 
 ## Mapping specifics (for accurate docs/answers)
 
@@ -75,12 +101,13 @@ Verify with `lstar convert --check` (native-acceptance: open + canonical-ops smo
   the exact native slot for exact write-back.
 - **seurat** (`R/R/profile_seurat.R`): assay layers `counts`/`data`/`scale.data` ↔ measures
   `counts`/`X`/`scale.data` (states raw/lognorm/scaled), **transposed** (Seurat is genes×cells);
-  `meta.data`→cell fields; `DimReduc`→embedding (+ `<rn>_loadings`); split v5 assay→collection.
-  No graph slot (relations drop).
+  `meta.data`→cell fields; `DimReduc`→embedding (+ `<rn>_loadings`); cell-cell `relation`↔`Graphs()`;
+  split v5 assay→collection, **and** a `collection`→v5 split assay over the union genes (`write_seurat`).
 - **sce** (`R/R/profile_sce.R`): assays↔measures (`counts`→raw, `logcounts`→`X`/lognorm), transposed;
   `colData`/`rowData`↔cell/gene fields; `reducedDims`↔embeddings (+ rotation loadings). No graph slot.
 - **conos** (`R/R/profile_conos.R`): collection — `samples` axis, per-sample `cells.<s>`/`genes.<s>` +
   `counts.<s>` + `pca.<s>`, union `cells`, `sample` design label, joint embedding/clusters/graph.
+  `write_conos(co)` imports; `read_conos(ds)` rebuilds a live Conos (per-sample Pagoda2 + joint layer).
 
 ## Version recognition (don't assume one layout)
 Seurat legacy **v2** (pre-`Assay` lowercase `seurat` class, slots via `attr()`) / v3/v4 `Assay` vs v5
