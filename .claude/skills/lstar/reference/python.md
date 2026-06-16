@@ -81,6 +81,24 @@ adata = write_anndata(ds)       # writes back to the recorded native locations; 
 - Records `anndata@<version>` in `ds.profiles`; uns is dropped (recorded in `ds.dropped`).
 - Field names follow the shared vocabulary (`X_pca` → `pca`, `PCs` → `pca` loadings) so cross-format
   conversion is meaningful.
+- A `kind="collection"` dataset is **flattened** to one union-genes AnnData (X = raw joint counts;
+  embedding → `obsm`, graph → `obsp` aliased to `connectivities` + `uns['neighbors']`, clustering/sample
+  → `obs`; per-sample PCA → `dropped`). An AnnData is one matrix, so this loses the per-sample structure —
+  keep the L\* store to retain it.
+
+## Collections
+
+```python
+col = lstar.collection_from(samples, joint=None, sample_field="sample", prefix_cells=True)
+#   samples: dict {name: Dataset|AnnData|MuData} or a list (auto-named s0, s1, ...). Each keeps its own
+#            cells.<name>/genes.<name> axes + <field>.<name> measures; gene sets may overlap, differ, or
+#            be entirely disjoint. Builds the `samples` + union `cells` axes and the `sample` design label.
+#   joint:   dict over the UNION cells -- 2-D array -> embedding; (n×n) sparse -> graph relation;
+#            Categorical/label -> clustering (induces a factor axis).
+pb = lstar.collection_pseudobulk(col, "clusters", field="counts")   # streamed pseudobulk over the union
+```
+Assembles the same canonical shape `write_conos` / a split Seurat v5 assay produce, from any list of
+per-sample objects. See `reference/model.md` and `conformance/collection_true.sh`.
 
 ## Packaging (PyPI)
 

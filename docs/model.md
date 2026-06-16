@@ -252,11 +252,14 @@ matrix never exists), with float64 accumulation and genes label-aligned across s
 the collection generalization of `pseudobulk()`: a per-group result is just a measure over the induced
 factor axis, so nothing special is needed to express "joint pseudobulk over an atlas of samples."
 
-> **Implemented today.** The R profiles ingest a **Conos** object and a split **Seurat v5** assay as
-> collections: a `samples` axis, per-sample `cells.{s}`/`genes.{s}` axes and `counts.{s}` measures, a
-> union `cells` axis, a `sample` design label, and the joint embedding / clusters / graph. The
-> orthology and inclusion relations and the four packaging modes (3.2) are specified but not yet
-> emitted. See [`examples.md` §9](examples.md#9-r-a-conos-collection).
+> **Implemented today.** Build a collection from any list of per-sample objects with
+> `collection_from(samples, joint=...)` (Python & R). The R profiles also ingest a **Conos** object and a
+> split **Seurat v5** assay as collections: a `samples` axis, per-sample `cells.{s}`/`genes.{s}` axes and
+> `counts.{s}` measures, a union `cells` axis, a `sample` design label, and the joint embedding / clusters
+> / graph. A collection converts back out, too — to a Seurat v5 split assay (`write_seurat`, preserves the
+> collection) or one flattened AnnData (`write_anndata`), and a Conos round-trips via `read_conos`. The
+> orthology and inclusion relations and the four packaging modes (3.2) are specified but not yet emitted.
+> See [`examples.md` §9](examples.md#9-r-a-conos-collection).
 
 ## Validation invariants
 

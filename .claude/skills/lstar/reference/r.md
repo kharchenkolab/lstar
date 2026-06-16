@@ -31,8 +31,10 @@ profiles transpose with `Matrix::t`. A `dgCMatrix` (CSC) maps directly to L★ `
 
 ```r
 # Seurat (legacy v2 pre-Assay 'seurat' class, v3/v4 Assay, v5 Assay5; a split assay -> an L* collection)
-so  <- write_seurat(ds)                 # L* -> Seurat (measures->layers, embeddings->DimReduc, fields->meta.data)
-ds  <- read_seurat(so, assay = "RNA")   # Seurat -> L*; records SeuratObject@<v> + assay@<v3|v5>
+so  <- write_seurat(ds)                 # L* -> Seurat (measures->layers, embeddings->DimReduc,
+                                        #   fields->meta.data, relation->Graphs())
+ds  <- read_seurat(so, assay = "RNA")   # Seurat -> L*; captures Graphs() as relation fields; records
+                                        #   SeuratObject@<v> + assay@<v3|v5>
 
 # SingleCellExperiment
 sce <- write_sce(ds)                    # measures->assays, embeddings->reducedDims, fields->colData
@@ -45,6 +47,14 @@ ds  <- write_conos(conos_obj, clustering = NULL)   # samples axis + per-sample a
 ```
 
 ### Collections
+- Build one from any per-sample objects:
+  ```r
+  col <- collection_from(list(s1 = ds_a, s2 = ds_b),   # lstar_dataset / Seurat / SingleCellExperiment
+                         joint = list(umap = emb, graph = knn))   # divergent or disjoint gene sets OK
+  ```
+  Namespaces each sample's axes/fields as `<x>.<s>`, builds `samples` + union `cells` + a `sample` design
+  label; `joint` lands over the union cells (matrix→embedding, `(cells×cells)` sparse→graph, factor→
+  clustering). Same canonical shape as `write_conos` / a split Seurat v5 assay.
 - Seurat v5: `obj[["RNA"]] <- split(obj[["RNA"]], f = obj$sample)` makes a split assay; `read_seurat`
   reads it as `kind="collection"` (per-sample `cells.<s>` axes + `counts.<s>` + `samples` axis + a
   `sample` design label). The inverse holds: `write_seurat(collection)` builds a v5 split assay over the

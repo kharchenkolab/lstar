@@ -61,6 +61,15 @@ explicit `span=`/`role=` when ambiguous (e.g. a square `(cells, cells)` relation
 This is the core differentiator: alignment is legitimate only *within* a sample; across samples you
 keep a collection joined by a graph, not a concatenated matrix.
 
+**Building one:** `collection_from(samples, joint=...)` (Python `lstar.collection_from`, R `collection_from`)
+assembles this canonical shape from any **list/dict of per-sample objects** — `Dataset`/`AnnData`/`MuData`
+(Py) or `lstar_dataset`/`Seurat`/`SingleCellExperiment` (R) — namespacing each sample's axes/fields as
+`<x>.<s>`, building the `samples` + union `cells` axes and the `sample` design label. `joint=` fields land
+over the union cells: a 2-D array → embedding, a `(cells×cells)` sparse matrix → graph `relation`, a
+factor/categorical → clustering label. `write_conos` and a split Seurat v5 assay produce the *same* shape,
+so every collection — however assembled — has one structure. (`conformance/collection_true.sh`,
+`conformance/conos.sh`.)
+
 ## Store layout (Zarr v2)
 
 ```

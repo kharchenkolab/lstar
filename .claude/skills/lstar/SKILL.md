@@ -5,16 +5,18 @@ description: >-
   for single-cell / spatial omics, ESPECIALLY to convert single-cell data between formats (AnnData /
   h5ad, Seurat, SingleCellExperiment, Conos, pagoda2) and languages (Python, R, C++). Covers
   converting/exporting/importing between those formats via profiles (read_anndata/write_anndata,
-  read_seurat/write_seurat, read_sce/write_sce, write_conos) or the one-command `lstar convert` CLI
-  (with a fidelity report, native-acceptance check, and a package-free `--backend` fallback that converts
-  .h5ad via h5py / Seurat & SCE .rds via base R, without anndata/SeuratObject/SingleCellExperiment),
-  building datasets of axes and fields,
-  reading/writing .lstar.zarr stores, collections of heterogeneous samples, lazy/streaming reads, the
+  read_seurat/write_seurat, read_sce/write_sce, write_conos/read_conos) or the one-command `lstar convert`
+  CLI (with a fidelity report, native-acceptance check, and a package-free `--backend` fallback that
+  converts .h5ad via h5py / Seurat & SCE .rds via base R, without anndata/SeuratObject/SingleCellExperiment),
+  building datasets of axes and fields, assembling collections of heterogeneous samples from per-sample
+  objects (collection_from) and converting a collection to a Seurat v5 split assay or a single AnnData,
+  reading/writing .lstar.zarr stores, lazy/streaming reads, the
   C++ accelerator (libstar), per-gene reductions, and format/version recognition. Keywords: lstar, L*,
   L-star, convert, conversion, glue, interchange, h5ad, AnnData, Seurat, SingleCellExperiment, SCE,
   Conos, pagoda2, profile, export, import, lstar convert, CLI, native-acceptance, mapping, backend,
   package-free, h5py, axes, fields, measure, embedding, loading, relation, label,
-  collection, zarr, csc, csr, lazy, streaming, stream_col_stats, libstar, accelerator, single-cell.
+  collection, collection_from, read_conos, split assay, zarr, csc, csr, lazy, streaming,
+  stream_col_stats, libstar, accelerator, single-cell.
 ---
 
 # lstar
@@ -22,7 +24,7 @@ description: >-
 lstar is a lightweight, fast "glue" library: a uniform data model (**L\***) and a **Zarr**
 interchange format for single-cell/spatial omics, with bindings in **Python**, **R**, and **C++**
 (shared core `libstar`), and bidirectional converters for **AnnData, Seurat, SingleCellExperiment,
-Conos, and pagoda2**. Repo: `~/p21/lstar` (local git only — do **not** push to GitHub).
+Conos, and pagoda2**. Repo: `~/p21/lstar` → public GitHub remote `kharchenkolab/lstar`.
 
 ## The model in three sentences
 
@@ -33,7 +35,8 @@ Conos, and pagoda2**. Repo: `~/p21/lstar` (local git only — do **not** push to
   utf8`), and optional `state` (`raw | lognorm | scaled`), `coverage`, `provenance`.
 - A **collection of heterogeneous samples is a collection, not one aligned `cells × genes` tensor**:
   a `samples` axis + per-sample `cells.<s>`/`genes.<s>` axes & measures + a union `cells` axis for
-  the joint embedding/clusters/graph.
+  the joint embedding/clusters/graph. Build one from any list of per-sample objects with
+  `collection_from(...)` (Python & R), or get one from `write_conos` / a split Seurat v5 assay.
 
 ## When to use this skill
 
@@ -106,10 +109,22 @@ lstar.show_config()                                       # is the C++ accelerat
 ```r
 library(lstar)
 ds  <- lstar_read("a.lstar.zarr")
-so  <- write_seurat(ds);  ds1 <- read_seurat(so)     # Seurat legacy v2 -> v5; split assay -> collection
+so  <- write_seurat(ds);  ds1 <- read_seurat(so)     # Seurat legacy v2 -> v5; split assay <-> collection
 sce <- write_sce(ds);     ds2 <- read_sce(sce)
-dsc <- write_conos(conos_obj)                        # a Conos collection -> L*
+dsc <- write_conos(conos_obj); con <- read_conos(dsc) # Conos collection <-> L* (round-trips)
 lstar_write(ds2, "out.lstar.zarr")
+```
+
+**Assemble or convert a collection of heterogeneous samples**
+```r
+col <- collection_from(list(s1 = ds_a, s2 = ds_b),   # per-sample objects (lstar_dataset / Seurat / SCE),
+                       joint = list(umap = emb, graph = knn))   # divergent or disjoint gene sets OK
+so  <- write_seurat(col)   # -> Seurat v5 SPLIT assay (per-sample layers + Graphs + DimReduc); reads back as a collection
+```
+```python
+import lstar
+col = lstar.collection_from({"s1": ad_a, "s2": ad_b}, joint={"umap": emb})  # AnnData/MuData/Dataset
+a   = lstar.write_anndata(col)   # -> ONE AnnData (flattens to union genes; graph->obsp, embedding->obsm)
 ```
 
 **C++ — read a store, reduce with OpenMP**
