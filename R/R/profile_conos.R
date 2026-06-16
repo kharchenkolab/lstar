@@ -175,8 +175,15 @@ read_conos <- function(ds) {
 
   cells <- axl("cells")
   if (!is.null(cells) && length(cells)) {
-    if (!is.null(ds$fields$graph) && requireNamespace("igraph", quietly = TRUE)) {
-      A <- methods::as(val("graph"), "CsparseMatrix"); dimnames(A) <- list(cells, cells)
+    # the joint graph is the `graph` field; for a collection read back from a Seurat object it may carry the
+    # graph's Seurat name instead, so fall back to the first cells x cells relation field.
+    gnm <- if (!is.null(ds$fields$graph)) "graph" else {
+      rel <- Filter(function(nm) identical(ds$fields[[nm]]$role, "relation") &&
+                      identical(as.character(ds$fields[[nm]]$span), c("cells", "cells")), names(ds$fields))
+      if (length(rel)) rel[[1]] else NULL
+    }
+    if (!is.null(gnm) && requireNamespace("igraph", quietly = TRUE)) {
+      A <- methods::as(val(gnm), "CsparseMatrix"); dimnames(A) <- list(cells, cells)
       con$graph <- igraph::graph_from_adjacency_matrix(A, mode = "undirected", weighted = TRUE)
     }
     if (!is.null(ds$fields$embedding)) {

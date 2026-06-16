@@ -53,8 +53,11 @@ stopifnot(length(lyr) == length(sn),                             # per-sample ra
           "embedding" %in% SeuratObject::Reductions(so),        # joint embedding as a DimReduc
           all(c("sample", "leiden") %in% colnames(so[[]])))     # clusters + sample in metadata
 back <- read_seurat(so)                                          # native acceptance: reads BACK as collection
-stopifnot(identical(back$kind, "collection"), length(grep("^cells\\.", names(back$axes))) == length(sn))
-cat(sprintf("  [R ] -> Seurat v5: %d split layers + Graphs + DimReduc + meta; read_seurat -> collection\n", length(lyr)))
+stopifnot(identical(back$kind, "collection"), length(grep("^cells\\.", names(back$axes))) == length(sn),
+          !is.null(back$fields$graph))                           # the JOINT GRAPH survives Seurat -> L* (not just the layers)
+co3 <- read_conos(back)                                          # ... and reconstitutes a live Conos with the graph
+stopifnot(inherits(co3, "Conos"), length(co3$samples) == length(sn), !is.null(co3$graph))
+cat(sprintf("  [R ] -> Seurat v5: %d split layers + Graphs + DimReduc + meta; read_seurat -> read_conos -> Conos (graph restored)\n", length(lyr)))
 saveRDS(sn, "/tmp/conos_sn.rds")
 lstar_write(ds, "'"$CS"'")' 2>&1 | grep -E "^  \[(R|skip)"
 

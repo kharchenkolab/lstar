@@ -787,6 +787,19 @@ read_seurat <- function(so, assay = SeuratObject::DefaultAssay(so)) {
     add(paste0("nn_", nn_nm), m, "relation", c("cells", "cells"))
   }
 
+  # Stored cell-cell graphs (SeuratObject::Graphs(): FindNeighbors() nn/snn graphs, or an externally
+  # attached integration graph such as Conos's joint kNN written by write_seurat()). Each is a cells x
+  # cells sparse adjacency; carry it as a `relation` field (the inverse of write_seurat's Graph emission)
+  # so a joint/integration graph survives a Seurat round-trip instead of being silently dropped.
+  for (gn in tryCatch(SeuratObject::Graphs(so), error = function(e) character(0))) {
+    g <- tryCatch(so[[gn]], error = function(e) NULL)
+    A <- tryCatch(methods::as(g, "CsparseMatrix"), error = function(e) NULL)
+    if (is.null(A) || nrow(A) != length(cells) || ncol(A) != length(cells)) next
+    rn <- rownames(A)
+    if (!is.null(rn) && !identical(rn, cells) && all(cells %in% rn)) A <- A[cells, cells, drop = FALSE]
+    add(gn, methods::as(A, "CsparseMatrix"), "relation", c("cells", "cells"))
+  }
+
   # Spatial images (Visium / Slide-seq / FOV): tissue coordinates live in `so@images`, NOT in Reductions,
   # so without this they'd be silently lost. Capture each image's coordinates as a `spatial` *observed*
   # coordinate axis (mirroring the AnnData obsm['spatial'] path); coordinates over a cell *subset* (a
