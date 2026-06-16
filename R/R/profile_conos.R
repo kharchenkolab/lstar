@@ -10,9 +10,10 @@
 #   - the joint conos `embedding`, the joint clustering label(s), and the joint `graph` as a
 #     `relation` over (cells x cells)
 #
-# This is the read direction (Conos -> L*). Rebuilding a live Conos R6 from L* (read_conos) is
-# deferred: the joint graph/embedding/clusters round-trip as fields, but reconstituting the R6
-# wrapper and its per-sample Pagoda2 objects is profile-specific and not needed for interchange.
+# write_conos() is the import direction (Conos -> L*); read_conos() is the inverse (L* -> Conos),
+# reconstituting the per-sample Pagoda2 objects (raw counts + PCA reduction) and restoring the joint
+# graph / embedding / clustering layer so a stored collection can be re-opened for plotting, markers and
+# label transfer. (Re-running runGraph() recomputes the per-sample variance model, which is not stored.)
 
 .conos_sample_counts <- function(p) {
   # Recognize the pagoda2 version gracefully: pagoda2.1 (devel) serves raw counts through the
@@ -124,4 +125,78 @@ write_conos <- function(co, clustering = NULL) {
 
   class(ds) <- "lstar_dataset"
   ds
+}
+
+#' Reconstruct a Conos object from an L* collection
+#'
+#' The inverse of \code{write_conos()}: rebuilds the per-sample \code{Pagoda2} objects (raw counts plus the
+#' stored PCA reduction) and restores the joint graph, embedding and clustering(s), returning a live
+#' \code{conos::Conos} object ready for plotting, marker detection and label transfer. Re-running
+#' \code{runGraph()} will recompute the per-sample variance model (not stored).
+#'
+#' @param ds an \code{lstar_dataset} of kind \code{"collection"} (e.g. from \code{lstar_read()}), or a path
+#'   to an lstar store holding one.
+#' @return a \code{conos::Conos} object.
+#' @export
+read_conos <- function(ds) {
+  if (is.character(ds) && length(ds) == 1) ds <- lstar_read(ds)
+  if (!inherits(ds, "lstar_dataset") || !identical(ds$kind, "collection"))
+    stop("read_conos expects an L* 'collection' dataset (or a path to one)")
+  if (!requireNamespace("conos", quietly = TRUE) || !requireNamespace("pagoda2", quietly = TRUE))
+    stop("read_conos requires the conos and pagoda2 packages")
+  `%||%` <- function(a, b) if (is.null(a)) b else a
+  axl <- function(nm) { a <- ds$axes[[nm]]; if (is.null(a)) NULL else as.character(a$labels) }
+  val <- function(nm) ds$fields[[nm]]$values
+
+  sample_names <- axl("samples")
+  if (is.null(sample_names)) stop("collection has no `samples` axis")
+
+  samples <- list()
+  for (sn in sample_names) {
+    cnm <- paste0("counts.", sn)
+    if (is.null(ds$fields[[cnm]])) next
+    counts <- methods::as(val(cnm), "CsparseMatrix")               # cells x genes
+    rownames(counts) <- axl(paste0("cells.", sn))
+    colnames(counts) <- axl(paste0("genes.", sn))
+    p <- pagoda2::Pagoda2$new(Matrix::t(counts), min.transcripts.per.cell = 0, min.cells.per.gene = 0,
+                              log.scale = TRUE, n.cores = 1, verbose = FALSE)   # genes x cells
+    pnm <- paste0("pca.", sn)
+    if (!is.null(ds$fields[[pnm]])) {
+      pca <- as.matrix(val(pnm))
+      rownames(pca) <- axl(paste0("cells.", sn))
+      colnames(pca) <- axl(paste0("pca.", sn)) %||% paste0("PC", seq_len(ncol(pca)))
+      p$reductions$PCA <- pca
+    }
+    samples[[sn]] <- p
+  }
+  if (length(samples) == 0) stop("collection has no per-sample counts to reconstruct")
+
+  con <- conos::Conos$new(samples, n.cores = 1)
+
+  cells <- axl("cells")
+  if (!is.null(cells) && length(cells)) {
+    if (!is.null(ds$fields$graph) && requireNamespace("igraph", quietly = TRUE)) {
+      A <- methods::as(val("graph"), "CsparseMatrix"); dimnames(A) <- list(cells, cells)
+      con$graph <- igraph::graph_from_adjacency_matrix(A, mode = "undirected", weighted = TRUE)
+    }
+    if (!is.null(ds$fields$embedding)) {
+      emb <- as.matrix(val("embedding")); rownames(emb) <- cells
+      colnames(emb) <- axl("embedding") %||% paste0("E", seq_len(ncol(emb)))
+      con$embedding <- emb
+    }
+    ## clustering layers: categorical labels over the joint `cells` axis (the `sample` design label is not
+    ## categorical, so it is skipped here)
+    for (nm in names(ds$fields)) {
+      f <- ds$fields[[nm]]
+      if (identical(f$role, "label") && identical(f$encoding %||% "", "categorical") &&
+          identical(as.character(f$span), "cells")) {
+        grp <- f$values
+        lv <- axl(nm)
+        grp <- if (!is.null(lv)) factor(as.character(grp), levels = lv) else as.factor(grp)
+        names(grp) <- cells
+        con$clusters[[nm]] <- list(groups = grp)
+      }
+    }
+  }
+  con
 }
