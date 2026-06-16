@@ -570,8 +570,8 @@ write_seurat <- function(ds) {
   for (nm in setdiff(meas, used)) if (identical(ds$fields[[nm]]$state, "scaled") && is.null(ds$fields[[nm]]$index)) { scaled_nm <- nm; break }
   if (!is.null(scaled_nm)) addL("scale.data", scaled_nm)
   cnt <- gxc(primary)   # for the QC bookkeeping below (genes x cells, dimnamed)
-  mklm <- function(nms) .forge_s4(new("LogMap", matrix(TRUE, length(nms), length(lnames), dimnames = list(nms, lnames))))
-  assay <- .forge_s4(new("Assay5", layers = layers, cells = mklm(cells), features = mklm(genes),
+  mklm <- function(nms) .forge_s4(methods::new("LogMap", matrix(TRUE, length(nms), length(lnames), dimnames = list(nms, lnames))))
+  assay <- .forge_s4(methods::new("Assay5", layers = layers, cells = mklm(cells), features = mklm(genes),
     default = 1L, assay.orig = character(0), meta.data = data.frame(row.names = genes),
     misc = list(), key = "rna_"))
 
@@ -587,9 +587,9 @@ write_seurat <- function(ds) {
     if (!is.null(ds$fields[[ld_nm]])) { ld <- as.matrix(ds$fields[[ld_nm]]$values)
       fax <- as.character(ds$fields[[ld_nm]]$span)[1]; rownames(ld) <- as.character(ds$axes[[fax]]$labels); colnames(ld) <- colnames(emb) }
     sdv <- if (!is.null(ds$fields[[sd_nm]])) as.numeric(ds$fields[[sd_nm]]$values) else numeric(0)
-    js <- .forge_s4(new("JackStrawData", empirical.p.values = em(), fake.reduction.scores = em(),
+    js <- .forge_s4(methods::new("JackStrawData", empirical.p.values = em(), fake.reduction.scores = em(),
       empirical.p.values.full = em(), overall.p.values = em()))
-    reductions[[nm]] <- .forge_s4(new("DimReduc", cell.embeddings = emb, feature.loadings = ld,
+    reductions[[nm]] <- .forge_s4(methods::new("DimReduc", cell.embeddings = emb, feature.loadings = ld,
       feature.loadings.projected = em(), assay.used = "RNA", global = FALSE, stdev = sdv,
       jackstraw = js, misc = list(), key = key))
     used <- c(used, nm, ld_nm, sd_nm)
@@ -612,7 +612,7 @@ write_seurat <- function(ds) {
   if (is.null(ident)) ident <- as.factor(md[["orig.ident"]])
   names(ident) <- cells
 
-  .forge_s4(new("Seurat", assays = list(RNA = assay), meta.data = md, active.assay = "RNA",
+  .forge_s4(methods::new("Seurat", assays = list(RNA = assay), meta.data = md, active.assay = "RNA",
     active.ident = ident, graphs = list(), neighbors = list(), reductions = reductions, images = list(),
     project.name = "lstar", misc = list(), version = as.package_version("5.0.0"),
     commands = list(), tools = list()))
