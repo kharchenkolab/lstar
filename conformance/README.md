@@ -60,7 +60,7 @@ same `lstar::write`).
 | `nullable.sh` | uint8 validity mask | ✓ | ✓ | ✓ (writer) |
 | `partial.sh` | partial coverage over a derived axis | ✓ | ✓ | ✓ (writer) |
 | `arity3.sh` | n-D dense tensor | ✓ | ✓ | — |
-| `aux.sh` | passthrough subtree (uns / @misc) | ✓ | ✓ (mutates a leaf) | ✓ (writer) |
+| `passthrough.sh` | passthrough subtree (uns / @misc) | ✓ | ✓ (mutates a leaf) | ✓ (writer) |
 | `provenance.sh` | field provenance (recipe / facet) | ✓ | ✓ (case 6 originates in R) | — |
 | `induce.sh` | induced factor-axis link | ✓ | ✓ | ✓ (writer) |
 | `collection.sh` | collection-of-samples (not a tensor) | reads | ✓ (R origin) | — |

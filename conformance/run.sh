@@ -44,7 +44,7 @@ bash conformance/nullable.sh >/tmp/lstar_null.log 2>&1 \
   && pass "nullable validity masks round-trip Py<->C++<->R" || { echo "  FAIL nullable"; tail -15 /tmp/lstar_null.log; exit 1; }
 
 echo "== aux passthrough conformance (uns/@misc subtree round-trips verbatim across Py/C++/R) =="
-bash conformance/aux.sh >/tmp/lstar_aux.log 2>&1 \
+bash conformance/passthrough.sh >/tmp/lstar_aux.log 2>&1 \
   && pass "lossless passthrough subtree round-trips Py<->C++<->R" || { echo "  FAIL aux"; tail -15 /tmp/lstar_aux.log; exit 1; }
 
 echo "== DE-bundle conformance (rank_genes_groups -> (factor,genes) bundle; lstar_markers in Py + R) =="

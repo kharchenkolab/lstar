@@ -74,7 +74,7 @@ This split means **C++/R round-trip is purely mechanical**: copy `tree` JSON ver
 - **anndata profile:** `read_anndata` → `ds.aux["anndata.uns"] = adata.uns` (minus the parts already
   typed: neighbors graphs already in obsp, etc. — keep it simple first: stash whole `uns`, let typed
   fields win on write); `write_anndata` → reconstruct `adata.uns`. Replaces the name-only `dropped`.
-- **gate:** `conformance/aux.sh` — (1) a **synthetic** nested tree (dict/list/scalars + num/str/record
+- **gate:** `conformance/passthrough.sh` — (1) a **synthetic** nested tree (dict/list/scalars + num/str/record
   arrays) round-trips Py↔C++↔R byte-identical (core mechanism, format-agnostic); (2) an AnnData with a
   rich `uns` (params, `*_colors`, `pca.variance_ratio`, `dendrogram` linkage, a `rank_genes_groups`
   structured array) round-trips `uns` **exactly** through L* (Py→L*→Py) and survives a C++/R re-write; +

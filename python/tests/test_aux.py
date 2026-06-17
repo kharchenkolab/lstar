@@ -11,7 +11,7 @@ import tempfile
 import numpy as np
 
 import lstar
-from lstar.aux import from_store, to_store
+from lstar.passthrough import from_store, to_store
 
 
 def _store():

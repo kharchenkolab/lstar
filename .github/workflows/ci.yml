@@ -81,7 +81,7 @@ jobs:
       - name: nullable conformance (validity-mask nullable Int/boolean/string round-trip across Py/C++/R)
         run: bash conformance/nullable.sh
       - name: aux passthrough conformance (uns/@misc subtree round-trips verbatim across Py/C++/R)
-        run: bash conformance/aux.sh
+        run: bash conformance/passthrough.sh
       - name: provenance conformance (field provenance incl. normalization recipe survives the R path)
         run: bash conformance/provenance.sh
       - name: partial-coverage conformance (partial index over a derived union axis survives the R path)

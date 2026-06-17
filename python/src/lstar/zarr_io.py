@@ -69,7 +69,7 @@ def write(ds, path, compressor=None, chunk_elems=None, stream=False):
 
     aux = getattr(ds, "aux", None) or {}
     if aux:                                            # verbatim passthrough (uns/@misc) -> aux/<ns>
-        from .aux import to_store as _aux_to_store
+        from .passthrough import to_store as _aux_to_store
         auxg = root.create_group("aux")
         for ns, obj in aux.items():
             g = auxg.create_group(ns)
@@ -140,7 +140,7 @@ def read(path, lazy=False):
             mask=mask, index=index, index_axis=m.get("index_axis"), provenance=m.get("provenance", {}))
 
     for ns in rmeta.get("aux", []):                    # verbatim passthrough -> reconstruct the object
-        from .aux import from_store as _aux_from_store
+        from .passthrough import from_store as _aux_from_store
         g = root["aux"][ns]
         am = dict(g.attrs[LSTAR])
         leaves = []
