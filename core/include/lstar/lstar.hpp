@@ -592,10 +592,10 @@ inline Dataset read(const fs::path& root) {
         ds.fields.push_back(std::move(f));
     }
 
-    if (rmeta.contains("aux") && !rmeta["aux"].is_null()) {            // verbatim passthrough subtree
-        for (auto& an : rmeta["aux"]) {
+    if (rmeta.contains("passthrough") && !rmeta["passthrough"].is_null()) {  // verbatim passthrough subtree
+        for (auto& an : rmeta["passthrough"]) {
             std::string ns = an.get<std::string>();
-            fs::path g = root / "aux" / ns;
+            fs::path g = root / "passthrough" / ns;
             Aux ax;
             ax.ns = ns;
             ax.attrs = read_json(g / ".zattrs")["lstar"];
@@ -632,7 +632,7 @@ inline void write(const Dataset& ds, const fs::path& root,
     rl["fields"] = fnames;
     std::vector<std::string> auxnames;
     for (auto& a : ds.aux) auxnames.push_back(a.ns);
-    rl["aux"] = auxnames;
+    rl["passthrough"] = auxnames;
     write_group(root, json{{"lstar", rl}});
     write_group(root / "axes", json::object());
     write_group(root / "fields", json::object());
@@ -690,9 +690,9 @@ inline void write(const Dataset& ds, const fs::path& root,
     }
 
     if (!ds.aux.empty()) {                                            // verbatim passthrough subtree
-        write_group(root / "aux", json::object());
+        write_group(root / "passthrough", json::object());
         for (auto& ax : ds.aux) {
-            fs::path g = root / "aux" / ax.ns;
+            fs::path g = root / "passthrough" / ax.ns;
             write_group(g, json{{"lstar", ax.attrs}});
             for (auto& leaf : ax.leaves) {
                 if (leaf.kind == "utf8") write_strings(g, leaf.id, leaf.strings, chunk_elems, compressor);

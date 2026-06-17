@@ -68,9 +68,9 @@ def write(ds, path, compressor=None, chunk_elems=None, stream=False):
         g.attrs[LSTAR] = meta
 
     aux = getattr(ds, "aux", None) or {}
-    if aux:                                            # verbatim passthrough (uns/@misc) -> aux/<ns>
+    if aux:                                            # verbatim passthrough (uns/@misc) -> passthrough/<ns>
         from .passthrough import to_store as _aux_to_store
-        auxg = root.create_group("aux")
+        auxg = root.create_group("passthrough")
         for ns, obj in aux.items():
             g = auxg.create_group(ns)
             tree, leaves = _aux_to_store(obj)
@@ -84,11 +84,11 @@ def write(ds, path, compressor=None, chunk_elems=None, stream=False):
             # tree is stored as an opaque JSON *string*: zarr sorts attribute object keys, which would
             # scramble the passthrough's dict order; a string is preserved verbatim (and lets the
             # C++/R readers round-trip it without parsing JSON).
-            g.attrs[LSTAR] = {"kind": "aux", "tree": json.dumps(tree), "arrays": manifest}
+            g.attrs[LSTAR] = {"kind": "passthrough", "tree": json.dumps(tree), "arrays": manifest}
 
     root.attrs[LSTAR] = {"spec_version": ds.spec_version or SPEC_VERSION, "kind": ds.kind,
                          "profiles": list(ds.profiles), "dropped": list(ds.dropped),
-                         "axes": list(ds.axes), "fields": list(ds.fields), "aux": list(aux)}
+                         "axes": list(ds.axes), "fields": list(ds.fields), "passthrough": list(aux)}
     zarr.consolidate_metadata(path)
     return path
 
@@ -139,9 +139,9 @@ def read(path, lazy=False):
             subtype=m.get("subtype"), uncertainty=m.get("uncertainty"),
             mask=mask, index=index, index_axis=m.get("index_axis"), provenance=m.get("provenance", {}))
 
-    for ns in rmeta.get("aux", []):                    # verbatim passthrough -> reconstruct the object
+    for ns in rmeta.get("passthrough", []):            # verbatim passthrough -> reconstruct the object
         from .passthrough import from_store as _aux_from_store
-        g = root["aux"][ns]
+        g = root["passthrough"][ns]
         am = dict(g.attrs[LSTAR])
         leaves = []
         for a in am.get("arrays", []):

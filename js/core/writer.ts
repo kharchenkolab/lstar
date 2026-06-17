@@ -157,10 +157,10 @@ async function writeField(store: LstarWritableStore, name: string, f: FieldSpec,
   if (f.index != null) await writeArray(store, base + "/index", f.index, [f.index.length], opts);
 }
 
-// The `aux/<ns>` lossless passthrough: the opaque `tree` (stored as a string) + the array leaves.
+// The `passthrough/<ns>` lossless passthrough: the opaque `tree` (stored as a string) + the array leaves.
 async function writeAux(store: LstarWritableStore, ns: string, aux: AuxSpec, opts?: WriteOptions): Promise<void> {
-  const base = "aux/" + ns;
-  await writeGroup(store, base, { kind: "aux", tree: JSON.stringify(aux.tree), arrays: aux.arrays.map((a) => ({ id: a.id, kind: a.kind })) });
+  const base = "passthrough/" + ns;
+  await writeGroup(store, base, { kind: "passthrough", tree: JSON.stringify(aux.tree), arrays: aux.arrays.map((a) => ({ id: a.id, kind: a.kind })) });
   for (const a of aux.arrays) {
     if (a.kind === "utf8") await writeStrings(store, base, a.id, a.id + "_offsets", a.values!, opts);
     else await writeArray(store, base + "/" + a.id, a.data!, [a.data!.length], opts);
@@ -183,13 +183,13 @@ export async function writeStore(store: LstarWritableStore, ds: DatasetSpec, opt
   await writeGroup(rec, "", {
     kind: ds.kind ?? "sample", spec_version: ds.specVersion ?? "0.1",
     profiles: ds.profiles ?? [], dropped: ds.dropped ?? [],
-    axes: Object.keys(ds.axes), fields: Object.keys(ds.fields), aux: Object.keys(ds.aux ?? {}),
+    axes: Object.keys(ds.axes), fields: Object.keys(ds.fields), passthrough: Object.keys(ds.aux ?? {}),
   });
-  // the `axes/`/`fields/`/`aux/` container groups must carry their own .zgroup marker, or strict
+  // the `axes/`/`fields/`/`passthrough/` container groups must carry their own .zgroup marker, or strict
   // readers (Python `zarr`) won't navigate into them (zarrita is lenient and resolves by path).
   await rec.set("axes/.zgroup", j({ zarr_format: 2 }));
   await rec.set("fields/.zgroup", j({ zarr_format: 2 }));
-  if (ds.aux && Object.keys(ds.aux).length) await rec.set("aux/.zgroup", j({ zarr_format: 2 }));
+  if (ds.aux && Object.keys(ds.aux).length) await rec.set("passthrough/.zgroup", j({ zarr_format: 2 }));
   for (const [name, ax] of Object.entries(ds.axes)) await writeAxis(rec, name, ax, opts);
   for (const [name, f] of Object.entries(ds.fields)) await writeField(rec, name, f, opts);
   for (const [ns, a] of Object.entries(ds.aux ?? {})) await writeAux(rec, ns, a, opts);

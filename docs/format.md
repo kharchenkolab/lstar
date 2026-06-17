@@ -36,10 +36,10 @@ store.lstar.zarr/
 │   └── <field>/
 │       ├── .zattrs             {"lstar": {kind:"field", role, span, state, encoding, shape, …}}
 │       └── <value arrays>      depend on the encoding (below)
-├── aux/                        lossless passthrough of a format's untyped long-tail
+├── passthrough/                lossless passthrough of a format's untyped long-tail
 │   ├── .zgroup
 │   └── <namespace>/            e.g. "anndata.uns"
-│       ├── .zattrs             {"lstar": {kind:"aux", tree:"<JSON string>", arrays:[{id, kind}]}}
+│       ├── .zattrs             {"lstar": {kind:"passthrough", tree:"<JSON string>", arrays:[{id, kind}]}}
 │       └── <id>               the array leaves the tree references (dense, or utf8 bytes+offsets)
 └── models/                     fitted transforms (apply contract + weights)   [spec; not yet emitted]
 ```
@@ -65,10 +65,10 @@ equal — placement and reading are deterministic lookups, never shape inference
 is the loss manifest — **what a writer could not represent is recorded, never silently lost** (see the
 worked conversion in the proposal §4.3).
 
-## Lossless passthrough (`aux/`)
+## Lossless passthrough (`passthrough/`)
 
 A format's untyped long-tail — AnnData `uns`, Seurat `@misc`/`@commands` (params, color palettes,
-dendrograms, DE tables) — is preserved **verbatim** under `aux/<namespace>/` rather than recorded
+dendrograms, DE tables) — is preserved **verbatim** under `passthrough/<namespace>/` rather than recorded
 name-only in `dropped`. Each namespace is a *self-describing* subtree: a JSON `tree` (stored as an
 opaque **string** so the store's key order survives zarr's key-sorting) whose array leaves are
 references into a flat `arrays` manifest; the manifest's `dense`/`utf8` leaves are ordinary L* arrays.

@@ -42,12 +42,12 @@ type anything, and lets recognized structures be promoted out of the tail increm
 
 **Design — a generic, self-describing passthrough subtree** (not an opaque blob: it stays inspectable
 and promotable, the doc's stated goal; reuses L*'s own primitives — JSON attrs + typed arrays). A
-reserved **`aux/`** group, listed in root meta as `aux:[...]`. Each entry `aux/<ns>` (namespaced, e.g.
-`anndata.uns`) holds:
+reserved **`passthrough/`** group, listed in root meta as `passthrough:[...]`. Each entry
+`passthrough/<ns>` (namespaced, e.g. `anndata.uns`) holds:
 
 ```
-aux/<ns>/.zattrs  lstar = { kind:"aux", tree:<JSON>, arrays:[ {id, enc}, … ] }
-aux/<ns>/<id>            a typed array (enc="dense")  OR  utf8 bytes+offsets (enc="utf8")
+passthrough/<ns>/.zattrs  lstar = { kind:"passthrough", tree:<JSON>, arrays:[ {id, enc}, … ] }
+passthrough/<ns>/<id>           a typed array (enc="dense")  OR  utf8 bytes+offsets (enc="utf8")
 ```
 
 `tree` is the nested structure with array leaves replaced by references; every dense/utf8 leaf is listed

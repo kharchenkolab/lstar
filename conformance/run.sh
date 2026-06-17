@@ -14,6 +14,10 @@ pass "libstar build"
 
 echo "== install R package =="
 mkdir -p "$RLIB"
+# The R package vendors the header-only core at R/inst/include (it must be self-contained for CRAN --
+# core/ is a sibling dir, not shipped in the tarball). Sync it from the canonical core/ so a core change
+# can't leave R compiling a stale copy. (Committed too, so CI/CRAN build the current header.)
+cp core/include/lstar/lstar.hpp R/inst/include/lstar/lstar.hpp
 # --preclean: R's make has no header-dependency tracking, so a changed vendored header won't
 # trigger recompilation of an existing .o; preclean forces a fresh build.
 R CMD INSTALL --preclean --no-multiarch --library="$RLIB" R >/tmp/lstar_rinstall.log 2>&1 \

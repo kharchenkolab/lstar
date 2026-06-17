@@ -71,7 +71,7 @@ export class LstarDataset {
     this.specVersion = m.spec_version ?? "0.1";
     this.profiles = m.profiles ?? [];
     this.dropped = m.dropped ?? [];
-    this.auxNames = m.aux ?? [];
+    this.auxNames = m.passthrough ?? [];
     for (const name of m.axes as string[]) {
       const ax = await zarr.open(this.root.resolve("axes/" + name), { kind: "group" });
       const offs = await this._open("axes/" + name + "/labels_offsets");
@@ -119,17 +119,17 @@ export class LstarDataset {
    * `{field: array}` object). Read-only — for inspection / promoting a recognized structure to a field.
    */
   async aux(ns: string): Promise<any> {
-    const g = await zarr.open(this.root.resolve("aux/" + ns), { kind: "group" });
+    const g = await zarr.open(this.root.resolve("passthrough/" + ns), { kind: "group" });
     const lm = (g.attrs as any).lstar ?? {};
     const tree = typeof lm.tree === "string" ? JSON.parse(lm.tree) : lm.tree;
     const byId: Record<string, any> = {};
     for (const a of (lm.arrays ?? []) as Array<{ id: string; kind: string }>) {
       if (a.kind === "utf8") {
-        const bytes = (await this._get("aux/" + ns + "/" + a.id)).data as Uint8Array;
-        const offs = (await this._get("aux/" + ns + "/" + a.id + "_offsets")).data as any;
+        const bytes = (await this._get("passthrough/" + ns + "/" + a.id)).data as Uint8Array;
+        const offs = (await this._get("passthrough/" + ns + "/" + a.id + "_offsets")).data as any;
         byId[a.id] = decodeStrings(bytes, offs);
       } else {
-        byId[a.id] = (await this._get("aux/" + ns + "/" + a.id)).data;
+        byId[a.id] = (await this._get("passthrough/" + ns + "/" + a.id)).data;
       }
     }
     const build = (node: any): any => {
