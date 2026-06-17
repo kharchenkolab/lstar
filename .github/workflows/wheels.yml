@@ -17,7 +17,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-13, macos-14, windows-latest]
+        # macos-14 = Apple Silicon (arm64). macos-13 (Intel/x86_64) is dropped: GitHub's Intel-mac
+        # runners are scarce and left the publish blocked for hours -- Intel-Mac users get the sdist.
+        os: [ubuntu-latest, macos-14, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - name: Build wheels
