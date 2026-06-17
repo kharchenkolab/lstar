@@ -48,8 +48,9 @@ where = ["python/src"]
 # runs (pure-Python fallback) if the extension fails to build, so we don't gate the wheel on it.
 [tool.cibuildwheel]
 build = "cp38-* cp39-* cp310-* cp311-* cp312-*"
-# skip 32-bit (no scipy/numpy wheels there -> the test env would source-build them and fail): win32 + i686.
-skip = "*-win32 *_i686 *-musllinux_i686 pp*"
+# skip targets where numpy/scipy ship no wheels (the test env would source-build them, needing
+# OpenBLAS/compilers, and fail): 32-bit (win32, i686) and ALL musllinux (Alpine -- scipy has no musl wheels).
+skip = "*-win32 *_i686 *-musllinux* pp*"
 build-frontend = "build"
 test-requires = ["numcodecs"]   # the wheel test (test_lazy.py) needs only numcodecs; anndata would drag in h5py, which builds from source (no HDF5/compiler in the cibuildwheel test env) and fails on every platform
 test-command = "python -c \"import lstar; lstar.show_config(); assert lstar.has_accel(), 'accelerator missing in wheel'\" && python {project}/python/tests/test_lazy.py"
