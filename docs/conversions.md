@@ -82,7 +82,7 @@ importable and falls back to lstar's **package-free** codec otherwise.
 | `.h5mu` ↔ store | `mudata` | — (native only for now) |
 | store ↔ store | — | — |
 
-So `pip install lstar h5py` converts `.h5ad` with no anndata, and a Seurat `.rds` reads/writes with just
+So `pip install lstar-sc h5py` converts `.h5ad` with no anndata, and a Seurat `.rds` reads/writes with just
 base R + lstar (no SeuratObject). Force a path with `--backend native|direct`. When the package-free path
 hits something only the native package can handle — an unrecognized on-disk version, or an external-pointer
 / `BPCells`-backed matrix — it stops with a clear message naming the package to install (lstar then uses it

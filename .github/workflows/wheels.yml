@@ -1,7 +1,7 @@
 name: wheels
 
 # Build binary wheels (with the compiled C++ accelerator) for the common platforms plus an sdist,
-# so `pip install lstar` gives users the fast path automatically. Runs on tags and on demand;
+# so `pip install lstar-sc` gives users the fast path automatically. Runs on tags and on demand;
 # publishes to PyPI on a GitHub release (needs a PYPI trusted-publisher / token).
 on:
   push:

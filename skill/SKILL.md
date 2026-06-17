@@ -56,7 +56,7 @@ direct` fallback for `.h5ad` (h5py) and Seurat/SCE `.rds` (base R).
 
 ```bash
 # Python (for the `lstar convert` CLI and AnnData routes):
-pip install -e /path/to/lstar/python        # repo's python/ subdir
+pip install -e /path/to/lstar               # the repo root (editable); released as `pip install lstar-sc`
 python3 -c "import lstar; print(lstar.__version__)"
 ```
 

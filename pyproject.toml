@@ -3,7 +3,7 @@ requires = ["setuptools>=64", "wheel", "pybind11>=2.10"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "lstar"
+name = "lstar-sc"                         # PyPI distribution name ("lstar" is taken); import stays `import lstar`
 version = "0.1.0"
 description = "L* model and Zarr interchange for single-cell/spatial omics, with a fast C++ core"
 readme = "README.md"
