@@ -64,9 +64,22 @@ jobs:
           # CRAN packages as PPM binaries (use-public-rspm) -- Seurat + all transitive deps resolved
           # without source-building httr/miniUI/plotly/png/reticulate/shiny (the prior CI failure).
           Rscript -e 'install.packages(c("cpp11","Matrix","Seurat","SeuratObject","BiocManager"))'
-          # Bioconductor packages are C-light; source-installs succeed (they don't pull the
-          # problem CRAN deps above). CRAN deps still resolve as PPM binaries via getOption("repos").
-          Rscript -e 'BiocManager::install(c("SingleCellExperiment","S4Vectors","SummarizedExperiment"), update=FALSE, ask=FALSE)'
+          # Bioconductor core (CRAN deps still resolve as PPM binaries via getOption("repos")). These are
+          # source-installed from bioconductor.org, whose downloads are intermittently flaky -- and a failed
+          # download surfaces only as a WARNING (install doesn't abort), leaving the package missing and the
+          # cross_format test dying later on library(SingleCellExperiment). So RETRY until they're actually
+          # loadable, and fail loudly only if genuinely unavailable.
+          Rscript -e 'pkgs <- c("SingleCellExperiment","S4Vectors","SummarizedExperiment")
+            for (i in 1:4) {
+              miss <- pkgs[!vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)]
+              if (!length(miss)) break
+              message("Bioc install attempt ", i, ": ", paste(miss, collapse = ", "))
+              tryCatch(BiocManager::install(miss, update = FALSE, ask = FALSE),
+                       error = function(e) message(conditionMessage(e)))
+              if (i < 4) Sys.sleep(15)
+            }
+            miss <- pkgs[!vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)]
+            if (length(miss)) stop("Bioconductor packages unavailable after retries: ", paste(miss, collapse = ", "))'
           # Signac so the synthetic ChromatinAssay case runs in CI -- TOLERANT: if it won't install on the
           # runner (heavy Bioc/system deps), the case degrades to a recorded SKIP and CI stays green.
           Rscript -e 'tryCatch(BiocManager::install("Signac", update=FALSE, ask=FALSE), error=function(e) message("Signac unavailable: ", conditionMessage(e)))'
