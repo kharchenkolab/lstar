@@ -1,9 +1,9 @@
 Package: lstar
 Title: Uniform Data Model and 'Zarr' Interchange for Single-Cell Omics
-Version: 0.0.1
+Version: 0.1.0
 Authors@R:
     person("Peter", "Kharchenko", role = c("aut", "cre"),
-           email = "peter.kharchenko@gmail.com")
+           email = "pk.restricted@gmail.com")
 Description: A lightweight interchange layer for single-cell and spatial omics
     data, built on the L-star model of labelled axes and typed fields over them,
     serialized to the 'Zarr' format. Provides bidirectional converters

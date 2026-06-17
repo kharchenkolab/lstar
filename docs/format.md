@@ -6,6 +6,11 @@ convention. This page is the practical reading of Appendix A of the proposal
 guiding rule: **all L★ metadata lives under an `"lstar"` key** in each group's `.zattrs`, so the store
 is *also* a plain Zarr group that scanpy/Vitessce/zarrita can open and read the common parts of.
 
+> **Format stability.** The on-disk format is at `spec_version` **0.1** and **may change in
+> backward-incompatible ways before 1.0**. Every store records its `spec_version` and readers check it,
+> so the format is self-describing; reaching **1.0** is what turns that version line into a compatibility
+> commitment. Until then, regenerate stores from source rather than relying on them for long-term archival.
+
 > **Implemented today.** The Python and C++ writers emit the tree below in **Zarr v2** with a
 > consolidated `.zmetadata`; the C++/R/Python readers all read it (chunked + gzip included). A nullable
 > validity `mask` and **partial coverage** (`coverage="partial"` + an `index` into `index_axis`) are

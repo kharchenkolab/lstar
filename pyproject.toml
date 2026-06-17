@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lstar"
-version = "0.0.1"
+version = "0.1.0"
 description = "L* model and Zarr interchange for single-cell/spatial omics, with a fast C++ core"
 readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "MIT" }
-authors = [{ name = "Peter Kharchenko", email = "peter.kharchenko@gmail.com" }]
+authors = [{ name = "Peter Kharchenko", email = "pk.restricted@gmail.com" }]
 keywords = ["single-cell", "omics", "zarr", "anndata", "interchange", "bioinformatics"]
 classifiers = [
     "Development Status :: 3 - Alpha",

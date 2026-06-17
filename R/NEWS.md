@@ -1,4 +1,4 @@
-# lstar 0.0.1
+# lstar 0.1.0
 
 First release. lstar is a uniform data model (L\*) and a Zarr interchange format for single-cell /
 spatial omics, with a shared C++ core (`libstar`) and bindings in R, Python and C++.
