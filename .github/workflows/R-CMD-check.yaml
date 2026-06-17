@@ -26,6 +26,13 @@ jobs:
     env:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
       R_KEEP_PKG_SOURCE: yes
+      # The heavy optional backends (Seurat, SCE + its Bioconductor chain, conos, pagoda2, BPCells,
+      # HDF5Array) are NOT needed to build/check the package -- the vignette runs on base deps only
+      # (eval=FALSE for the Seurat/SCE chunks), examples don't load them, and tests skip_if_not_installed.
+      # Installing them makes this check slow + flaky (8-min BPCells source build, Bioconductor download
+      # hiccups), so we check with hard deps only; the conversion code paths are exercised in the
+      # `conformance` workflow + local checks. Tolerate the resulting "suggested but not available" NOTE.
+      _R_CHECK_FORCE_SUGGESTS_: false
     steps:
       - uses: actions/checkout@v4
 
@@ -49,8 +56,12 @@ jobs:
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
           working-directory: R
-          extra-packages: any::rcmdcheck
-          needs: check
+          dependencies: '"hard"'                       # Imports/Depends/LinkingTo only (skip heavy Suggests)
+          extra-packages: |
+            any::rcmdcheck
+            any::knitr
+            any::rmarkdown
+            any::testthat
 
       - uses: r-lib/actions/check-r-package@v2
         with:
