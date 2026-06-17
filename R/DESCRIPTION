@@ -20,6 +20,9 @@ Suggests: SeuratObject, Seurat, SingleCellExperiment, SummarizedExperiment,
     S4Vectors, GenomicRanges, igraph, conos, pagoda2, BPCells, HDF5Array,
     testthat (>= 3.0.0), knitr, rmarkdown
 VignetteBuilder: knitr
+# BPCells (an optional disk-backed-matrix backend in Suggests) lives on r-universe, not CRAN/Bioconductor;
+# this lets the dependency resolver (and CRAN) find it. The package degrades gracefully when it is absent.
+Additional_repositories: https://bnprks.r-universe.dev
 SystemRequirements: C++17, zlib
 Roxygen: list(markdown = TRUE)
 Config/testthat/edition: 3

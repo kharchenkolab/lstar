@@ -7,19 +7,19 @@ Python and C++).
 
 ## R CMD check results
 
-`R CMD check --as-cran` gives 0 ERRORs and 0 WARNINGs. NOTEs:
+On CRAN's builders `R CMD check --as-cran` is expected to give 0 ERRORs / 0 WARNINGs / 1 NOTE
+("New submission"). A local check (Ubuntu, R 4.4.1) is clean apart from items that reflect missing
+optional *tools* on the local host, not the package, and which are present on CRAN's builders:
 
-* "New submission" (expected).
-* "checking for future file timestamps ... unable to verify current time" — environment-specific (a
-  clock/network check on the build host); it does not reflect the package and does not appear on CRAN's
-  builders.
+* WARNING "'qpdf' is needed for checks on size reduction of PDFs" — qpdf is not installed locally.
+* NOTE "checking HTML version of manual ... no command 'tidy' found" — the HTML validator is not installed
+  locally.
+* NOTE "checking for future file timestamps ... unable to verify current time" — a clock/network check on
+  the build host.
 
 The compiled C++ core's shared object is stripped of debug symbols in `src/Makevars` (`strip -S`,
-guarded), so the installed package is small (~2 MB) and there is no "installed package size" NOTE.
-
-The vignette (`converting-formats.Rmd`, knitr/rmarkdown) requires pandoc to build; it builds on CRAN's
-builders. (Local checks without pandoc were run with `--no-build-vignettes`, which produces a benign
-"no files in inst/doc" WARNING that does not occur on CRAN.)
+guarded), so the installed package is small (~2 MB) and there is no "installed package size" NOTE. The
+vignette (`converting-formats.Rmd`, knitr/rmarkdown) builds cleanly with pandoc.
 
 ## Dependencies
 
