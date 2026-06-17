@@ -8,3 +8,12 @@ PKG_CXXFLAGS = $(SHLIB_OPENMP_CXXFLAGS)
 # no -lstdc++fs needed. zlib via -lz (R links it too); OpenMP link flag must match the compile flag
 # (SHLIB_OPENMP_CXXFLAGS in both PKG_CXXFLAGS and PKG_LIBS, per Writing R Extensions 1.2.1.1).
 PKG_LIBS = -lz $(SHLIB_OPENMP_CXXFLAGS)
+
+# Strip debug symbols from the built shared object. The -O3 C++ accelerator (with the header-only core +
+# nlohmann/json) carries ~11MB of debug info; stripping keeps the installed package small (the CRAN
+# "installed size" NOTE). `strip -S` removes only debug symbols and works on both GNU and BSD/macOS;
+# guarded so it's a harmless no-op where strip is absent (e.g. Windows).
+strippedLib: $(SHLIB)
+	if command -v strip >/dev/null 2>&1; then strip -S $(SHLIB) 2>/dev/null || true; fi
+.PHONY: strippedLib
+all: $(SHLIB) strippedLib
