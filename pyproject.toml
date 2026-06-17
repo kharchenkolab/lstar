@@ -61,6 +61,8 @@ test-command = "python -c \"import lstar; lstar.show_config(); assert lstar.has_
 manylinux-x86_64-image = "manylinux_2_28"
 
 [tool.cibuildwheel.macos]
-# OpenMP on macOS needs libomp; install it in the build env.
-before-build = "brew install libomp || true"
-environment = { MACOSX_DEPLOYMENT_TARGET = "10.14" }
+# OpenMP on macOS needs libomp. Fetch a LOW-deployment-target build (conda-forge llvm-openmp) instead of
+# Homebrew's runner-OS-targeted one, so the bundled libomp doesn't force a recent macOS minimum (delocate
+# would reject that). setup.py reads $LSTAR_LIBOMP; target 11.0 (the arm64 floor) covers x86_64 too.
+before-all = "bash {project}/build_tools/cibw_macos_openmp.sh"
+environment = { LSTAR_LIBOMP = "$HOME/libomp", MACOSX_DEPLOYMENT_TARGET = "11.0" }

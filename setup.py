@@ -12,8 +12,13 @@ from setuptools.command.build_ext import build_ext
 
 
 def _libomp_prefix():
-    """Locate Homebrew's keg-only libomp (arm64 /opt/homebrew, x86_64 /usr/local) so omp.h / -lomp
-    resolve -- without this the macOS accelerator build fails with 'omp.h file not found'."""
+    """Locate libomp so omp.h / -lomp resolve (without it the macOS build fails 'omp.h not found').
+    Prefers $LSTAR_LIBOMP -- the low-deployment-target build that build_tools/cibw_macos_openmp.sh fetches
+    for portable wheels -- then falls back to Homebrew's keg-only libomp (arm64 /opt/homebrew, x86_64
+    /usr/local) for a plain local build."""
+    env = os.environ.get("LSTAR_LIBOMP")
+    if env and os.path.isdir(env):
+        return env
     import subprocess
     try:
         p = subprocess.run(["brew", "--prefix", "libomp"], capture_output=True, text=True)
@@ -34,11 +39,12 @@ def _ext():
     if sys.platform == "darwin":
         cflags = ["-std=c++17", "-O3", "-Xpreprocessor", "-fopenmp"]
         lflags = ["-lomp"]
-        omp = _libomp_prefix()                     # keg-only: add its include/lib paths explicitly
+        omp = _libomp_prefix()                     # add its include/lib paths explicitly
         if omp:
             include_dirs.append(os.path.join(omp, "include"))
             cflags.append("-I" + os.path.join(omp, "include"))
-            lflags.append("-L" + os.path.join(omp, "lib"))
+            # -rpath so delocate can resolve the @rpath/libomp.dylib dependency at repair time and bundle it.
+            lflags += ["-L" + os.path.join(omp, "lib"), "-Wl,-rpath," + os.path.join(omp, "lib")]
     elif sys.platform == "win32":
         cflags = ["/std:c++17", "/O2", "/openmp", "/EHsc"]
         lflags = []
