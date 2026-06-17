@@ -1,0 +1,56 @@
+# Multi-platform `R CMD check` (the CRAN check farm, via CI) for the R package in `R/`.
+# Standard r-lib/actions, pointed at the R/ subdirectory; the header-only core is vendored at
+# R/inst/include and re-synced from core/ so the check always builds the current header.
+name: R-CMD-check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions: read-all
+
+jobs:
+  R-CMD-check:
+    runs-on: ${{ matrix.config.os }}
+    name: ${{ matrix.config.os }} (${{ matrix.config.r }})
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - {os: macos-latest,   r: 'release'}
+          - {os: windows-latest, r: 'release'}
+          - {os: ubuntu-latest,  r: 'devel', http-user-agent: 'release'}
+          - {os: ubuntu-latest,  r: 'release'}
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      R_KEEP_PKG_SOURCE: yes
+    steps:
+      - uses: actions/checkout@v4
+
+      # Sync the vendored core header so the R package builds against the current core/ (the R/ tree must
+      # be self-contained for CRAN, but core/ is the source of truth in this repo). Bash on all 3 OSes.
+      - name: Sync vendored core header
+        shell: bash
+        run: cp core/include/lstar/lstar.hpp R/inst/include/lstar/lstar.hpp
+
+      - uses: r-lib/actions/setup-pandoc@v2
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: ${{ matrix.config.r }}
+          http-user-agent: ${{ matrix.config.http-user-agent }}
+          use-public-rspm: true
+
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          working-directory: R
+          extra-packages: any::rcmdcheck
+          needs: check
+
+      - uses: r-lib/actions/check-r-package@v2
+        with:
+          working-directory: R
+          upload-snapshots: true
+          build_args: 'c("--no-manual")'
