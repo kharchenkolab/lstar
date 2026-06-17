@@ -50,7 +50,7 @@ where = ["python/src"]
 build = "cp38-* cp39-* cp310-* cp311-* cp312-*"
 skip = "*-musllinux_i686 *_i686 pp*"
 build-frontend = "build"
-test-requires = ["anndata", "numcodecs"]
+test-requires = ["numcodecs"]   # the wheel test (test_lazy.py) needs only numcodecs; anndata would drag in h5py, which builds from source (no HDF5/compiler in the cibuildwheel test env) and fails on every platform
 test-command = "python -c \"import lstar; lstar.show_config(); assert lstar.has_accel(), 'accelerator missing in wheel'\" && python {project}/python/tests/test_lazy.py"
 
 [tool.cibuildwheel.linux]
