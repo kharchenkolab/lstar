@@ -41,3 +41,6 @@ testdata/
 lstar_*.tar.gz
 R/lstar_*.tar.gz
 *.Rcheck/
+
+# internal design notes / plans -- not for the public repo or releases
+misc/
