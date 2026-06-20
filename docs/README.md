@@ -13,6 +13,10 @@ container.
 - [**Conversions**](conversions.md) — using lstar as **glue between formats** (AnnData, Seurat, SCE,
   Conos): the one-command `lstar convert` CLI, the functions, the conversion matrix, what is preserved
   vs. recorded as dropped. *The near-term reason to use lstar.*
+- **Per-format guides** — the complete go-to reference for each format (read / write / convert, the L★
+  representation mapping, version handling, native-acceptance, troubleshooting):
+  [AnnData](formats/anndata.md) · [Seurat](formats/seurat.md) ·
+  [SingleCellExperiment](formats/singlecellexperiment.md).
 - [**Mapping**](mapping.md) — the **deterministic role→slot contract**: what lands where in each target
   (and why it is deterministic), the per-format conventions native tools require, and the
   **native-acceptance** check (`lstar convert --check`) that verifies the output, not just the round-trip.

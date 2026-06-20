@@ -207,6 +207,7 @@ misc/         the design proposal (Lstar_proposal.md) + plans
 
 - **[docs/principles.md](docs/principles.md)** — the idea and the reasoning. *Start here.*
 - **[docs/conversions.md](docs/conversions.md)** — using lstar as glue between formats (incl. the `lstar convert` CLI).
+- **Per-format guides** — the complete go-to reference for each format (read/write/convert, the L★ representation mapping, versions, troubleshooting): **[AnnData](docs/formats/anndata.md)**, **[Seurat](docs/formats/seurat.md)**, **[SingleCellExperiment](docs/formats/singlecellexperiment.md)**.
 - **[docs/mapping.md](docs/mapping.md)** — the deterministic role→slot conversion contract + native-acceptance.
 - **[docs/model.md](docs/model.md)** — the model: axes, fields, roles, collections.
 - **[docs/format.md](docs/format.md)** — the on-disk Zarr layout.

@@ -108,6 +108,13 @@ The L★ dataset they hand back is the universal intermediate: in Python a `lsta
 `lstar_dataset` (a list of `$axes` and `$fields`). Either can be written to a `.lstar.zarr` store and
 read by any of the three languages.
 
+> **Per-format guides.** For a complete, format-expert reference on each endpoint — every native slot
+> and its L★ signature, version handling, the native conventions the format's own tools require, and
+> troubleshooting — see [`formats/anndata.md`](formats/anndata.md),
+> [`formats/seurat.md`](formats/seurat.md), and
+> [`formats/singlecellexperiment.md`](formats/singlecellexperiment.md). This page is the cross-format
+> overview; those are the deep dives.
+
 ## Same-language conversions (in memory)
 
 When both formats live in the same language, conversion is a one-liner.
