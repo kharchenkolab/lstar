@@ -160,6 +160,9 @@ export class LstarDataset {
 
   axisNames(): string[] { return [...this.axes.keys()]; }
   fieldNames(): string[] { return [...this.fields.keys()]; }
+  hasField(name: string): boolean { return this.fields.has(name); }
+  field(name: string): FieldMeta | undefined { return this.fields.get(name); }
+  axisLength(name: string): number { return this.axes.get(name)?.length ?? 0; }
 
   async axisLabels(name: string): Promise<string[]> {
     const bytes = (await this._get("axes/" + name + "/labels")).data as Uint8Array;

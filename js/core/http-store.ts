@@ -10,7 +10,9 @@ export class HttpStore implements LstarStore {
   private _fetch: typeof fetch;
   constructor(base: string, opts?: { fetch?: typeof fetch }) {
     this.base = base.endsWith("/") ? base : base + "/";          // predictable URL join
-    this._fetch = opts?.fetch ?? globalThis.fetch;
+    // bind to the global: an unbound `globalThis.fetch` throws "Illegal invocation" in browsers (fetch
+    // requires `this === window`). Node tolerates the unbound call, so this only bit under a real browser.
+    this._fetch = opts?.fetch ?? globalThis.fetch.bind(globalThis);
   }
   private url(key: string): string {
     return this.base + (key.startsWith("/") ? key.slice(1) : key);
