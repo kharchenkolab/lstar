@@ -5,9 +5,13 @@
 // heavy numeric work belongs in the WASM kernels (see view.ts); this module is I/O + assembly.
 import * as zarr from "zarrita";
 
-/** Minimal store contract (zarrita-compatible): fetch one object by key, or undefined if absent. */
+/** Minimal store contract (zarrita-compatible): fetch one object by key, or undefined if absent.
+ * `getRange` is optional: a store that can serve a byte sub-range of an object (HTTP `Range`, a file
+ * `pread`) enables the reader's sub-chunk fast path (one gene/cell = a few KB instead of the whole
+ * uncompressed chunk). Stores without it still work — the reader falls back to whole-chunk reads. */
 export interface LstarStore {
   get(key: string): Promise<Uint8Array | undefined>;
+  getRange?(key: string, start: number, end: number): Promise<Uint8Array | undefined>;
 }
 
 export interface AxisMeta {
@@ -30,6 +34,51 @@ export interface FieldMeta {
 }
 
 const TD = new TextDecoder();
+const TE = new TextEncoder();
+
+// Keys whose bytes are Zarr metadata (served from consolidated metadata when available). Everything
+// else (chunk keys ".../0", label/value byte arrays) is data and goes to the underlying store.
+const META_RE = /(?:\.zgroup|\.zattrs|\.zarray|zarr\.json)$/;
+
+/**
+ * Wraps a store so every metadata read is served from a parsed consolidated `.zmetadata` map instead
+ * of the network: a present key returns its bytes, an ABSENT metadata key returns undefined *without*
+ * a request (this is what suppresses zarrita's per-node v3 `zarr.json` probes — the difference between
+ * one open request and ~80). Data chunk reads (and byte-range reads) pass straight through.
+ */
+class ConsolidatedStore {
+  inner: LstarStore;
+  meta: Record<string, unknown>;
+  constructor(inner: LstarStore, meta: Record<string, unknown>) { this.inner = inner; this.meta = meta; }
+  async get(key: string, _opts?: unknown): Promise<Uint8Array | undefined> {
+    const norm = key[0] === "/" ? key.slice(1) : key;
+    if (META_RE.test(norm)) {
+      const v = this.meta[norm];
+      return v === undefined ? undefined : TE.encode(JSON.stringify(v));
+    }
+    return this.inner.get(key);
+  }
+  async getRange(key: string, start: number, end: number): Promise<Uint8Array | undefined> {
+    return this.inner.getRange?.(key, start, end);
+  }
+}
+
+// Zarr v2 little-endian dtype -> [typed-array constructor, itemsize]. The writer only emits these LE
+// dtypes; the byte-range fast path decodes raw bytes through this table (we assume LE — true on every
+// platform Node/browsers run, and the writer always tags "<").
+const DTYPE: Record<string, [any, number]> = {
+  "<f8": [Float64Array, 8], "<f4": [Float32Array, 4],
+  "<i4": [Int32Array, 4], "<i8": [BigInt64Array, 8], "|i1": [Int8Array, 1],
+  "<i2": [Int16Array, 2], "|u1": [Uint8Array, 1], "<u4": [Uint32Array, 4], "<u8": [BigUint64Array, 8],
+};
+
+// Copy raw little-endian bytes into a freshly-allocated typed array (the copy guarantees alignment —
+// a Range body may start at an arbitrary offset — and length is always an itemsize multiple).
+function decodeTyped(bytes: Uint8Array, ctor: any, isize: number): any {
+  const out = new ctor(Math.floor(bytes.byteLength / isize));
+  new Uint8Array(out.buffer).set(bytes.subarray(0, out.byteLength));
+  return out;
+}
 
 function decodeStrings(bytes: Uint8Array, offsets: ArrayLike<number | bigint>): string[] {
   const n = offsets.length - 1;
@@ -41,8 +90,10 @@ function decodeStrings(bytes: Uint8Array, offsets: ArrayLike<number | bigint>): 
 }
 
 export class LstarDataset {
-  store: any;
+  rawStore: any;                          // the underlying store (data chunks, byte-range reads)
+  store: any;                             // == rawStore, or a ConsolidatedStore wrapping it
   root: any;
+  meta: Record<string, any> = {};         // parsed `.zmetadata` map (empty if the store has none)
   kind = "sample";
   specVersion = "0.1";
   profiles: string[] = [];
@@ -52,6 +103,7 @@ export class LstarDataset {
   fields = new Map<string, FieldMeta>();
 
   constructor(store: any) {
+    this.rawStore = store;
     this.store = store;
     this.root = zarr.root(store);
   }
@@ -64,6 +116,21 @@ export class LstarDataset {
   }
 
   async init(): Promise<this> {
+    // Consolidated open: one `.zmetadata` read up front serves every group/array metadata object, so
+    // opening the manifest + axes + fields is a single request instead of ~80 (and gives cscColumn the
+    // per-array dtype/chunks/compressor it needs for the byte-range fast path). Absent or malformed ->
+    // per-object reads (still correct), e.g. an older store or one extended without refreshing it.
+    const zmeta = await this.rawStore.get(".zmetadata");
+    if (zmeta) {
+      try {
+        const parsed = JSON.parse(TD.decode(zmeta));
+        this.meta = parsed?.metadata ?? {};
+        if (Object.keys(this.meta).length) {
+          this.store = new ConsolidatedStore(this.rawStore, this.meta);
+          this.root = zarr.root(this.store);
+        }
+      } catch { /* malformed consolidated metadata -> fall back to per-object reads */ }
+    }
     const grp = await zarr.open(this.root, { kind: "group" });
     const m = (grp.attrs as any).lstar;
     if (!m) throw new Error("not an L* store (no 'lstar' root attribute)");
@@ -170,18 +237,96 @@ export class LstarDataset {
   }
 
   /**
-   * One CSC column (e.g. a gene's expression across cells), fetched as a slice — the hot path.
-   * Returns the nonzero `rows` (cell indices) and `vals`. Reads only indptr[col..col+1] and the
-   * corresponding data/indices ranges (a few chunks on a chunked store).
+   * Read elements [lo, hi) of a 1-D array as a typed array. Fast path: when the store supports byte
+   * ranges AND the array is a single uncompressed, unfiltered chunk (known from consolidated metadata),
+   * issue ONE `getRange` over the exact bytes [lo·itemsize, hi·itemsize) of chunk "0" — a gene/cell is
+   * a few KB instead of the whole chunk. Otherwise fall back to a zarrita slice (which decompresses /
+   * stitches chunks / works without consolidated metadata). Equivalent results either way.
+   */
+  private async _rangeOrSlice(arrPath: string, lo: number, hi: number): Promise<any> {
+    const za: any = this.meta[arrPath + "/.zarray"];
+    const dt = za ? DTYPE[za.dtype] : undefined;
+    const singleChunk = za && Array.isArray(za.chunks) && za.chunks.length === 1 &&
+      za.chunks[0] >= (za.shape?.[0] ?? 0);
+    if (typeof this.store.getRange === "function" && dt && singleChunk &&
+        za.compressor == null && (za.filters == null || (Array.isArray(za.filters) && za.filters.length === 0))) {
+      const [ctor, isize] = dt;
+      const bytes = await this.store.getRange(arrPath + "/0", lo * isize, hi * isize);
+      if (bytes) return decodeTyped(bytes, ctor, isize);
+    }
+    return (await this._get(arrPath, [zarr.slice(lo, hi)])).data;
+  }
+
+  /**
+   * One CSC column (e.g. a gene's expression across cells) — the viewer's hot path. Returns the
+   * nonzero `rows` (cell indices) and `vals`, reading only indptr[col..col+1] and the corresponding
+   * indices/data ranges (a single byte-range each on a consolidated, uncompressed store).
    */
   async cscColumn(name: string, col: number): Promise<{ rows: any; vals: any }> {
-    const ip = await this._open("fields/" + name + "/indptr");
-    const slice = await zarr.get(ip, [zarr.slice(col, col + 2)]);
-    const a = Number(slice.data[0]), b = Number(slice.data[1]);
+    const base = "fields/" + name;
+    const ip = await this._rangeOrSlice(base + "/indptr", col, col + 2);
+    const a = Number(ip[0]), b = Number(ip[1]);
     if (b <= a) return { rows: new Int32Array(0), vals: new Float64Array(0) };
-    const rows = (await this._get("fields/" + name + "/indices", [zarr.slice(a, b)])).data;
-    const vals = (await this._get("fields/" + name + "/data", [zarr.slice(a, b)])).data;
+    const rows = await this._rangeOrSlice(base + "/indices", a, b);
+    const vals = await this._rangeOrSlice(base + "/data", a, b);
     return { rows, vals };
+  }
+
+  /**
+   * One CSR row (e.g. a cell's expression across genes), symmetric to {@link cscColumn}. Returns the
+   * nonzero `cols` (feature indices) and `vals` for the row, via a single byte-range each on the fast
+   * path. (The cell-major counts copy stores cells as rows — this is its per-cell accessor.)
+   */
+  async csrRow(name: string, row: number): Promise<{ cols: any; vals: any }> {
+    const base = "fields/" + name;
+    const ip = await this._rangeOrSlice(base + "/indptr", row, row + 2);
+    const a = Number(ip[0]), b = Number(ip[1]);
+    if (b <= a) return { cols: new Int32Array(0), vals: new Float64Array(0) };
+    const cols = await this._rangeOrSlice(base + "/indices", a, b);
+    const vals = await this._rangeOrSlice(base + "/data", a, b);
+    return { cols, vals };
+  }
+
+  /**
+   * Rows of a CSR field for a cell selection, as a re-based CSR submatrix `{ data, indices, indptr,
+   * rows }` (indptr over the requested rows, in input order). Selected rows are coalesced into runs so
+   * the data/indices are read in a few merged byte-range requests instead of one per row — DE /
+   * overdispersion on a small selection then touches a few MB of the cell-major copy, not the whole
+   * matrix. Contiguous rows always merge (no waste); a `gap` of intervening elements is bridged to
+   * amortize request latency (those extra bytes are fetched but not assembled into the output).
+   */
+  async csrRows(name: string, rowIndices: number[], gap = 4096): Promise<{ data: any; indices: any; indptr: Int32Array; rows: number[] }> {
+    const base = "fields/" + name;
+    if (rowIndices.length === 0) return { data: new Float64Array(0), indices: new Int32Array(0), indptr: Int32Array.from([0]), rows: [] };
+    const nrows = (this.fields.get(name)!.shape as number[])[0];
+    const indptr = await this._rangeOrSlice(base + "/indptr", 0, nrows + 1);   // small; read once per batch
+    const at = (r: number) => Number(indptr[r]);
+
+    // coalesce sorted-unique rows into runs (inclusive row ranges) to merge byte-range requests
+    const uniq = [...new Set(rowIndices)].sort((x, y) => x - y);
+    const runs: { r0: number; r1: number }[] = [];
+    for (const r of uniq) {
+      const last = runs[runs.length - 1];
+      if (last && at(r) - at(last.r1 + 1) <= gap) last.r1 = r;
+      else runs.push({ r0: r, r1: r });
+    }
+    // one merged data/indices read per run
+    const blocks = await Promise.all(runs.map(async (run) => {
+      const a = at(run.r0), b = at(run.r1 + 1);
+      const data = b > a ? await this._rangeOrSlice(base + "/data", a, b) : new Float64Array(0);
+      const indices = b > a ? await this._rangeOrSlice(base + "/indices", a, b) : new Int32Array(0);
+      return { r0: run.r0, r1: run.r1, a, data, indices };
+    }));
+    const blockOf = (r: number) => blocks.find((bl) => r >= bl.r0 && r <= bl.r1)!;
+
+    // assemble the requested rows (input order) into a re-based CSR submatrix
+    const outData: number[] = [], outIdx: number[] = [], outPtr: number[] = [0];
+    for (const r of rowIndices) {
+      const a = at(r), b = at(r + 1), bl = blockOf(r), off = a - bl.a;
+      for (let k = 0; k < b - a; k++) { outData.push(Number(bl.data[off + k])); outIdx.push(Number(bl.indices[off + k])); }
+      outPtr.push(outData.length);
+    }
+    return { data: Float64Array.from(outData), indices: Int32Array.from(outIdx), indptr: Int32Array.from(outPtr), rows: rowIndices.slice() };
   }
 }
 

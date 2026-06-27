@@ -29,6 +29,7 @@ export interface FieldSpec {
   mask?: Uint8Array;                          // nullable: 1 == missing (over span[0])
   index?: BigInt64Array | ArrayLike<number>;  // partial coverage: 0-based positions into `indexAxis`
   indexAxis?: string;
+  write?: WriteOptions;                       // per-field chunk/compressor override (else the call-level opts)
 }
 // Aux passthrough (the lossless uns/@misc subtree): an opaque JSON `tree` plus the array leaves it
 // references by id. Leaf grammar in `tree`: {"$array":id} for a dense leaf, {"$strings":id,...} for a
@@ -133,6 +134,10 @@ async function writeField(store: LstarWritableStore, name: string, f: FieldSpec,
   const enc = f.encoding ?? "dense";
   const base = "fields/" + name;
   const partial = f.index != null;
+  // Per-field write options override the call-level default. This is what makes the asymmetric layout
+  // possible: a gene-major copy stays raw single-chunk (random per-gene byte-range access), while a
+  // cell-major copy of the same counts is gzip-chunked (sequential bulk reads) -- set `write` on each.
+  const fopts = f.write ?? opts;
   await writeGroup(store, base, {
     kind: "field", role: f.role ?? "", span: f.span ?? [], encoding: enc,
     state: f.state ?? null, subtype: f.subtype ?? null, shape: f.shape ?? null,
@@ -142,19 +147,19 @@ async function writeField(store: LstarWritableStore, name: string, f: FieldSpec,
     provenance: {},
   });
   if (enc === "categorical") {
-    await writeArray(store, base + "/codes", f.codes!, [f.codes!.length], opts);
-    await writeStrings(store, base, "categories", "categories_offsets", f.categories!, opts);
+    await writeArray(store, base + "/codes", f.codes!, [f.codes!.length], fopts);
+    await writeStrings(store, base, "categories", "categories_offsets", f.categories!, fopts);
   } else if (enc === "csc" || enc === "csr") {
-    await writeArray(store, base + "/data", f.data!, [f.data!.length], opts);
-    await writeArray(store, base + "/indices", f.indices!, [f.indices!.length], opts);
-    await writeArray(store, base + "/indptr", f.indptr!, [f.indptr!.length], opts);
+    await writeArray(store, base + "/data", f.data!, [f.data!.length], fopts);
+    await writeArray(store, base + "/indices", f.indices!, [f.indices!.length], fopts);
+    await writeArray(store, base + "/indptr", f.indptr!, [f.indptr!.length], fopts);
   } else if (enc === "utf8") {
-    await writeStrings(store, base, "values", "values_offsets", f.values!, opts);
+    await writeStrings(store, base, "values", "values_offsets", f.values!, fopts);
   } else {
-    await writeArray(store, base + "/values", f.data!, f.shape ?? [f.data!.length], opts);
+    await writeArray(store, base + "/values", f.data!, f.shape ?? [f.data!.length], fopts);
   }
-  if (f.mask != null) await writeArray(store, base + "/mask", f.mask, [f.mask.length], opts);
-  if (f.index != null) await writeArray(store, base + "/index", f.index, [f.index.length], opts);
+  if (f.mask != null) await writeArray(store, base + "/mask", f.mask, [f.mask.length], fopts);
+  if (f.index != null) await writeArray(store, base + "/index", f.index, [f.index.length], fopts);
 }
 
 // The `passthrough/<ns>` lossless passthrough: the opaque `tree` (stored as a string) + the array leaves.
@@ -202,18 +207,36 @@ export async function addToStore(store: LstarWritableStore, add: { axes?: Record
   if (!raw) throw new Error("addToStore: no root .zattrs (not an L* store)");
   const root = JSON.parse(new TextDecoder().decode(raw));
   const m = root.lstar;
+  // Record every metadata object we (re)write so we can refresh the store's consolidated `.zmetadata`
+  // (instead of dropping it) — keeping the one-request consolidated open valid after an extend.
+  const newMeta: Record<string, unknown> = {};
+  const rec: LstarWritableStore = {
+    get: (k) => store.get(k),
+    set: async (k, v) => {
+      if (k.endsWith(".zarray") || k.endsWith(".zattrs") || k.endsWith(".zgroup")) newMeta[k] = JSON.parse(new TextDecoder().decode(v));
+      return store.set(k, v);
+    },
+    delete: store.delete ? (k) => store.delete!(k) : undefined,
+  };
   for (const [name, ax] of Object.entries(add.axes ?? {})) {
     if (!m.axes.includes(name)) m.axes.push(name);
-    await writeAxis(store, name, ax, opts);
+    await writeAxis(rec, name, ax, opts);
   }
   for (const [name, f] of Object.entries(add.fields ?? {})) {
     if (!m.fields.includes(name)) m.fields.push(name);
-    await writeField(store, name, f, opts);
+    await writeField(rec, name, f, opts);
   }
   for (const p of add.profiles ?? []) if (!(m.profiles ?? (m.profiles = [])).includes(p)) m.profiles.push(p);
-  await store.set(".zattrs", j(root));
-  // The base store may carry consolidated metadata (.zmetadata) that now lists a stale field set;
-  // drop it so readers fall back to the live per-object metadata we just wrote (both zarrita's
-  // withConsolidated and Python's _open_root fall back gracefully when it's absent).
-  if (store.delete) await store.delete(".zmetadata");
+  const rootAttrs = j(root);
+  await store.set(".zattrs", rootAttrs);
+  newMeta[".zattrs"] = JSON.parse(new TextDecoder().decode(rootAttrs));
+  // Refresh consolidated metadata: if the base store has a `.zmetadata`, merge the newly written keys
+  // (and the updated root manifest) into it so the consolidated open stays complete and current. If it
+  // has none, leave it absent — readers fall back to per-object metadata.
+  const existing = await store.get(".zmetadata");
+  if (existing) {
+    const cm = JSON.parse(new TextDecoder().decode(existing));
+    cm.metadata = { ...(cm.metadata ?? {}), ...newMeta };
+    await store.set(".zmetadata", j(cm));
+  }
 }

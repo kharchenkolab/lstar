@@ -7,7 +7,8 @@
   "exports": {
     ".": "./core/index.ts",
     "./wasm": "./dist/lstar_kernels.mjs",
-    "./node-store": "./core/node-store.ts"
+    "./node-store": "./core/node-store.ts",
+    "./http-store": "./core/http-store.ts"
   },
   "files": ["core/", "dist/", "wasm/", "build.sh"],
   "scripts": {
@@ -15,7 +16,12 @@
     "test:kernels": "node test/kernels.test.mjs",
     "test:reader": "node --experimental-strip-types test/reader.test.ts",
     "test:view": "node --experimental-strip-types test/view.test.ts",
-    "test:writer": "node --experimental-strip-types test/writer.test.ts"
+    "test:writer": "node --experimental-strip-types test/writer.test.ts",
+    "test:range": "node --experimental-strip-types test/range.test.ts",
+    "test:consolidated": "node --experimental-strip-types test/consolidated.test.ts",
+    "test:sparse": "node --experimental-strip-types test/sparse.test.ts",
+    "test:compression": "node --experimental-strip-types test/compression.test.ts",
+    "test:batched": "node --experimental-strip-types test/batched.test.ts"
   },
   "keywords": ["lstar", "single-cell", "zarr", "zarrita", "webassembly", "wasm", "viewer", "csc", "emscripten"],
   "license": "MIT",

@@ -21,9 +21,12 @@ WASM can't `fetch`; JS is slow at tight numeric loops — so I/O stays in TS, co
   reference *and* the Python kernel. Single-threaded for now (OpenMP/pthreads needs cross-origin
   isolation).
 - **`core/` reader** (Phase B): a zarrita.js reader for L★ stores (any zarrita store — `FetchStore`
-  over HTTP, a zip store, or `NodeFSStore` for Node). Reads the consolidated manifest and fetches
-  fields *lazily*, including a single CSC **gene-column** as a slice (the viewer hot path). Works on
-  chunked + gzip stores.
+  over HTTP, `HttpStore` for byte-range HTTP, a zip store, or `NodeFSStore` for Node). Opens via the
+  consolidated `.zmetadata` (one request, not ~80) and fetches fields *lazily*: a single CSC
+  **gene-column** (`cscColumn`), a CSR **cell-row** (`csrRow`), or a coalesced **cell selection**
+  (`csrRows`). When the store offers `getRange` (`HttpStore`/`NodeFSStore`) and the array is an
+  uncompressed single chunk, these issue one **byte-range** read of the exact slice (a gene = a few KB,
+  not the whole chunk); otherwise they fall back to a zarrita chunk read. Works on chunked + gzip stores.
 - **`core/` view** (Phase C): a framework-agnostic `LstarView` — `embedding`, `metadata` (categorical
   codes+categories / numeric), `geneExpression` (on-the-fly log1p of one gene's column), `colStats`
   (per-gene mean/var via WASM), `subsampleDE` (ranked genes A-vs-B), and a typed-array `Crossfilter`.
@@ -31,18 +34,24 @@ WASM can't `fetch`; JS is slow at tight numeric loops — so I/O stays in TS, co
   existing (e.g. Python-written) one — **every encoding** both directions: CSC/dense, UTF-8, categorical
   (induces a factor axis), nullable mask, partial coverage, and the aux passthrough. Arrays are chunked
   (along axis 0) and optionally **gzip-compressed via the WASM zlib kernel** (`gzipCompress`); the
-  compressor is dependency-injected so the uncompressed path needs no WASM. A consolidated `.zmetadata` is
-  emitted. The bytes round-trip to the Python/R/C++ readers (`conformance/js.sh`: JS-write → Python/C++-read).
+  compressor is dependency-injected so the uncompressed path needs no WASM. Compression is also settable
+  **per field** (`FieldSpec.write`) — e.g. keep a gene-major copy raw single-chunk (for the byte-range
+  fast path) while gzip-compressing a cell-major copy of the same counts (for sequential bulk reads). A
+  consolidated `.zmetadata` is emitted and **refreshed by `addToStore`** (not dropped), so the one-request
+  open survives extends. The bytes round-trip to the Python/R/C++ readers (`conformance/js.sh`: JS-write → Python/C++-read).
 
 ## API
 
 ```ts
 import { openLstar, LstarView, Crossfilter, scalarToRGBA } from "lstar-js";
-import { NodeFSStore } from "lstar-js/node-store";        // browser: new zarrita FetchStore(url)
+import { NodeFSStore } from "lstar-js/node-store";        // browser: new HttpStore(url) or zarrita FetchStore
+import { HttpStore } from "lstar-js/http-store";          // byte-range HTTP reads (Range, with 200 fallback)
 
-const ds = await openLstar(new NodeFSStore("sample.lstar.zarr"));
-ds.kind; ds.axisNames(); ds.fieldNames();                 // manifest
-await ds.cscColumn("counts", geneIndex);                  // one gene's nonzeros, fetched as a slice
+const ds = await openLstar(new HttpStore("https://cdn/sample.lstar.zarr"));  // or new NodeFSStore(path)
+ds.kind; ds.axisNames(); ds.fieldNames();                 // manifest (one consolidated read)
+await ds.cscColumn("counts", geneIndex);                  // one gene's nonzeros (byte-range slice)
+await ds.csrRow("counts_cellmajor", cellIndex);           // one cell's nonzeros (byte-range slice)
+await ds.csrRows("counts_cellmajor", cellIds);            // a cell selection, coalesced -> CSR submatrix
 
 const view = new LstarView(ds);
 const { data, n, dim } = await view.embedding("umap");    // positions for a point layer
@@ -67,8 +76,15 @@ await writeStore(new NodeFSStore("out.lstar.zarr"), {        // browser: any zar
             leiden: { encoding: "categorical", span: ["cells"], codes, categories: ["A","B"], ordered: false } },
 }, { chunkElems: 1 << 18, compressor: gzip });               // omit opts -> single uncompressed chunk
 
+// asymmetric copies: raw gene-major (byte-range fast path) + gzip cell-major (bulk reads), one call
+await writeStore(store, { axes: {...}, fields: {
+  counts:           { encoding: "csc", span: ["cells","genes"], shape: [nc, ng], data, indices, indptr },
+  counts_cellmajor: { encoding: "csr", span: ["cells","genes"], shape: [nc, ng], data: d2, indices: i2,
+                      indptr: p2, write: { compressor: gzip } },  // per-field: only this copy is gzipped
+} });
+
 await addToStore(store, { fields: { od_score: { encoding: "dense", span: ["genes"], shape: [ng], data } },
-                          profiles: ["viewer@0.1"] });        // append derived viewer fields
+                          profiles: ["viewer@0.1"] });        // append derived fields; refreshes .zmetadata
 ```
 
 Low-level kernels:
