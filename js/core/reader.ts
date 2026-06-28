@@ -290,6 +290,23 @@ export class LstarDataset {
     return { cols, vals };
   }
 
+  // Cell -> physical-row permutation for a row-reordered cell-major field (a locality order), or null when the field is
+  // stored in canonical cell order. Convention: a sibling field `<name>_order` holds each cell's physical row index; its
+  // presence flags `<name>` as reordered. Loaded once per field. (A later format rev could carry this in the field's own
+  // metadata rather than by name.)
+  private _rowMapCache = new Map<string, Int32Array | null>();
+  private async _rowMap(name: string): Promise<Int32Array | null> {
+    if (this._rowMapCache.has(name)) return this._rowMapCache.get(name)!;
+    let map: Int32Array | null = null;
+    const orderField = name + "_order";
+    if (this.fields.has(orderField)) {
+      const d = (await this.fieldDense(orderField)).data as ArrayLike<number>;
+      map = d instanceof Int32Array ? d : Int32Array.from(d as any);
+    }
+    this._rowMapCache.set(name, map);
+    return map;
+  }
+
   /**
    * Rows of a CSR field for a cell selection, as a re-based CSR submatrix `{ data, indices, indptr,
    * rows }` (indptr over the requested rows, in input order). Selected rows are coalesced into runs so
@@ -305,8 +322,15 @@ export class LstarDataset {
     const indptr = await this._rangeOrSlice(base + "/indptr", 0, nrows + 1);   // small; read once per batch
     const at = (r: number) => Number(indptr[r]);
 
-    // coalesce sorted-unique rows into runs (inclusive row ranges) to merge byte-range requests
-    const uniq = [...new Set(rowIndices)].sort((x, y) => x - y);
+    // LOCALITY reorder: if this field's rows are stored in a permuted (e.g. Hilbert/cluster) order, map each requested
+    // cell id -> its PHYSICAL row. The physical rows are what we coalesce + read, so a topologically-coherent selection
+    // (a cluster, a lasso) becomes a few contiguous runs instead of thousands. Output stays in REQUESTED (cell) order,
+    // so callers are unaffected. Identity when the field isn't reordered.
+    const rowMap = await this._rowMap(name);
+    const phys = rowMap ? rowIndices.map((c) => rowMap[c]) : rowIndices;
+
+    // coalesce sorted-unique (physical) rows into runs (inclusive row ranges) to merge byte-range requests
+    const uniq = [...new Set(phys)].sort((x, y) => x - y);
     const runs: { r0: number; r1: number }[] = [];
     for (const r of uniq) {
       const last = runs[runs.length - 1];
@@ -324,9 +348,10 @@ export class LstarDataset {
     }));
     const blockOf = (r: number) => blocks.find((bl) => r >= bl.r0 && r <= bl.r1)!;
 
-    // assemble the requested rows (input order) into a re-based CSR submatrix
+    // assemble the requested rows (input/cell order) into a re-based CSR submatrix — `phys` is each requested cell's
+    // physical row (== the cell id when the field isn't reordered), so the output row order matches `rowIndices`.
     const outData: number[] = [], outIdx: number[] = [], outPtr: number[] = [0];
-    for (const r of rowIndices) {
+    for (const r of phys) {
       const a = at(r), b = at(r + 1), bl = blockOf(r), off = a - bl.a;
       for (let k = 0; k < b - a; k++) { outData.push(Number(bl.data[off + k])); outIdx.push(Number(bl.indices[off + k])); }
       outPtr.push(outData.length);
