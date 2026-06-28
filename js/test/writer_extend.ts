@@ -18,6 +18,8 @@ await addToStore(store, {
   // a derived navigator axis (plain labelled axis -- not factor-induced, so no inducing field needed)
   axes: { od_groups: { labels: ["lo", "hi"], origin: "derived", role: "feature" } },
   fields: { od_score: { role: "measure", span: ["genes"], encoding: "dense", shape: [genes.length], data: od } },
-  profiles: ["viewer@0.1"],
+  // a generic derived profile -- NOT `viewer@0.1` (that profile is a contract validate() enforces; this
+  // test only exercises addToStore's field+axis+profile append, not the full viewer field set).
+  profiles: ["derived@0.1"],
 });
 console.log("extended (addToStore) ->", STORE, `od_score over ${genes.length} genes`);

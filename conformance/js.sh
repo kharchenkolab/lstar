@@ -52,7 +52,7 @@ PYTHONPATH="$ROOT/python/src" python3 - "$WE" <<'PY' || { echo "  FAIL: extend r
 import sys, lstar
 ds = lstar.read(sys.argv[1])
 assert "od_score" in ds.fields and "counts" in ds.fields, list(ds.fields)   # derived added, original kept
-assert ds.axis("od_groups").origin == "derived" and "viewer@0.1" in ds.profiles
+assert ds.axis("od_groups").origin == "derived" and "derived@0.1" in ds.profiles
 assert not [e for e in lstar.validate(ds) if e.startswith("ERROR")]
 print("  [py] JS addToStore on a Python store re-reads clean (derived field + axis + profile)")
 PY
