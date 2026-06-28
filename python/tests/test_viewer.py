@@ -151,6 +151,26 @@ def test_viewer_profile_requires_fields():
     assert any("no grouping" in i for i in issues)
 
 
+def test_kernels_accel_matches_fallback():
+    """The viewer recipe kernels must agree between the compiled core and the numpy fallback (so a
+    prepped store is reproducible regardless of whether the accel extension is present)."""
+    import lstar.kernels as k
+    from lstar._engine import has_accel
+    if not has_accel():
+        pytest.skip("accel extension not built")
+    rng = np.random.default_rng(1)
+    S = rng.random((5, 40)); NE = rng.integers(0, 30, (5, 40)).astype("f8")
+    nper = rng.integers(5, 40, 5); nc = int(nper.sum())
+    l1, p1 = k.markers_one_vs_rest(S, NE, nper, nc, engine="c++")
+    l2, p2 = k.markers_one_vs_rest(S, NE, nper, nc, engine="python")
+    assert np.allclose(l1, l2) and np.allclose(p1, p2)
+    assert l1.shape == (40, 5)                                   # gene-major
+    mean = rng.random(200) * 3; var = mean * rng.uniform(0.5, 8, 200); nobs = rng.integers(0, 80, 200)
+    o1 = k.overdispersion(mean, var, nobs, engine="c++")
+    o2 = k.overdispersion(mean, var, nobs, engine="python")
+    assert np.allclose(o1, o2, atol=1e-6)
+
+
 def test_viewer_profile_rejects_transposed_markers():
     """Markers are gene-major (ng x K); a group-major (K x ng) markers table is the R-pagoda2 drift
     this contract exists to catch."""

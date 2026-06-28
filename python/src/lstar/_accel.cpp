@@ -133,6 +133,38 @@ static py::tuple subsample_de_rank(py::array data, py::array indptr, py::array i
                           py::array_t<double>(r.lfc.size(), r.lfc.data()), r.nA, r.nB);
 }
 
+// viewer@0.1: 1-vs-rest markers from per-(group,gene) stats. S, NE are (ngroups, ngenes) f64
+// (group-major, over log1p); nper = group sizes (int64, ngroups); ncells = total. Returns
+// (lfc, padj) each (ngenes, ngroups) f64 — the spec's gene-major ng×K orientation.
+static py::tuple markers_one_vs_rest(py::array S_, py::array NE_, py::array nper_, int64_t ncells) {
+    auto S = py::array_t<double, py::array::c_style | py::array::forcecast>::ensure(S_);
+    auto NE = py::array_t<double, py::array::c_style | py::array::forcecast>::ensure(NE_);
+    auto np = py::array_t<int64_t, py::array::c_style | py::array::forcecast>::ensure(nper_);
+    if (!S || S.ndim() != 2) throw std::runtime_error("S must be a 2-D (ngroups, ngenes) array");
+    const int ngroups = (int)S.shape(0); const int64_t ngenes = S.shape(1);
+    if (NE.ndim() != 2 || NE.shape(0) != ngroups || NE.shape(1) != ngenes)
+        throw std::runtime_error("NE must match S shape");
+    if (np.size() != ngroups) throw std::runtime_error("nper must have length ngroups");
+    lstar::Markers mk;
+    { py::gil_scoped_release rel; mk = lstar::markers_one_vs_rest(S.data(), NE.data(), np.data(), ngroups, ngenes, ncells); }
+    const std::vector<py::ssize_t> shape{(py::ssize_t)ngenes, (py::ssize_t)ngroups};
+    return py::make_tuple(py::array_t<double>(shape, mk.lfc.data()),
+                          py::array_t<double>(shape, mk.padj.data()));
+}
+
+// viewer@0.1: per-gene overdispersion score (pagoda2 lowess + F-test). mean/var f64 and nobs i64,
+// each length ngenes (e.g. from col_mean_var over log1p). Returns od f64 (ngenes).
+static py::array_t<double> overdispersion(py::array mean_, py::array var_, py::array nobs_) {
+    auto mean = py::array_t<double, py::array::c_style | py::array::forcecast>::ensure(mean_);
+    auto var  = py::array_t<double, py::array::c_style | py::array::forcecast>::ensure(var_);
+    auto nobs = py::array_t<int64_t, py::array::c_style | py::array::forcecast>::ensure(nobs_);
+    const int64_t ng = mean.size();
+    if (var.size() != ng || nobs.size() != ng) throw std::runtime_error("mean/var/nobs length mismatch");
+    std::vector<double> od;
+    { py::gil_scoped_release rel; od = lstar::overdispersion(mean.data(), var.data(), nobs.data(), ng); }
+    return py::array_t<double>(od.size(), od.data());
+}
+
 static int max_threads() {
 #ifdef _OPENMP
     return omp_get_max_threads();
@@ -153,6 +185,9 @@ PYBIND11_MODULE(_accel, m) {
     m.def("subsample_de_rank", &subsample_de_rank, py::arg("data"), py::arg("indptr"),
           py::arg("indices"), py::arg("nrows"), py::arg("ngenes"), py::arg("membership"),
           py::arg("lognorm") = true);
+    m.def("markers_one_vs_rest", &markers_one_vs_rest, py::arg("S"), py::arg("NE"),
+          py::arg("nper"), py::arg("ncells"));
+    m.def("overdispersion", &overdispersion, py::arg("mean"), py::arg("var"), py::arg("nobs"));
     m.def("max_threads", &max_threads);
 #ifdef _OPENMP
     m.attr("openmp") = true;

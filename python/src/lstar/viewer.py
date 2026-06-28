@@ -26,7 +26,7 @@ fields that matter (the stats match exactly; the marker ``lfc``/``padj`` match t
 import numpy as np
 import scipy.sparse as sp
 
-from .kernels import col_sum_by_group
+from .kernels import col_sum_by_group, markers_one_vs_rest, overdispersion
 from .model import as_categorical, _is_categorical
 
 VIEWER_PROFILE = "viewer@0.1"
@@ -266,76 +266,20 @@ def extend_for_viewer(ds, groupings=None, order="hybrid", embedding=None, marker
 # ---------------------------------------------------------------------------------------------------
 
 def _od_score(X, ncells, ngenes):
-    """Per-gene overdispersion residual: residual of log(var) about a lowess fit of log(var)-vs-log(mean),
-    using mean/var of ``log1p(counts)`` over all cells (genes with mean<=0 or var<=0 get 0)."""
-    S, SS, _ = col_sum_by_group(X, np.zeros(ncells, dtype=np.int32), 1, lognorm=True)
-    m = S[0] / ncells
-    v = np.maximum(SS[0] / ncells - m * m, 0.0)
-    keep = (m > 0) & (v > 0)
-    od = np.zeros(ngenes, dtype=np.float64)
-    if keep.sum() > 10:
-        xs = np.log(m[keep])
-        ys = np.log(v[keep])
-        trend = _lowess_predict(xs, ys)
-        od[keep] = ys - trend
-    return od
-
-
-def _lowess_predict(xs, ys, span=0.3, n_anchor=200):
-    """Locally-weighted (tricube) linear regression evaluated at ``xs`` via ``n_anchor`` anchors and
-    linear interpolation between them -- a port of the viewer's ``lowess`` (prep.ts)."""
-    n = xs.shape[0]
-    if n < 3:
-        return np.full(n, ys.mean() if n else 0.0)
-    ordr = np.argsort(xs)
-    sx = xs[ordr]
-    sy = ys[ordr]
-    win = max(2, int(span * n))
-    ax = np.empty(n_anchor)
-    ay = np.empty(n_anchor)
-    for a in range(n_anchor):
-        x0 = sx[0] + (sx[n - 1] - sx[0]) * a / (n_anchor - 1)
-        l = max(0, int(np.searchsorted(sx, x0, side="left")) - (win >> 1))
-        r = min(n, l + win)
-        l = max(0, r - win)
-        seg_x = sx[l:r]
-        seg_y = sy[l:r]
-        maxd = max(1e-9, float(np.abs(seg_x - x0).max()))
-        d = np.abs(seg_x - x0) / maxd
-        w = (1.0 - d ** 3) ** 3
-        sw = w.sum()
-        swx = (w * seg_x).sum()
-        swy = (w * seg_y).sum()
-        swxx = (w * seg_x * seg_x).sum()
-        swxy = (w * seg_x * seg_y).sum()
-        den = sw * swxx - swx * swx
-        if abs(den) < 1e-12:
-            ay[a] = swy / sw
-        else:
-            b1 = (sw * swxy - swx * swy) / den
-            ay[a] = (swy - b1 * swx) / sw + b1 * x0
-        ax[a] = x0
-    return np.interp(xs, ax, ay)                       # constant-extrapolated at the edges (matches JS)
+    """Per-gene overdispersion score (pagoda2 lowess + F-test) over ``log1p(counts)`` across all
+    cells. Delegates to the shared :func:`lstar.kernels.overdispersion` (core C++ / numpy fallback)."""
+    S, SS, NE = col_sum_by_group(X, np.zeros(ncells, dtype=np.int32), 1, lognorm=True)
+    mean = S[0] / ncells
+    var = np.maximum(SS[0] / ncells - mean * mean, 0.0)
+    nobs = NE[0].astype("i8")                          # expressing cells per gene (the F-test dof)
+    return overdispersion(mean, var, nobs)
 
 
 def _markers(S, NE, codes, ncells, K, ngenes):
-    """1-vs-rest marker table from the sufficient stats: ``lfc[gene, group] = mean_log_group -
-    mean_log_rest`` (means over log1p, denominator = group size); a monotone p-value surrogate
-    ``padj = clip(exp(-|lfc| * sqrt(nexpr_group + 1)), 1e-12, 1)``. Returns ``(lfc, padj)``, each
-    dense ``(ngenes, K)`` (genes x groups). A port of the viewer's marker prep (prep.ts)."""
-    n = np.bincount(codes, minlength=K).astype(np.float64)
-    grand = S.sum(axis=0)                                            # per-gene total over all groups
-    lfc = np.empty((ngenes, K), dtype=np.float64)
-    padj = np.empty((ngenes, K), dtype=np.float64)
-    for g in range(K):
-        ng1 = max(n[g], 1.0)
-        nr = max(ncells - n[g], 1.0)
-        mu = S[g] / ng1                                             # mean log1p in group g
-        mr = (grand - S[g]) / nr                                    # mean log1p in the rest
-        d = mu - mr
-        lfc[:, g] = d
-        padj[:, g] = np.clip(np.exp(-np.abs(d * np.sqrt(NE[g] + 1.0))), 1e-12, 1.0)
-    return lfc, padj
+    """1-vs-rest marker table from the sufficient stats; returns ``(lfc, padj)`` each dense
+    ``(ngenes, K)`` (gene-major). Delegates to the shared :func:`lstar.kernels.markers_one_vs_rest`."""
+    nper = np.bincount(codes, minlength=K)
+    return markers_one_vs_rest(S, NE, nper, ncells)
 
 
 def _reorder_csr_rows(Xr, perm):
