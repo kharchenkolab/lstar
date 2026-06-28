@@ -20,25 +20,38 @@
 using namespace emscripten;
 
 // ---- marshalling helpers ----
+// Index arrays are Int32Array in L* stores -- read at native width (int32) and widen to the core's
+// int64, with NO intermediate double[] copy (the old `convertJSArrayToNumberVector<double>` transit
+// doubled the resident memory of every per-nonzero array; see misc note #2).
 static std::vector<int64_t> to_i64(const val& a) {
-    std::vector<double> d = convertJSArrayToNumberVector<double>(a);
-    std::vector<int64_t> out(d.size());
-    for (size_t i = 0; i < d.size(); ++i) out[i] = static_cast<int64_t>(d[i]);
-    return out;
+    std::vector<int32_t> t = convertJSArrayToNumberVector<int32_t>(a);
+    return std::vector<int64_t>(t.begin(), t.end());
+}
+static std::vector<int> to_int(const val& a) {
+    return convertJSArrayToNumberVector<int>(a);
+}
+// element dtype of a JS TypedArray (so the bulk nnz `data` is read at native width, never widened to
+// double when the kernel doesn't need it -- cscToCsr only permutes; colSumByGroup casts per-element).
+static std::string typed_kind(const val& a) {
+    val ctor = a["constructor"];
+    std::string n = ctor.isUndefined() ? "" : ctor["name"].as<std::string>();
+    if (n == "Float32Array") return "f4";
+    if (n == "Int32Array" || n == "Uint32Array") return "i4";
+    return "f8";                                  // Float64Array / generic Array -> read as double
 }
 // copy a C++ vector into a JS-owned typed array (the .slice() copies before the C++ vector dies)
 static val to_f64(const std::vector<double>& v) {
+    return val(typed_memory_view(v.size(), v.data())).call<val>("slice");
+}
+static val to_f32(const std::vector<float>& v) {
     return val(typed_memory_view(v.size(), v.data())).call<val>("slice");
 }
 static val to_i32(const std::vector<int64_t>& v) {
     std::vector<int32_t> t(v.begin(), v.end());
     return val(typed_memory_view(t.size(), t.data())).call<val>("slice");
 }
-static std::vector<int> to_int(const val& a) {
-    std::vector<double> d = convertJSArrayToNumberVector<double>(a);
-    std::vector<int> out(d.size());
-    for (size_t i = 0; i < d.size(); ++i) out[i] = static_cast<int>(d[i]);
-    return out;
+static val to_i32v(const std::vector<int32_t>& v) {
+    return val(typed_memory_view(v.size(), v.data())).call<val>("slice");
 }
 
 // Zero-aware per-column mean/variance of a CSC measure (optionally over log1p values).
@@ -57,25 +70,50 @@ static val colMeanVar(val data_js, val indptr_js, int nrows, int n_threads, bool
 }
 
 // CSC -> CSR storage transpose (orientation flip, e.g. gene-major <-> cell-major). -> {data,indices,indptr}.
+// cscToCsr only PERMUTES the nnz values -- it never does arithmetic on them -- so it preserves the input
+// dtype end to end (Float32->Float32, Int32->Int32). Dispatching on the JS dtype avoids widening the whole
+// nnz `data` array to double just to copy it back out narrow (the dominant resident-memory term at scale;
+// counts_cellmajor is written Int32 by the prep, so the double was pure overhead). See misc note #2.
 static val cscToCsr(val data_js, val indices_js, val indptr_js, int nrows, int ncols) {
-    std::vector<double> data = convertJSArrayToNumberVector<double>(data_js);
-    std::vector<int64_t> indices = to_i64(indices_js);
-    std::vector<int64_t> indptr = to_i64(indptr_js);
-    auto r = lstar::csc_to_csr(data.data(), indices.data(), indptr.data(), nrows, ncols);
+    std::vector<int64_t> indices = to_i64(indices_js), indptr = to_i64(indptr_js);
+    const std::string dt = typed_kind(data_js);
     val out = val::object();
-    out.set("data", to_f64(r.data));
-    out.set("indices", to_i32(r.indices));
-    out.set("indptr", to_i32(r.indptr));
+    if (dt == "f4") {
+        auto data = convertJSArrayToNumberVector<float>(data_js);
+        auto r = lstar::csc_to_csr<float>(data.data(), indices.data(), indptr.data(), nrows, ncols);
+        out.set("data", to_f32(r.data)); out.set("indices", to_i32(r.indices)); out.set("indptr", to_i32(r.indptr));
+    } else if (dt == "i4") {
+        auto data = convertJSArrayToNumberVector<int32_t>(data_js);
+        auto r = lstar::csc_to_csr<int32_t>(data.data(), indices.data(), indptr.data(), nrows, ncols);
+        out.set("data", to_i32v(r.data)); out.set("indices", to_i32(r.indices)); out.set("indptr", to_i32(r.indptr));
+    } else {
+        auto data = convertJSArrayToNumberVector<double>(data_js);
+        auto r = lstar::csc_to_csr<double>(data.data(), indices.data(), indptr.data(), nrows, ncols);
+        out.set("data", to_f64(r.data)); out.set("indices", to_i32(r.indices)); out.set("indptr", to_i32(r.indptr));
+    }
     return out;
 }
 
 // Per-group sufficient stats over a CSC measure (cells x genes). group: Int32Array (length nrows),
 // cell -> group in [0,ngroups) or <0 to skip. -> {sum,sumsq,n_expr} flat (ngroups x ncols), ngenes.
 static val colSumByGroup(val data_js, val indptr_js, val indices_js, int nrows, int ncols, val group_js, int ngroups, bool lognorm) {
-    std::vector<double> data = convertJSArrayToNumberVector<double>(data_js);
     std::vector<int64_t> indptr = to_i64(indptr_js), indices = to_i64(indices_js);
     std::vector<int> grp = to_int(group_js);
-    auto s = lstar::csc_col_sum_by_group(data.data(), indptr.data(), indices.data(), nrows, ncols, grp.data(), ngroups, lognorm, 1);
+    // The stats kernel casts each value to double internally (sum/sumsq accumulate in double), so the OUTPUT
+    // is always double regardless of input dtype -- but reading the nnz `data` at native width avoids a
+    // double-wide copy of the whole array up front (the prep passes Float32/Int32 counts; see misc note #2).
+    const std::string dt = typed_kind(data_js);
+    lstar::GroupStats s;
+    if (dt == "f4") {
+        auto data = convertJSArrayToNumberVector<float>(data_js);
+        s = lstar::csc_col_sum_by_group<float>(data.data(), indptr.data(), indices.data(), nrows, ncols, grp.data(), ngroups, lognorm, 1);
+    } else if (dt == "i4") {
+        auto data = convertJSArrayToNumberVector<int32_t>(data_js);
+        s = lstar::csc_col_sum_by_group<int32_t>(data.data(), indptr.data(), indices.data(), nrows, ncols, grp.data(), ngroups, lognorm, 1);
+    } else {
+        auto data = convertJSArrayToNumberVector<double>(data_js);
+        s = lstar::csc_col_sum_by_group<double>(data.data(), indptr.data(), indices.data(), nrows, ncols, grp.data(), ngroups, lognorm, 1);
+    }
     val out = val::object();
     out.set("sum", to_f64(s.sum)); out.set("sumsq", to_f64(s.sumsq)); out.set("n_expr", to_f64(s.n_expr));
     out.set("ngroups", ngroups); out.set("ngenes", (double)s.ngenes);
