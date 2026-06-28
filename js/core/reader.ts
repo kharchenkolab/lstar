@@ -298,7 +298,7 @@ export class LstarDataset {
    * matrix. Contiguous rows always merge (no waste); a `gap` of intervening elements is bridged to
    * amortize request latency (those extra bytes are fetched but not assembled into the output).
    */
-  async csrRows(name: string, rowIndices: number[], gap = 4096): Promise<{ data: any; indices: any; indptr: Int32Array; rows: number[] }> {
+  async csrRows(name: string, rowIndices: number[], gap = 4096, onProgress?: (done: number, total: number) => void): Promise<{ data: any; indices: any; indptr: Int32Array; rows: number[] }> {
     const base = "fields/" + name;
     if (rowIndices.length === 0) return { data: new Float64Array(0), indices: new Int32Array(0), indptr: Int32Array.from([0]), rows: [] };
     const nrows = (this.fields.get(name)!.shape as number[])[0];
@@ -313,11 +313,13 @@ export class LstarDataset {
       if (last && at(r) - at(last.r1 + 1) <= gap) last.r1 = r;
       else runs.push({ r0: r, r1: r });
     }
-    // one merged data/indices read per run
+    // one merged data/indices read per run; report progress as runs complete (done/total runs) for a fetch UI
+    let done = 0;
     const blocks = await Promise.all(runs.map(async (run) => {
       const a = at(run.r0), b = at(run.r1 + 1);
       const data = b > a ? await this._rangeOrSlice(base + "/data", a, b) : new Float64Array(0);
       const indices = b > a ? await this._rangeOrSlice(base + "/indices", a, b) : new Int32Array(0);
+      onProgress?.(++done, runs.length);
       return { r0: run.r0, r1: run.r1, a, data, indices };
     }));
     const blockOf = (r: number) => blocks.find((bl) => r >= bl.r0 && r <= bl.r1)!;
