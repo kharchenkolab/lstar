@@ -105,13 +105,39 @@ static val gzipCompress(val bytes_js, int level) {
     return val(typed_memory_view(out.size(), out.data())).call<val>("slice");
 }
 
-static std::string version() { return "lstar-wasm 0.0.3"; }
+// viewer@0.1: 1-vs-rest markers from per-(group,gene) stats. S, NE are Float64Array flat group-major
+// (g*ngenes + gene); nper = group sizes; ncells = total. -> {lfc, padj} flat GENE-major (gene*ngroups
+// + g) -- the spec's ng x K orientation.
+static val markersOneVsRest(val S_js, val NE_js, val nper_js, int ngroups, int ngenes, double ncells) {
+    std::vector<double> S = convertJSArrayToNumberVector<double>(S_js);
+    std::vector<double> NE = convertJSArrayToNumberVector<double>(NE_js);
+    std::vector<int64_t> nper = to_i64(nper_js);
+    auto m = lstar::markers_one_vs_rest(S.data(), NE.data(), nper.data(), ngroups, (int64_t)ngenes, (int64_t)ncells);
+    val out = val::object();
+    out.set("lfc", to_f64(m.lfc)); out.set("padj", to_f64(m.padj));
+    out.set("ngenes", (double)ngenes); out.set("ngroups", (double)ngroups);
+    return out;
+}
+
+// viewer@0.1: per-gene overdispersion score (pagoda2 lowess + F-test). mean/var Float64Array, nobs
+// per-gene (expressing cells). -> Float64Array od. The same kernel the prep uses, so live == prepped.
+static val overdispersion(val mean_js, val var_js, val nobs_js) {
+    std::vector<double> mean = convertJSArrayToNumberVector<double>(mean_js);
+    std::vector<double> var = convertJSArrayToNumberVector<double>(var_js);
+    std::vector<int64_t> nobs = to_i64(nobs_js);
+    auto od = lstar::overdispersion(mean.data(), var.data(), nobs.data(), (int64_t)mean.size());
+    return to_f64(od);
+}
+
+static std::string version() { return "lstar-wasm 0.0.4"; }
 
 EMSCRIPTEN_BINDINGS(lstar_wasm) {
     function("colMeanVar", &colMeanVar);
     function("cscToCsr", &cscToCsr);
     function("colSumByGroup", &colSumByGroup);
     function("subsampleDeRank", &subsampleDeRank);
+    function("markersOneVsRest", &markersOneVsRest);
+    function("overdispersion", &overdispersion);
     function("gzipCompress", &gzipCompress);
     function("version", &version);
 }

@@ -41,6 +41,20 @@ def _fail(msg):
     sys.exit(1)
 
 
+def cmd_make_base(out):
+    """Write a bare (un-prepped) synthetic store — the shared input both preps extend."""
+    lstar.write(_synthetic(), out)
+    print(f"  OK: wrote base store {out}")
+
+
+def cmd_prep_lstar(base, out):
+    """lstar's own prep: read the base store, extend_for_viewer, write it out."""
+    ds = lstar.read(base)
+    lstar.extend_for_viewer(ds)
+    lstar.write(ds, out)
+    print(f"  OK: lstar extend_for_viewer -> {out}")
+
+
 def cmd_canonical():
     ds = _synthetic()
     lstar.extend_for_viewer(ds)
@@ -78,9 +92,11 @@ def cmd_equiv(a, b):
     if ga != gb:
         _fail(f"grouping differs: {ga} vs {gb}")
     g = ga
-    checks = [(f"stats_{g}_sum", 1e-5, 1e-6), (f"stats_{g}_sumsq", 1e-5, 1e-5),
-              (f"stats_{g}_nexpr", 1e-5, 1e-6), (f"markers_{g}_lfc", 1e-3, 1e-4),
-              (f"od_score", 1e-3, 1e-4)]
+    # tolerances are f4-vs-f8 generous (pagoda3 stores float32, lstar float64) but tight enough to
+    # catch any method/orientation drift (a wrong od method or transpose differs by orders of magnitude).
+    checks = [(f"stats_{g}_sum", 1e-4, 1e-2), (f"stats_{g}_sumsq", 1e-4, 1e-2),
+              (f"stats_{g}_nexpr", 1e-5, 1e-3), (f"markers_{g}_lfc", 2e-3, 1e-2),
+              (f"od_score", 5e-3, 5e-2)]
     for nm, rtol, atol in checks:
         va = np.asarray(da.field(nm).values)
         vb = np.asarray(db.field(nm).values)
@@ -102,6 +118,10 @@ if __name__ == "__main__":
         cmd_canonical()
     elif cmd == "validate":
         cmd_validate(sys.argv[2])
+    elif cmd == "make-base":
+        cmd_make_base(sys.argv[2])
+    elif cmd == "prep-lstar":
+        cmd_prep_lstar(sys.argv[2], sys.argv[3])
     elif cmd == "equiv":
         cmd_equiv(sys.argv[2], sys.argv[3])
     else:
