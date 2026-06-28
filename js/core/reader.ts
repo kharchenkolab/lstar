@@ -247,6 +247,9 @@ export class LstarDataset {
   private _rcacheBudget = 256 * 1024 * 1024;   // 256MB default
   /** Cap (bytes) for the in-memory read cache; LRU-evicts down to it. 0 disables + clears it. */
   setReadCacheBudget(bytes: number): void { this._rcacheBudget = Math.max(0, Math.floor(bytes)); if (this._rcacheBudget === 0) { this._rcache.clear(); this._rcacheBytes = 0; } else this._evictReadCache(); }
+  private _csrConcurrency = 12;   // max simultaneous range reads in csrRows — bounds connection use on a scattered (non-coalescing) selection
+  /** Max in-flight range reads per csrRows batch (default 12). Lower for a flaky/limited server, higher for HTTP/2. */
+  setCsrConcurrency(n: number): void { this._csrConcurrency = Math.max(1, Math.floor(n)); }
   readCacheStats(): { entries: number; bytes: number; budget: number } { return { entries: this._rcache.size, bytes: this._rcacheBytes, budget: this._rcacheBudget }; }
   private _evictReadCache(): void {
     while (this._rcacheBytes > this._rcacheBudget && this._rcache.size) {
@@ -380,15 +383,25 @@ export class LstarDataset {
       if (last && at(r) - at(last.r1 + 1) <= gap) last.r1 = r;
       else runs.push({ r0: r, r1: r });
     }
-    // one merged data/indices read per run; report progress as runs complete (done/total runs) for a fetch UI
+    // one merged data/indices read per run; report progress as runs complete (done/total runs) for a fetch UI.
+    // BOUNDED concurrency: a selection that's ORTHOGONAL to the row order (a sample/condition across a cluster reorder,
+    // or a sparse scatter) doesn't coalesce, so `runs` can be in the thousands. Firing them all at once exhausts the
+    // browser/server connection pool and the whole batch fails fast ("Failed to fetch"). Cap in-flight reads instead;
+    // a worst-case scattered read then just streams in waves rather than crashing.
     let done = 0;
-    const blocks = await Promise.all(runs.map(async (run) => {
-      const a = at(run.r0), b = at(run.r1 + 1);
-      const data = b > a ? await this._rangeOrSlice(base + "/data", a, b) : new Float64Array(0);
-      const indices = b > a ? await this._rangeOrSlice(base + "/indices", a, b) : new Int32Array(0);
-      onProgress?.(++done, runs.length);
-      return { r0: run.r0, r1: run.r1, a, data, indices };
-    }));
+    const blocks: { r0: number; r1: number; a: number; data: any; indices: any }[] = new Array(runs.length);
+    let next = 0;
+    const worker = async () => {
+      while (next < runs.length) {
+        const i = next++; const run = runs[i];
+        const a = at(run.r0), b = at(run.r1 + 1);
+        const data = b > a ? await this._rangeOrSlice(base + "/data", a, b) : new Float64Array(0);
+        const indices = b > a ? await this._rangeOrSlice(base + "/indices", a, b) : new Int32Array(0);
+        blocks[i] = { r0: run.r0, r1: run.r1, a, data, indices };
+        onProgress?.(++done, runs.length);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(this._csrConcurrency, runs.length) }, worker));
     const blockOf = (r: number) => blocks.find((bl) => r >= bl.r0 && r <= bl.r1)!;
 
     // assemble the requested rows (input/cell order) into a re-based CSR submatrix — `phys` is each requested cell's
