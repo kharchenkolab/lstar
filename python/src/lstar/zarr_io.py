@@ -23,7 +23,7 @@ LSTAR = "lstar"
 SPEC_VERSION = "0.1"
 
 
-def write(ds, path, compressor=None, chunk_elems=None, stream=False):
+def write(ds, path, compressor=None, chunk_elems=None, stream=False, viewer=False):
     """Serialize an L* Dataset to a Zarr store at `path`.
 
     compressor=None (default) writes uncompressed chunks; pass a numcodecs codec (e.g.
@@ -37,7 +37,14 @@ def write(ds, path, compressor=None, chunk_elems=None, stream=False):
     of being materialized, so a large `h5ad`->L* or L*->L* conversion never holds the whole matrix.
     (Such sources are streamed even without `stream=True`; the flag also chunks the rest of the
     store, since streaming output is inherently chunked.)
+
+    viewer=True first calls `lstar.extend_for_viewer(ds)` to add the lstar-viewer precomputed fields
+    (counts_cellmajor, per-group stats + marker tables, od_score, and a hybrid cell order) so the
+    resulting store is ready for fast differential-expression / variable-gene / dotplot browsing.
     """
+    if viewer:
+        from .viewer import extend_for_viewer
+        extend_for_viewer(ds)
     if stream and chunk_elems is None:
         chunk_elems = 1_000_000
     root = zarr.open_group(path, mode="w")

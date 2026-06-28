@@ -1,0 +1,359 @@
+"""Extend an L* dataset with the precomputed fields the **lstar-viewer** web app needs for fast,
+latency-cheap browsing of a `.lstar.zarr` store.
+
+A plain converted store (counts + an embedding + categorical labels) is enough to *render* an
+embedding, color by a gene or a metadatum, and crosstab labels. But the viewer's heavy interactions
+-- differential expression / variable-gene ranking / dotplots, and low-latency reads over a remote
+store -- want extra precomputed fields plus a locality-friendly cell row order. :func:`extend_for_viewer`
+adds exactly those, natively, so the app loads them instead of recomputing in the browser:
+
+  * ``counts_cellmajor``          -- a CSR (cell-major) copy of ``counts`` (the substrate for on-the-fly
+                                     scope compute and per-cell range reads).
+  * ``stats_<g>_{sum,sumsq,nexpr}`` -- per-(group, gene) sufficient statistics over ``log1p(counts)``
+                                     for each categorical grouping ``g`` (over an induced ``groups_<g>``
+                                     axis); DE / dotplots are built from these.
+  * ``markers_<g>_{lfc,padj}``    -- a 1-vs-rest marker table per group, derived from the stats.
+  * ``od_score``                  -- a global per-gene overdispersion residual (variable-gene ranking).
+  * ``counts_cellmajor_order``    -- (when ``order="hybrid"``) each cell's PHYSICAL row in the reordered
+                                     ``counts_cellmajor``, after a cluster-contiguous + Hilbert-local
+                                     reorder; the reader keys on the ``_order`` sibling field so a
+                                     cluster/lasso selection coalesces into a few byte-range reads.
+
+The computations mirror the viewer's JS store-prep (``lstar-viewer/prep/prep.ts`` and
+``prep/reorder.mjs``) so a natively-extended store is byte-equivalent to the JS-prepped one on the
+fields that matter (the stats match exactly; the marker ``lfc``/``padj`` match to ~1e-3).
+"""
+import numpy as np
+import scipy.sparse as sp
+
+from .kernels import col_sum_by_group
+from .model import as_categorical, _is_categorical
+
+VIEWER_PROFILE = "viewer@0.1"
+N_GRID = 1024                                          # Hilbert grid resolution (must be a power of two)
+
+
+# ---------------------------------------------------------------------------------------------------
+# auto-detection of the grouping labels and the embedding to extend over
+# ---------------------------------------------------------------------------------------------------
+
+_PREFERRED_GROUPINGS = ("leiden", "cluster", "clusters", "cell_type", "celltype", "cell_types",
+                        "louvain", "seurat_clusters", "annotation", "cluster_label")
+
+
+def _label_codes(ds, name):
+    """The (sorted-unique categories, per-cell int codes) for a categorical-or-utf8 cell label.
+
+    Categories are the sorted unique label set -- the same ordering the viewer's JS prep uses
+    (``[...new Set(labels)].sort()``) -- so the induced ``groups_<g>`` axis aligns field-for-field
+    with a JS-prepped store. Returns ``(groups, codes)`` with ``codes`` an int32 array over cells.
+    """
+    fl = ds.field(name)
+    if _is_categorical(fl.values):
+        labels = np.asarray(as_categorical(fl.values), dtype=str)   # decode to strings (missing -> "")
+    else:
+        labels = np.asarray(fl.values, dtype=str)
+    groups, codes = np.unique(labels, return_inverse=True)
+    return np.asarray(groups, dtype=str), np.asarray(codes, dtype=np.int32)
+
+
+def _detect_groupings(ds, min_groups=2, max_groups=60):
+    """Categorical cell labels usable as groupings: a ``label``-role field over the cell axis with
+    2..~max_groups distinct values. Names that look like a clustering / cell-type annotation are
+    preferred (and sorted to the front); near-unique id-like labels are skipped.
+    """
+    cell_axis = _cell_axis(ds)
+    out = []
+    for name, fl in ds.fields.items():
+        if fl.role != "label" or not fl.span or list(fl.span) != [cell_axis]:
+            continue
+        if not _is_categorical(fl.values):                 # a string label is fine; numeric/sparse is not
+            arr = np.asarray(fl.values)
+            if arr.ndim != 1 or arr.dtype.kind not in ("U", "S", "O"):
+                continue
+        groups, _ = _label_codes(ds, name)
+        if min_groups <= len(groups) <= max_groups:
+            out.append(name)
+
+    def _rank(nm):
+        low = nm.lower()
+        for i, p in enumerate(_PREFERRED_GROUPINGS):
+            if p in low:
+                return (0, i, nm)
+        return (1, 0, nm)
+
+    return sorted(out, key=_rank)
+
+
+def _detect_embedding(ds):
+    """The primary embedding field name (``role="embedding"`` over the cell axis), preferring ``umap``.
+
+    A two-dimensional embedding is required for the Hilbert reorder; the first such is used.
+    """
+    cell_axis = _cell_axis(ds)
+    cands = []
+    for name, fl in ds.fields.items():
+        if fl.role != "embedding" or not fl.span or fl.span[0] != cell_axis:
+            continue
+        arr = np.asarray(fl.values)
+        if arr.ndim == 2 and arr.shape[1] >= 2:
+            cands.append(name)
+    if not cands:
+        return None
+    cands.sort(key=lambda nm: (0 if "umap" in nm.lower() else 1, nm))
+    return cands[0]
+
+
+def _cell_axis(ds):
+    """The observation (cell) axis name -- the first span axis of ``counts`` (defaults to ``cells``)."""
+    if "counts" in ds.fields and ds.field("counts").span:
+        return ds.field("counts").span[0]
+    return "cells"
+
+
+def _gene_axis(ds):
+    """The feature (gene) axis name -- the second span axis of ``counts`` (defaults to ``genes``)."""
+    if "counts" in ds.fields and ds.field("counts").span and len(ds.field("counts").span) > 1:
+        return ds.field("counts").span[1]
+    return "genes"
+
+
+# ---------------------------------------------------------------------------------------------------
+# the Hilbert curve (canonical xy -> d on an N x N grid; N a power of two)
+# ---------------------------------------------------------------------------------------------------
+
+def _xy2d(N, x, y):
+    """Canonical Hilbert index of grid cell (x, y) on an N x N curve (N a power of two).
+
+    A faithful port of the viewer's ``xy2d`` (reorder.mjs): the reflection uses ``N - 1`` (the full
+    grid extent), not ``s - 1``.
+    """
+    d = 0
+    s = N >> 1
+    while s > 0:
+        rx = 1 if (x & s) else 0
+        ry = 1 if (y & s) else 0
+        d += s * s * ((3 * rx) ^ ry)
+        if ry == 0:
+            if rx == 1:
+                x = N - 1 - x
+                y = N - 1 - y
+            x, y = y, x
+        s >>= 1
+    return d
+
+
+def _hilbert_index(emb):
+    """Per-cell Hilbert index over a 1024x1024 grid of the (min-max scaled) 2-D embedding."""
+    xy = np.asarray(emb, dtype=np.float64)[:, :2]
+    x, y = xy[:, 0], xy[:, 1]
+    n = xy.shape[0]
+    out = np.empty(n, dtype=np.float64)
+    xr = (x.max() - x.min()) or 1.0
+    yr = (y.max() - y.min()) or 1.0
+    gx = np.minimum(N_GRID - 1, np.floor((x - x.min()) / xr * (N_GRID - 1))).astype(np.int64)
+    gy = np.minimum(N_GRID - 1, np.floor((y - y.min()) / yr * (N_GRID - 1))).astype(np.int64)
+    for i in range(n):                                 # the curve is cheap; n is the cell count
+        out[i] = _xy2d(N_GRID, int(gx[i]), int(gy[i]))
+    return out
+
+
+# ---------------------------------------------------------------------------------------------------
+# the public entry point
+# ---------------------------------------------------------------------------------------------------
+
+def extend_for_viewer(ds, groupings=None, order="hybrid", embedding=None, markers=True):
+    """Add the viewer's precomputed fields to ``ds`` in place (and return it).
+
+    Parameters
+    ----------
+    ds : Dataset
+        A sample dataset with a raw ``counts`` measure (CSC, cells x genes), at least one categorical
+        cell label, and (for ``order="hybrid"``) a 2-D embedding.
+    groupings : list[str] | None
+        Categorical label field names to build stats/markers for. ``None`` auto-detects (labels with
+        2..~60 distinct values, clustering/cell-type names preferred).
+    order : "hybrid" | "none"
+        ``"hybrid"`` (default) physically reorders ``counts_cellmajor`` rows by (first grouping's
+        cluster code, then a Hilbert index over the embedding) and records each cell's physical row in
+        ``counts_cellmajor_order``. ``"none"`` skips the reorder (rows stay in cell order).
+    embedding : str | None
+        The embedding field used for the Hilbert key; ``None`` auto-detects (prefers ``umap``).
+    markers : bool
+        Also compute the 1-vs-rest ``markers_<g>_{lfc,padj}`` tables (default ``True``).
+
+    Returns
+    -------
+    Dataset
+        The same dataset, with ``counts_cellmajor``, ``stats_<g>_*``, ``markers_<g>_*``, ``od_score``
+        and (for ``order="hybrid"``) ``counts_cellmajor_order`` added.
+    """
+    if "counts" not in ds.fields:
+        raise ValueError("extend_for_viewer: dataset has no `counts` measure")
+    cell_axis = _cell_axis(ds)
+    gene_axis = _gene_axis(ds)
+
+    X = ds.field("counts").values
+    X = X.tocsc() if sp.issparse(X) else sp.csc_matrix(X)
+    ncells, ngenes = X.shape
+
+    if groupings is None:
+        groupings = _detect_groupings(ds)
+    groupings = [g for g in groupings if g in ds.fields]
+    if not groupings:
+        raise ValueError("extend_for_viewer: no categorical grouping found (pass groupings=[...])")
+
+    if embedding is None:
+        embedding = _detect_embedding(ds)
+
+    # 1) cell-major (CSR) copy of counts -- the substrate for scope compute and per-cell range reads.
+    Xr = X.tocsr()
+    Xr.data = Xr.data.astype(np.int32, copy=False)
+    Xr.indices = Xr.indices.astype(np.int32, copy=False)
+    Xr.indptr = Xr.indptr.astype(np.int32, copy=False)
+
+    # 2) global overdispersion residual (a single "group" over all cells -> per-gene mean/var(log1p)).
+    od = _od_score(X, ncells, ngenes)
+    ds.add_field("od_score", od, role="measure", span=[gene_axis], state=None, encoding="dense",
+                 provenance={"method": "viewer.od", "basis": "log1p", "trend": "lowess"})
+
+    # 3) per-grouping sufficient stats + (optional) marker tables, each over an induced groups_<g> axis.
+    for g in groupings:
+        groups, codes = _label_codes(ds, g)
+        K = len(groups)
+        gaxis = "groups_%s" % g
+        if gaxis not in ds.axes:
+            ds.add_axis(gaxis, groups, origin="derived", role="feature")
+        S, SS, NE = col_sum_by_group(X, codes, K, lognorm=True)        # dense (K, ngenes), over log1p(X)
+        ds.add_field("stats_%s_sum" % g, S, role="measure", span=[gaxis, gene_axis], encoding="dense")
+        ds.add_field("stats_%s_sumsq" % g, SS, role="measure", span=[gaxis, gene_axis], encoding="dense")
+        ds.add_field("stats_%s_nexpr" % g, NE, role="measure", span=[gaxis, gene_axis], encoding="dense")
+        if markers:
+            lfc, padj = _markers(S, NE, codes, ncells, K, ngenes)      # dense (ngenes, K) -- genes x groups
+            ds.add_field("markers_%s_lfc" % g, lfc, role="measure", span=[gene_axis, gaxis],
+                         encoding="dense", provenance={"method": "viewer.markers", "test": "1-vs-rest"})
+            ds.add_field("markers_%s_padj" % g, padj, role="measure", span=[gene_axis, gaxis],
+                         encoding="dense", provenance={"method": "viewer.markers", "test": "1-vs-rest"})
+
+    # 4) hybrid cell order: reorder counts_cellmajor rows, record each cell's physical row.
+    if order == "hybrid":
+        primary = groupings[0]
+        _, primary_codes = _label_codes(ds, primary)
+        if embedding is not None and embedding in ds.fields:
+            hil = _hilbert_index(ds.field(embedding).values)
+        else:                                                          # no embedding -> stable cell order
+            hil = np.arange(ncells, dtype=np.float64)
+        # physical row p holds cell perm[p]: primary key = cluster code, secondary = Hilbert index.
+        perm = np.lexsort((hil, primary_codes.astype(np.int64)))       # last key is primary
+        Xr = _reorder_csr_rows(Xr, perm)
+        pos_of = np.empty(ncells, dtype=np.float64)                    # cell -> physical row (exact ints, f8)
+        pos_of[perm] = np.arange(ncells, dtype=np.float64)
+        ds.add_field("counts_cellmajor_order", pos_of, role="measure", span=[cell_axis],
+                     state="permutation", encoding="dense",
+                     provenance={"method": "viewer.reorder", "curve": "hilbert", "grid": N_GRID,
+                                 "group": primary})
+
+    ds.add_field("counts_cellmajor", Xr, role="measure", span=[cell_axis, gene_axis], state="raw",
+                 encoding="csr")
+
+    if VIEWER_PROFILE not in ds.profiles:
+        ds.profiles.append(VIEWER_PROFILE)
+    return ds
+
+
+# ---------------------------------------------------------------------------------------------------
+# computations (faithful ports of the viewer's JS store-prep)
+# ---------------------------------------------------------------------------------------------------
+
+def _od_score(X, ncells, ngenes):
+    """Per-gene overdispersion residual: residual of log(var) about a lowess fit of log(var)-vs-log(mean),
+    using mean/var of ``log1p(counts)`` over all cells (genes with mean<=0 or var<=0 get 0)."""
+    S, SS, _ = col_sum_by_group(X, np.zeros(ncells, dtype=np.int32), 1, lognorm=True)
+    m = S[0] / ncells
+    v = np.maximum(SS[0] / ncells - m * m, 0.0)
+    keep = (m > 0) & (v > 0)
+    od = np.zeros(ngenes, dtype=np.float64)
+    if keep.sum() > 10:
+        xs = np.log(m[keep])
+        ys = np.log(v[keep])
+        trend = _lowess_predict(xs, ys)
+        od[keep] = ys - trend
+    return od
+
+
+def _lowess_predict(xs, ys, span=0.3, n_anchor=200):
+    """Locally-weighted (tricube) linear regression evaluated at ``xs`` via ``n_anchor`` anchors and
+    linear interpolation between them -- a port of the viewer's ``lowess`` (prep.ts)."""
+    n = xs.shape[0]
+    if n < 3:
+        return np.full(n, ys.mean() if n else 0.0)
+    ordr = np.argsort(xs)
+    sx = xs[ordr]
+    sy = ys[ordr]
+    win = max(2, int(span * n))
+    ax = np.empty(n_anchor)
+    ay = np.empty(n_anchor)
+    for a in range(n_anchor):
+        x0 = sx[0] + (sx[n - 1] - sx[0]) * a / (n_anchor - 1)
+        l = max(0, int(np.searchsorted(sx, x0, side="left")) - (win >> 1))
+        r = min(n, l + win)
+        l = max(0, r - win)
+        seg_x = sx[l:r]
+        seg_y = sy[l:r]
+        maxd = max(1e-9, float(np.abs(seg_x - x0).max()))
+        d = np.abs(seg_x - x0) / maxd
+        w = (1.0 - d ** 3) ** 3
+        sw = w.sum()
+        swx = (w * seg_x).sum()
+        swy = (w * seg_y).sum()
+        swxx = (w * seg_x * seg_x).sum()
+        swxy = (w * seg_x * seg_y).sum()
+        den = sw * swxx - swx * swx
+        if abs(den) < 1e-12:
+            ay[a] = swy / sw
+        else:
+            b1 = (sw * swxy - swx * swy) / den
+            ay[a] = (swy - b1 * swx) / sw + b1 * x0
+        ax[a] = x0
+    return np.interp(xs, ax, ay)                       # constant-extrapolated at the edges (matches JS)
+
+
+def _markers(S, NE, codes, ncells, K, ngenes):
+    """1-vs-rest marker table from the sufficient stats: ``lfc[gene, group] = mean_log_group -
+    mean_log_rest`` (means over log1p, denominator = group size); a monotone p-value surrogate
+    ``padj = clip(exp(-|lfc| * sqrt(nexpr_group + 1)), 1e-12, 1)``. Returns ``(lfc, padj)``, each
+    dense ``(ngenes, K)`` (genes x groups). A port of the viewer's marker prep (prep.ts)."""
+    n = np.bincount(codes, minlength=K).astype(np.float64)
+    grand = S.sum(axis=0)                                            # per-gene total over all groups
+    lfc = np.empty((ngenes, K), dtype=np.float64)
+    padj = np.empty((ngenes, K), dtype=np.float64)
+    for g in range(K):
+        ng1 = max(n[g], 1.0)
+        nr = max(ncells - n[g], 1.0)
+        mu = S[g] / ng1                                             # mean log1p in group g
+        mr = (grand - S[g]) / nr                                    # mean log1p in the rest
+        d = mu - mr
+        lfc[:, g] = d
+        padj[:, g] = np.clip(np.exp(-np.abs(d * np.sqrt(NE[g] + 1.0))), 1e-12, 1.0)
+    return lfc, padj
+
+
+def _reorder_csr_rows(Xr, perm):
+    """Return a CSR matrix whose physical row p is row ``perm[p]`` of ``Xr`` (an int32 CSR copy)."""
+    Xr = Xr.tocsr()
+    indptr = Xr.indptr.astype(np.int64, copy=False)
+    counts = np.diff(indptr)[perm].astype(np.int64)
+    new_indptr = np.empty(len(perm) + 1, dtype=np.int32)
+    new_indptr[0] = 0
+    new_indptr[1:] = np.cumsum(counts)
+    # build the gather index: physical row p contributes source positions [start, start+count) of
+    # source row perm[p]. `repeat(start - dest_start, count) + arange(nnz)` lays those slices end-to-end.
+    src_starts = indptr[perm]
+    nnz = int(counts.sum())
+    dest_starts = new_indptr[:-1].astype(np.int64)
+    offset = np.repeat(src_starts - dest_starts, counts)
+    gather = offset + np.arange(nnz, dtype=np.int64)
+    new_data = Xr.data[gather].astype(np.int32, copy=False)
+    new_indices = Xr.indices[gather].astype(np.int32, copy=False)
+    out = sp.csr_matrix((new_data, new_indices, new_indptr), shape=Xr.shape)
+    return out

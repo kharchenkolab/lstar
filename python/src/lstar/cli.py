@@ -352,20 +352,26 @@ def _read_dataset(src: str, ff: str, backend: str = "auto"):
 
 
 def convert(src: str, dst: str, from_fmt: str | None = None, to_fmt: str | None = None,
-            backend: str = "auto"):
+            backend: str = "auto", viewer: bool = False):
     """Convert *src* → *dst*. Returns ``(ds, from_fmt, to_fmt)`` with the bridging L* dataset.
 
     Python-side ↔ Python-side runs in-process; any leg in R (Seurat/SCE) is bridged through a temporary
     on-disk L* store. *backend* (auto|native|direct) selects the native package vs. lstar's package-free
-    codec per leg."""
+    codec per leg. *viewer* (only when the TARGET is a store) extends the dataset with the lstar-viewer
+    precomputed fields (counts_cellmajor, per-group stats + marker tables, od_score, hybrid cell order)
+    before writing it."""
     import lstar
     ff = detect_format(src, from_fmt)
     tf = detect_format(dst, to_fmt)
     if tf == "rds":
         tf = "seurat"                              # a bare .rds *target* defaults to Seurat (use --to sce)
+    if viewer and tf != "store":
+        raise ConvertError("--viewer requires the target to be a store (.lstar.zarr); got %r" % tf)
     src_r, dst_r = ff in _R, tf in _R
     if not src_r and not dst_r:                    # in-process Python path
         ds = _load_py(src, ff, backend)
+        if viewer:
+            lstar.extend_for_viewer(ds)
         _emit_py(ds, dst, tf, backend)
         return ds, ff, tf
     if not os.path.exists(src):
@@ -381,6 +387,8 @@ def convert(src: str, dst: str, from_fmt: str | None = None, to_fmt: str | None 
         if dst_r:
             _r_write_from_store(bridge, dst, tf, backend)
         else:
+            if viewer:                              # R source -> store --viewer: extend before emit
+                lstar.extend_for_viewer(ds)
             _emit_py(ds, dst, tf, backend)
         return ds, ff, tf
     finally:
@@ -490,6 +498,9 @@ def main(argv=None) -> int:
     c.add_argument("--to", dest="to_fmt", default=None, help="override the target format")
     c.add_argument("--backend", choices=("auto", "native", "direct"), default="auto",
                    help="native (domain package), direct (lstar's package-free codec), or auto [default]")
+    c.add_argument("--viewer", action="store_true",
+                   help="when the target is a store, extend it with the lstar-viewer precomputed "
+                        "fields (counts_cellmajor, per-group stats + markers, od_score, hybrid order)")
     c.add_argument("--report", action="store_true", help="print the full fidelity report")
     c.add_argument("--report-json", dest="report_json", metavar="FILE", default=None,
                    help="write the fidelity report as JSON to FILE")
@@ -512,7 +523,8 @@ def main(argv=None) -> int:
     args = p.parse_args(argv)
     try:
         if args.cmd == "convert":
-            ds, ff, tf = convert(args.src, args.dst, args.from_fmt, args.to_fmt, args.backend)
+            ds, ff, tf = convert(args.src, args.dst, args.from_fmt, args.to_fmt, args.backend,
+                                 viewer=getattr(args, "viewer", False))
             rep = build_report(ds, args.src, ff, args.dst, tf)
             nc = None
             if args.check:
