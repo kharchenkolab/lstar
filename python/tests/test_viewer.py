@@ -18,7 +18,10 @@ import lstar
 from lstar.viewer import _xy2d
 
 
-PBMC6 = "/Users/peter.kharchenko/pagoda/lstar-viewer/web/public/pbmc6.lstar.zarr"
+# A JS-prepped reference store to cross-check against. Overridable via $LSTAR_PBMC6 so the gate
+# runs anywhere the store is available (CI artifact, a non-mac checkout); skips cleanly otherwise.
+PBMC6 = os.environ.get(
+    "LSTAR_PBMC6", "/Users/peter.kharchenko/pagoda/lstar-viewer/web/public/pbmc6.lstar.zarr")
 
 
 def _synthetic(nc=200, ng=50, K=5, seed=0):
@@ -123,3 +126,43 @@ def test_pbmc6_stats_and_markers_match_reference():
     # per-group lfc correlation is essentially 1
     corrs = [np.corrcoef(lfc[:, g], stored_lfc[:, g])[0, 1] for g in range(K)]
     assert min(corrs) > 0.99
+
+
+# --------------------------------------------------------------------------------------------------
+# 3) the viewer@0.1 profile contract (validate())
+# --------------------------------------------------------------------------------------------------
+
+def test_extended_store_satisfies_viewer_profile():
+    """The canonical Python prep produces a store that validate() accepts as viewer@0.1."""
+    ds, _ = _synthetic()
+    lstar.extend_for_viewer(ds)
+    assert "viewer@0.1" in ds.profiles
+    viewer_errs = [i for i in lstar.validate(ds) if i.startswith("ERROR") and "viewer@0.1" in i]
+    assert viewer_errs == [], viewer_errs
+
+
+def test_viewer_profile_requires_fields():
+    """Stamping viewer@0.1 without the fields is an ERROR (the tag is a guarantee, not decoration)."""
+    ds, _ = _synthetic()
+    ds.profiles.append("viewer@0.1")                       # claim it, provide nothing
+    issues = lstar.validate(ds)
+    assert any("counts_cellmajor" in i and i.startswith("ERROR") for i in issues)
+    assert any("od_score" in i and i.startswith("ERROR") for i in issues)
+    assert any("no grouping" in i for i in issues)
+
+
+def test_viewer_profile_rejects_transposed_markers():
+    """Markers are gene-major (ng x K); a group-major (K x ng) markers table is the R-pagoda2 drift
+    this contract exists to catch."""
+    ds, _ = _synthetic()
+    lstar.extend_for_viewer(ds)
+    K = len(ds.axis("groups_leiden"))
+    ng = len(ds.axis("genes"))
+    # overwrite markers_leiden_lfc with a transposed (group-major) copy + matching span
+    good = np.asarray(ds.field("markers_leiden_lfc").values)        # ng x K
+    ds.fields.pop("markers_leiden_lfc")
+    ds.add_field("markers_leiden_lfc", good.T.copy(), role="measure",
+                 span=["groups_leiden", "genes"], encoding="dense")  # K x ng -- WRONG
+    issues = lstar.validate(ds)
+    assert any("markers_leiden_lfc" in i and "gene-major" in i and i.startswith("ERROR")
+               for i in issues), issues

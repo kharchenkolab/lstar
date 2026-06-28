@@ -7,6 +7,8 @@ state vocabularies are *open*, so unrecognized values are warnings, not errors.
     issues = lstar.validate(ds)            # list of "ERROR: ..."/"WARN: ..." strings
     lstar.validate(ds, strict=True)        # raises ValueError on any ERROR
 """
+import re
+
 import numpy as np
 import scipy.sparse as sp
 
@@ -119,7 +121,62 @@ def validate(ds, strict=False):
             err("factor axis '%s' labels disagree with inducing field '%s' categories "
                 "(induced-axis drift)" % (name, ax.induced_by))
 
+    # Profile contract: `viewer@0.1` guarantees a set of precomputed fields with a fixed orientation
+    # (docs/format.md "The viewer profile"). A reader relies on the tag, so a stamped-but-incomplete
+    # or wrongly-oriented store is an ERROR, not a convention.
+    if "viewer@0.1" in (getattr(ds, "profiles", None) or []):
+        _check_viewer_profile(ds, err, warn)
+
     if strict and any(i.startswith("ERROR") for i in issues):
         raise ValueError("L* validation failed:\n  " + "\n  ".join(
             i for i in issues if i.startswith("ERROR")))
     return issues
+
+
+def _check_viewer_profile(ds, err, warn):
+    """Enforce the `viewer@0.1` contract (docs/format.md). Required fields must exist for >=1 grouping,
+    with the canonical orientation: stats group-major [<g>, genes], markers gene-major [genes, <g>]."""
+    fields = ds.fields
+    counts = fields.get("counts")
+    gene_axis = counts.span[1] if counts is not None and len(counts.span or []) > 1 else "genes"
+    cell_axis = counts.span[0] if counts is not None and (counts.span or []) else "cells"
+
+    cm = fields.get("counts_cellmajor")
+    if cm is None:
+        err("viewer@0.1: required field 'counts_cellmajor' is missing")
+    elif cm.encoding != "csr" or list(cm.span or []) != [cell_axis, gene_axis]:
+        err("viewer@0.1: 'counts_cellmajor' must be csr over [%s, %s], got %s over %s"
+            % (cell_axis, gene_axis, cm.encoding, list(cm.span or [])))
+
+    od = fields.get("od_score")
+    if od is None:
+        err("viewer@0.1: required field 'od_score' is missing")
+    elif list(od.span or []) != [gene_axis]:
+        err("viewer@0.1: 'od_score' must span [%s], got %s" % (gene_axis, list(od.span or [])))
+
+    groupings = sorted(m.group(1) for m in (re.match(r"^stats_(.+)_sum$", n) for n in fields) if m)
+    if not groupings:
+        err("viewer@0.1: no grouping found (expected stats_<g>_sum / markers_<g>_* for some <g>)")
+
+    for g in groupings:
+        for stat in ("sum", "sumsq", "nexpr"):
+            nm = "stats_%s_%s" % (g, stat)
+            f = fields.get(nm)
+            if f is None:
+                err("viewer@0.1: required field '%s' is missing" % nm)
+            elif len(f.span or []) != 2 or f.span[1] != gene_axis or f.span[0] == gene_axis:
+                err("viewer@0.1: '%s' must be group-major [<%s>, %s]; got %s"
+                    % (nm, g, gene_axis, list(f.span or [])))
+        for m in ("lfc", "padj"):
+            nm = "markers_%s_%s" % (g, m)
+            f = fields.get(nm)
+            if f is None:
+                err("viewer@0.1: required field '%s' is missing" % nm)
+            elif len(f.span or []) != 2 or f.span[0] != gene_axis or f.span[1] == gene_axis:
+                err("viewer@0.1: '%s' must be gene-major [%s, <%s>]; got %s  "
+                    "(markers are gene-major; do not transpose)" % (nm, gene_axis, g, list(f.span or [])))
+
+    order = fields.get("counts_cellmajor_order")
+    if order is not None and list(order.span or []) != [cell_axis]:
+        warn("viewer@0.1: 'counts_cellmajor_order' should span [%s], got %s"
+             % (cell_axis, list(order.span or [])))

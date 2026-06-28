@@ -142,6 +142,66 @@ only. Round-trips across the Python, C++, and R readers/writers.
 many small ones — required for access over HTTP. Both the Python and C++ writers emit it; readers
 prefer it (`zarr.open_consolidated`, zarrita's consolidated path) and fall back to walking the tree.
 
+## The viewer profile (`viewer@0.1`)
+
+A *profile* is a contract: a writer stamps `profiles` with a name@version, and a reader may then
+**rely** on the fields that profile guarantees. `viewer@0.1` is the profile the `lstar-viewer` web
+app consumes — precomputed summaries so the browser renders differential-expression / variable-gene /
+dotplot views and does low-latency selection reads without recomputing client-side. Any surface
+(Python `extend_for_viewer`, R `extend_for_viewer`, the JS prep, a profile writer like `pagoda2`) that
+stamps `viewer@0.1` MUST satisfy this contract; `validate()` enforces it.
+
+**Precompute is optional.** A plain (un-prepped) store opens and is fully usable — the viewer computes
+markers, stats, selection DE and overdispersion **on the fly** (the same kernels). The profile only
+*precomputes* these as global navigators so a large/remote store opens instantly. So this contract
+binds a store **only when it declares `viewer@0.1`**; a bare store is valid and viewable without it.
+Because the precompute and the on-the-fly path call the **same** core kernels, a prepped field equals
+its live-computed value (within the conformance tolerance).
+
+A `viewer@0.1` store contains, for **at least one** categorical cell grouping `<g>` (e.g. `leiden`,
+`cell_type`), with `cells`/`genes` standing for the observation/feature axes and `K` = number of
+groups in `<g>` (an induced factor axis `groups_<g>` or the grouping's own factor axis):
+
+| field | required | encoding | span (orientation) | meaning |
+|---|---|---|---|---|
+| `counts_cellmajor` | **yes** | `csr` (`state="raw"`) | `[cells, genes]` | cell-major copy of `counts`; substrate for per-cell row reads + scope compute |
+| `stats_<g>_sum` | **yes** | dense | `[<g>, genes]` = **K×ng** | Σ `log1p(counts)` per (group, gene) |
+| `stats_<g>_sumsq` | **yes** | dense | `[<g>, genes]` = K×ng | Σ `log1p(counts)²` per (group, gene) |
+| `stats_<g>_nexpr` | **yes** | dense | `[<g>, genes]` = K×ng | count of nonzero cells per (group, gene) |
+| `markers_<g>_lfc` | **yes** | dense | `[genes, <g>]` = **ng×K** | 1-vs-rest log-fold-change (see below) |
+| `markers_<g>_padj` | **yes** | dense | `[genes, <g>]` = ng×K | 1-vs-rest significance surrogate (see below) |
+| `od_score` | **yes** | dense | `[genes]` | per-gene overdispersion score (pagoda2 F-test; variable-gene ranking) |
+| `counts_cellmajor_order` | optional | dense (`state="permutation"`) | `[cells]` | cell → physical row in `counts_cellmajor` after a locality reorder |
+
+**Orientation (load-bearing, do not transpose).** Stats are **group-major** (`K×ng`): a row is one
+cluster's full gene profile (contiguous). Markers are **gene-major** (`ng×K`): a row is one gene's
+per-cluster values — the path the viewer takes when coloring an embedding by a marker. The two
+orientations are deliberately different and are part of the contract.
+
+**Marker definition (`viewer.markers/1-vs-rest`, a fast surrogate — not a calibrated test).** Over
+`log1p(counts)`, with group size `n_g` and rest size `n − n_g`:
+`lfc[gene, g] = mean_log_in_g − mean_log_in_rest`;
+`padj[gene, g] = clip(exp(−|lfc| · sqrt(nexpr_g + 1)), 1e-12, 1)`.
+
+**Overdispersion (`od_score`, pagoda2-style).** Per gene, take `mean`/`var` of `log1p(counts)` over
+all cells and `nobs` = number of expressing cells. Fit `log(var) ~ log(mean)` with a tricube lowess
+(span 0.3, 200 anchors, linear interpolation, constant edge extrapolation), giving residual
+`r = log(var) − trend`. The score is `−log P(F > exp(r); df1 = df2 = nobs)` — the upper-tail variance-
+ratio F-test from pagoda2's `adjustVariance`, so a sparsely-expressed gene (small `nobs`) can't reach a
+high score. Genes with `nobs < 3`, `mean ≤ 0`, or `var ≤ 0` get `0`. (The earlier draft used the raw
+residual `r`; the F-test score is canonical because it is what the viewer computes **live**, so
+prepped == live.)
+
+**Hybrid order (`counts_cellmajor_order`).** When present, `counts_cellmajor`'s rows are physically
+permuted by `lexsort(hilbert_index, primary_cluster_code)` (primary key = the first grouping's cluster
+code, secondary = a Hilbert index over a 1024×1024 grid of the min-max-scaled 2-D embedding). The
+field stores, for each cell, its physical row (`f8`, exact integers). A reader keys on the `_order`
+**sibling** of a field name so that a cluster/lasso selection coalesces into a few byte-range reads.
+
+These quantities have a single C++-core implementation bound to every surface; pure-language
+fallbacks (Python without the accel extension, JS before WASM) must match the core within the
+conformance tolerance (`stats` exact; `lfc`/`od` to ~1e-3).
+
 ## Packaging — one model, four layouts
 
 Because a collection references its members by identity (axes are namespaced), packaging is decoupled
