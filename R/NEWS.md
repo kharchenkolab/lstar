@@ -24,6 +24,18 @@ spatial omics, with a shared C++ core (`libstar`) and bindings in R, Python and 
 * The shared vocabulary keeps the common core (counts, data/X, pca + loadings, umap, labels, metadata)
   lossless across conversions; what a target cannot hold is recorded in `dropped`, never lost silently.
 
+## Viewer profile (`viewer@0.1`)
+
+* `extend_for_viewer(ds)` and the `lstar viewer <store>` CLI add the **viewer profile**: a cell-major
+  `counts_cellmajor` (physically reordered cluster-contiguous, with a `counts_cellmajor_order`
+  permutation for locality reads), per-grouping cluster stats (`stats_<g>_*`, group-major), 1-vs-rest
+  marker tables (`markers_<g>_*`, gene-major), and a pagoda2-style `od_score` (lowess + F-test). The
+  profile is specified in `docs/format.md` and enforced by `validate()`.
+* The recipe math (`markers_one_vs_rest`, `overdispersion`) lives in the shared `libstar` core and is
+  bound to R, Python and WebAssembly, so a store prepped from any surface — and the browser viewer's
+  on-the-fly compute — agree (a cross-language conformance gate checks it). `write_pagoda2` now emits
+  a fully conformant `viewer@0.1` store.
+
 ## Performance
 
 * Streamed, multi-threaded (OpenMP) per-gene/per-cell reductions over the compiled core

@@ -55,6 +55,11 @@ echo "== DE-bundle conformance (rank_genes_groups -> (factor,genes) bundle; lsta
 bash conformance/de.sh >/tmp/lstar_de.log 2>&1 \
   && pass "DE bundle round-trips + tidy markers (Py + R)" || { echo "  FAIL de"; tail -15 /tmp/lstar_de.log; exit 1; }
 
+echo "== viewer@0.1 profile conformance (python prep + R pagoda2 + native-R extend, vs the spec) =="
+bash conformance/viewer.sh >/tmp/lstar_viewer.log 2>&1 \
+  && pass "viewer@0.1 prep conformant + R==python (set PAGODA3 to also check pagoda3 prep.ts)" \
+  || { echo "  FAIL viewer"; tail -20 /tmp/lstar_viewer.log; exit 1; }
+
 echo "== cross-format conformance (R: Seurat + SCE) =="
 bash conformance/cross_format.sh >/tmp/lstar_cf.log 2>&1 \
   && pass "AnnData<->Seurat<->SCE via L*" || { echo "  FAIL cross-format"; tail -15 /tmp/lstar_cf.log; exit 1; }
