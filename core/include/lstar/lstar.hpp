@@ -19,7 +19,15 @@
 #include <string>
 #include <vector>
 
+// nlohmann/json instantiates std::char_traits<unsigned char> (via its
+// std::basic_string<unsigned char> output adapters). libc++ on Xcode 26.5+
+// deprecates char_traits<T> for non-standard T, which -Werror-style CI turns
+// into a build failure. Silence it just for this third-party header; our own
+// code names no such instantiation. (GCC-form pragma is honored by Clang too.)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 #include "nlohmann/json.hpp"
+#pragma GCC diagnostic pop
 
 #ifdef _OPENMP
 #include <omp.h>
