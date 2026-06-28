@@ -333,6 +333,24 @@ export class LstarDataset {
   }
 
   /**
+   * Locality-aware subsample of `cellIds` down to ~`maxRows` cell ids — for an approximate (ranking-grade) compute that
+   * doesn't need every cell. On a REORDERED field, pick `windows` evenly-spaced CONTIGUOUS runs of physical rows, so the
+   * subsequent csrRows read is ~`windows` coalesced reads (a few MB) rather than the whole selection; the windows are
+   * spread across the selection's physical extent (≈ its spatial extent under a Hilbert order) to stay representative.
+   * On a canonical field (no locality) returns a uniform stride sample. Returns all ids unchanged when ≤ maxRows.
+   */
+  async sampleRows(name: string, cellIds: number[], maxRows: number, windows = 16): Promise<number[]> {
+    if (!(maxRows > 0) || cellIds.length <= maxRows) return cellIds.slice();
+    const map = await this._rowMap(name);
+    if (!map) { const out: number[] = [], step = cellIds.length / maxRows; for (let i = 0; i < maxRows; i++) out.push(cellIds[Math.floor(i * step)]); return out; }
+    const pairs = cellIds.map((c) => [map[c], c] as [number, number]).sort((a, b) => a[0] - b[0]);
+    const W = Math.max(1, Math.min(windows, maxRows)), perWin = Math.ceil(maxRows / W), seg = pairs.length / W;
+    const out: number[] = [];
+    for (let w = 0; w < W; w++) { const start = Math.floor(w * seg); for (let i = 0; i < perWin && start + i < pairs.length; i++) out.push(pairs[start + i][1]); }
+    return out;
+  }
+
+  /**
    * Rows of a CSR field for a cell selection, as a re-based CSR submatrix `{ data, indices, indptr,
    * rows }` (indptr over the requested rows, in input order). Selected rows are coalesced into runs so
    * the data/indices are read in a few merged byte-range requests instead of one per row — DE /
