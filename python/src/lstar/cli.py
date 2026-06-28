@@ -512,6 +512,12 @@ def main(argv=None) -> int:
                    help="exit non-zero if the native-acceptance check fails")
     c.add_argument("-q", "--quiet", action="store_true", help="suppress the summary")
 
+    vw = sub.add_parser("viewer", help="extend an existing store in place with the viewer@0.1 fields")
+    vw.add_argument("store", help="a *.lstar.zarr store to extend in place")
+    vw.add_argument("--grouping", default=None, help="primary grouping label (default: auto-detect)")
+    vw.add_argument("--also", nargs="*", default=[], help="additional grouping labels to summarize")
+    vw.add_argument("-q", "--quiet", action="store_true", help="suppress the summary")
+
     i = sub.add_parser("inspect", help="read SRC and report its L* structure (no write)")
     i.add_argument("src")
     i.add_argument("--from", dest="from_fmt", default=None, help="override the source format")
@@ -542,6 +548,16 @@ def main(argv=None) -> int:
             if args.strict and nc and nc["status"] == "fail":
                 print("lstar convert: native-acceptance check FAILED (--strict)", file=sys.stderr)
                 return 3
+        elif args.cmd == "viewer":
+            import lstar
+            ds = lstar.read(args.store)
+            groupings = ([args.grouping] + list(args.also)) if args.grouping else (list(args.also) or None)
+            lstar.extend_for_viewer(ds, groupings=groupings)
+            lstar.write(ds, args.store)
+            if not args.quiet:
+                added = [n for n in ds.fields if n.startswith(("stats_", "markers_", "counts_cellmajor", "od_score"))]
+                print("lstar viewer: %s — viewer@0.1 ready (%d navigator fields)"
+                      % (os.path.basename(args.store), len(added)))
         elif args.cmd == "inspect":
             ff = detect_format(args.src, args.from_fmt)
             ds = _read_dataset(args.src, ff, args.backend)
