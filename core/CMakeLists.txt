@@ -48,6 +48,13 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_L
   target_link_libraries(test_chunked PRIVATE stdc++fs)
 endif()
 
+add_executable(test_viewer test/test_viewer.cpp)
+target_link_libraries(test_viewer PRIVATE lstar)
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 11)
+  target_link_libraries(test_viewer PRIVATE stdc++fs)
+endif()
+
 enable_testing()
 add_test(NAME crossimpl COMMAND test_crossimpl)
 add_test(NAME bench COMMAND bench_colstats)
+add_test(NAME viewer COMMAND test_viewer)

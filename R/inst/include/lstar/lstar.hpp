@@ -1027,6 +1027,176 @@ inline GroupStats csc_col_sum_by_group(const T* data, const int64_t* indptr, con
     return s;
 }
 
+// ---- viewer@0.1 recipe kernels (docs/format.md "The viewer profile") --------------------------
+// One implementation, bound to R / Python / WASM, so a precomputed navigator equals the viewer's
+// on-the-fly value ("prepped == live"). See the profile spec for field definitions and orientation.
+
+// 1-vs-rest marker table from per-(group,gene) sufficient stats (the `sum`/`n_expr` of
+// csc_col_sum_by_group computed over log1p). Inputs S, NE are GROUP-major (g*ngenes + gene); `nper`
+// = group sizes (length ngroups); `ncells` = total cells. Outputs are GENE-major (gene*ngroups + g)
+// -- the spec's ng x K orientation: lfc[gene,g] = mean_log_in_g - mean_log_in_rest;
+// padj[gene,g] = clip(exp(-|lfc|*sqrt(nexpr_g + 1)), 1e-12, 1). A fast surrogate, not a calibrated test.
+struct Markers { std::vector<double> lfc, padj; int64_t ngenes = 0; int ngroups = 0; };
+inline Markers markers_one_vs_rest(const double* S, const double* NE, const int64_t* nper,
+                                   int ngroups, int64_t ngenes, int64_t ncells) {
+    Markers m; m.ngenes = ngenes; m.ngroups = ngroups;
+    m.lfc.assign((size_t)ngenes * ngroups, 0.0);
+    m.padj.assign((size_t)ngenes * ngroups, 1.0);
+    std::vector<double> grand((size_t)ngenes, 0.0);
+    for (int g = 0; g < ngroups; ++g)
+        for (int64_t j = 0; j < ngenes; ++j) grand[j] += S[(size_t)g * ngenes + j];
+    for (int g = 0; g < ngroups; ++g) {
+        double ng1 = std::max<double>(nper[g], 1.0);
+        double nr  = std::max<double>((double)ncells - (double)nper[g], 1.0);
+        for (int64_t j = 0; j < ngenes; ++j) {
+            double sg = S[(size_t)g * ngenes + j];
+            double d  = sg / ng1 - (grand[j] - sg) / nr;
+            size_t o  = (size_t)j * ngroups + g;
+            m.lfc[o]  = d;
+            double p  = std::exp(-std::fabs(d * std::sqrt(NE[(size_t)g * ngenes + j] + 1.0)));
+            m.padj[o] = p < 1e-12 ? 1e-12 : (p > 1.0 ? 1.0 : p);
+        }
+    }
+    return m;
+}
+
+// Lanczos log-gamma + Numerical-Recipes continued-fraction for the regularized incomplete beta, in
+// log space (the upper F-tail underflows to 0 for strongly overdispersed genes). reg_incbeta_log
+// returns log I_x(a,b).
+inline double od_gammln_(double xx) {
+    static const double cof[6] = {76.18009172947146, -86.50532032941677, 24.01409824083091,
+        -1.231739572450155, 0.1208650973866179e-2, -0.5395239384953e-5};
+    double x = xx, y = xx, tmp = x + 5.5; tmp -= (x + 0.5) * std::log(tmp);
+    double ser = 1.000000000190015;
+    for (int j = 0; j < 6; j++) { y += 1.0; ser += cof[j] / y; }
+    return -tmp + std::log(2.5066282746310005 * ser / x);
+}
+inline double od_betacf_(double a, double b, double x) {
+    const int MAXIT = 300; const double EPS = 3e-12, FPMIN = 1e-300;
+    double qab = a + b, qap = a + 1.0, qam = a - 1.0;
+    double c = 1.0, d = 1.0 - qab * x / qap; if (std::fabs(d) < FPMIN) d = FPMIN; d = 1.0 / d; double h = d;
+    for (int mm = 1; mm <= MAXIT; mm++) {
+        int m2 = 2 * mm; double aa = mm * (b - mm) * x / ((qam + m2) * (a + m2));
+        d = 1.0 + aa * d; if (std::fabs(d) < FPMIN) d = FPMIN; c = 1.0 + aa / c; if (std::fabs(c) < FPMIN) c = FPMIN;
+        d = 1.0 / d; h *= d * c;
+        aa = -(a + mm) * (qab + mm) * x / ((a + m2) * (qap + m2));
+        d = 1.0 + aa * d; if (std::fabs(d) < FPMIN) d = FPMIN; c = 1.0 + aa / c; if (std::fabs(c) < FPMIN) c = FPMIN;
+        d = 1.0 / d; double del = d * c; h *= del;
+        if (std::fabs(del - 1.0) < EPS) break;
+    }
+    return h;
+}
+inline double reg_incbeta_log(double a, double b, double x) {
+    if (x <= 0.0) return -700.0;                          // I_0(a,b) = 0
+    if (x >= 1.0) return 0.0;                              // I_1(a,b) = 1
+    double bt_log = od_gammln_(a + b) - od_gammln_(a) - od_gammln_(b)
+                    + a * std::log(x) + b * std::log1p(-x);
+    if (x < (a + 1.0) / (a + b + 2.0)) return bt_log + std::log(od_betacf_(a, b, x) / a);   // small-x: stable
+    double v = 1.0 - std::exp(bt_log) * od_betacf_(b, a, 1.0 - x) / b;
+    return std::log(v > 1e-300 ? v : 1e-300);
+}
+
+// tricube local-linear LOWESS, evaluated at `nanchor` evenly-spaced anchors and linearly interpolated
+// back to each xs (constant edge extrapolation). A faithful port of the viewer's prep lowess.
+inline std::vector<double> lowess_predict(const std::vector<double>& xs, const std::vector<double>& ys,
+                                          double span = 0.3, int nanchor = 200) {
+    const int64_t n = (int64_t)xs.size();
+    std::vector<double> out((size_t)n, 0.0);
+    if (n < 3) { double my = 0.0; for (double v : ys) my += v; my = n ? my / n : 0.0;
+        for (auto& o : out) o = my; return out; }
+    std::vector<int64_t> ord((size_t)n); for (int64_t i = 0; i < n; i++) ord[(size_t)i] = i;
+    std::sort(ord.begin(), ord.end(), [&](int64_t a, int64_t b){ return xs[(size_t)a] < xs[(size_t)b]; });
+    std::vector<double> sx((size_t)n), sy((size_t)n);
+    for (int64_t i = 0; i < n; i++) { sx[(size_t)i] = xs[(size_t)ord[(size_t)i]]; sy[(size_t)i] = ys[(size_t)ord[(size_t)i]]; }
+    const int64_t win = std::max<int64_t>(2, (int64_t)(span * (double)n));
+    std::vector<double> ax((size_t)nanchor), ay((size_t)nanchor);
+    for (int a = 0; a < nanchor; a++) {
+        double x0 = sx[0] + (sx[(size_t)n - 1] - sx[0]) * (double)a / (double)(nanchor - 1);
+        int64_t lo = (int64_t)(std::lower_bound(sx.begin(), sx.end(), x0) - sx.begin());
+        int64_t l = std::max<int64_t>(0, lo - (win >> 1)); int64_t r = std::min<int64_t>(n, l + win); l = std::max<int64_t>(0, r - win);
+        double maxd = 1e-9; for (int64_t i = l; i < r; i++) maxd = std::max(maxd, std::fabs(sx[(size_t)i] - x0));
+        double sw = 0, swx = 0, swy = 0, swxx = 0, swxy = 0;
+        for (int64_t i = l; i < r; i++) { double dd = std::fabs(sx[(size_t)i] - x0) / maxd, w = std::pow(1.0 - dd * dd * dd, 3);
+            sw += w; swx += w * sx[(size_t)i]; swy += w * sy[(size_t)i]; swxx += w * sx[(size_t)i] * sx[(size_t)i]; swxy += w * sx[(size_t)i] * sy[(size_t)i]; }
+        double den = sw * swxx - swx * swx;
+        ay[(size_t)a] = (std::fabs(den) < 1e-12) ? swy / sw
+                        : ((swy - (sw * swxy - swx * swy) / den * swx) / sw + (sw * swxy - swx * swy) / den * x0);
+        ax[(size_t)a] = x0;
+    }
+    for (int64_t i = 0; i < n; i++) {                     // np.interp: constant-extrapolated at the edges
+        double x = xs[(size_t)i];
+        if (x <= ax[0]) { out[(size_t)i] = ay[0]; continue; }
+        if (x >= ax[(size_t)nanchor - 1]) { out[(size_t)i] = ay[(size_t)nanchor - 1]; continue; }
+        int64_t k = (int64_t)(std::lower_bound(ax.begin(), ax.end(), x) - ax.begin());
+        out[(size_t)i] = ay[(size_t)k - 1] + (ay[(size_t)k] - ay[(size_t)k - 1]) * (x - ax[(size_t)k - 1]) / (ax[(size_t)k] - ax[(size_t)k - 1]);
+    }
+    return out;
+}
+
+// Per-gene overdispersion score (pagoda2 adjustVariance, D4): residual of log(var) about a lowess fit
+// of log(var)~log(mean) over log1p(counts), scored by the upper-tail variance-ratio F-test:
+// od = -log P(F > exp(residual); df1=df2=nobs), nobs = #expressing cells. Genes with nobs<3 or
+// mean/var<=0 score 0. `mean`/`var`/`nobs` are per-gene (length ngenes) -- e.g. from csc_col_mean_var.
+inline std::vector<double> overdispersion(const double* mean, const double* var, const int64_t* nobs,
+                                          int64_t ngenes, double span = 0.3, int nanchor = 200) {
+    std::vector<double> od((size_t)ngenes, 0.0);
+    std::vector<int64_t> ok; std::vector<double> xs, ys;
+    for (int64_t j = 0; j < ngenes; ++j)
+        if (nobs[j] >= 3 && mean[j] > 0.0 && var[j] > 0.0) {
+            ok.push_back(j); xs.push_back(std::log(mean[j])); ys.push_back(std::log(var[j]));
+        }
+    if ((int64_t)ok.size() <= 10) return od;
+    std::vector<double> trend = lowess_predict(xs, ys, span, nanchor);
+    for (size_t k = 0; k < ok.size(); ++k) {
+        double f = std::exp(ys[k] - trend[k]);            // variance ratio
+        double a = (double)nobs[ok[(size_t)k]] / 2.0;     // df/2
+        double od_k = -reg_incbeta_log(a, a, 1.0 / (1.0 + f));   // -log P(F>f; nobs,nobs)
+        od[(size_t)ok[(size_t)k]] = std::isfinite(od_k) ? od_k : 0.0;
+    }
+    return od;
+}
+
+// Canonical xy -> Hilbert index on an N x N curve (N a power of two); the reflection uses N-1.
+inline int64_t hilbert_xy2d(int64_t N, int64_t x, int64_t y) {
+    int64_t d = 0;
+    for (int64_t s = N >> 1; s > 0; s >>= 1) {
+        int64_t rx = (x & s) > 0 ? 1 : 0, ry = (y & s) > 0 ? 1 : 0;
+        d += s * s * ((3 * rx) ^ ry);
+        if (ry == 0) { if (rx == 1) { x = N - 1 - x; y = N - 1 - y; } int64_t t = x; x = y; y = t; }
+    }
+    return d;
+}
+// Per-cell Hilbert index over an N x N grid of the min-max-scaled 2-D embedding (`emb` is row-major
+// ncells x 2). Used as the secondary (within-cluster spatial-locality) key for cell ordering.
+inline std::vector<int64_t> hilbert_index(const double* emb, int64_t ncells, int64_t N = 1024) {
+    std::vector<int64_t> out((size_t)ncells, 0);
+    double xmin = 1e300, xmax = -1e300, ymin = 1e300, ymax = -1e300;
+    for (int64_t i = 0; i < ncells; i++) { double x = emb[2 * i], y = emb[2 * i + 1];
+        xmin = std::min(xmin, x); xmax = std::max(xmax, x); ymin = std::min(ymin, y); ymax = std::max(ymax, y); }
+    double xr = (xmax - xmin); if (xr == 0) xr = 1.0; double yr = (ymax - ymin); if (yr == 0) yr = 1.0;
+    for (int64_t i = 0; i < ncells; i++) {
+        int64_t gx = (int64_t)std::floor((emb[2 * i] - xmin) / xr * (double)(N - 1));     gx = std::min<int64_t>(N - 1, std::max<int64_t>(0, gx));
+        int64_t gy = (int64_t)std::floor((emb[2 * i + 1] - ymin) / yr * (double)(N - 1)); gy = std::min<int64_t>(N - 1, std::max<int64_t>(0, gy));
+        out[(size_t)i] = hilbert_xy2d(N, gx, gy);
+    }
+    return out;
+}
+// pos_of[cell] = physical row, after a stable sort by (primary cluster code, optional secondary key,
+// cell index). `secondary` (e.g. hilbert_index) may be null for a cluster-only order. The matrix is
+// then physically reordered so each cluster is byte-contiguous (the spec's `counts_cellmajor_order`).
+inline std::vector<int64_t> cell_order_pos(const int* primary_code, const int64_t* secondary,
+                                           int64_t ncells) {
+    std::vector<int64_t> perm((size_t)ncells); for (int64_t i = 0; i < ncells; i++) perm[(size_t)i] = i;
+    std::stable_sort(perm.begin(), perm.end(), [&](int64_t a, int64_t b) {
+        if (primary_code[a] != primary_code[b]) return primary_code[a] < primary_code[b];
+        if (secondary && secondary[a] != secondary[b]) return secondary[a] < secondary[b];
+        return a < b;
+    });
+    std::vector<int64_t> pos((size_t)ncells);
+    for (int64_t p = 0; p < ncells; p++) pos[(size_t)perm[(size_t)p]] = p;
+    return pos;
+}
+
 // Streaming per-(group, gene) SUM of a CSC measure read straight from a store, with the same optional
 // "plain" view (depth-normalize + log1p) as stream_csc_col_mean_var -- the fused counterpart of
 // pagoda2's colSumByFacView (pseudobulk / marker sums), one threaded streamed pass, no R marshalling.
