@@ -18,6 +18,9 @@ spatial omics, with a shared C++ core (`libstar`) and bindings in R, Python and 
 
 * **Seurat** (legacy v2 through v5; a split v5 assay is read as a collection, and a collection is written
   back as a split assay) — `read_seurat` / `write_seurat`. Cell-cell graphs round-trip as `Graphs()`.
+  **Multimodal** objects (CITE-seq RNA+ADT, multiome RNA+ATAC, ECCITE …) round-trip every assay, each on
+  a **canonical feature axis** (`proteins`, `peaks`, …) shared with MuData/pagoda2 — so a modality is the
+  same L\* feature space regardless of source format; the original assay name is kept in provenance.
 * **SingleCellExperiment** — `read_sce` / `write_sce`.
 * **Conos** — `write_conos` (Conos → L\*) and `read_conos` (L\* → a live Conos), preserving the
   per-sample data and the joint graph / embedding / clustering.

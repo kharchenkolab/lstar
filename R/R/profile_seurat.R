@@ -84,6 +84,21 @@
   ds
 }
 
+# Canonical multimodal feature-axis vocabulary -- the SAME mapping mudata uses (profiles/mudata.py),
+# so a modality lands on the same axis (`genes`/`proteins`/`peaks`) regardless of source format. A
+# Seurat assay name maps by its lowercased name; an unknown assay keeps a sanitized name. The original
+# assay name is preserved in the measure's `provenance$assay` so write_seurat restores it exactly.
+.SEURAT_MODALITY_AXIS <- c(rna = "genes", gex = "genes", "gene expression" = "genes",
+  adt = "proteins", prot = "proteins", protein = "proteins", proteins = "proteins",
+  antibody = "proteins", "antibody capture" = "proteins", cite = "proteins",
+  atac = "peaks", peak = "peaks", peaks = "peaks", "chromatin accessibility" = "peaks")
+.modality_axis <- function(name, taken = character(0)) {
+  ax <- unname(.SEURAT_MODALITY_AXIS[tolower(name)])
+  if (is.na(ax)) ax <- make.names(tolower(name))
+  base <- ax; i <- 1L; while (ax %in% taken) { ax <- paste0(base, i); i <- i + 1L }
+  ax
+}
+
 write_seurat <- function(ds) {
   if (!requireNamespace("SeuratObject", quietly = TRUE)) stop("SeuratObject is required")
   ds <- .lstar_drop_cache(ds)
@@ -228,24 +243,29 @@ write_seurat <- function(ds) {
     SeuratObject::Idents(so) <- stats::setNames(iv, cells)
   }
 
-  # Multimodal: rebuild every non-`genes` feature axis as its own assay (ADT, ATAC, ...) from its
-  # measures `<axis>.<layer>` over (cells, <axis>).
-  for (fax in names(ds$axes)) {
-    ax <- ds$axes[[fax]]
-    if (!identical(ax$role, "feature") || fax == "genes") next
-    fm <- Filter(function(nm) { f <- ds$fields[[nm]]; sp <- as.character(f$span)
-      identical(f$role, "measure") && length(sp) == 2 && sp[1] == "cells" && sp[2] == fax }, names(ds$fields))
-    if (!length(fm)) next
-    feats <- as.character(ax$labels)
-    fxc <- function(nm) { mm <- Matrix::t(as(ds$fields[[nm]]$values, "CsparseMatrix")); dimnames(mm) <- list(feats, cells); mm }
-    states <- vapply(fm, function(nm) ds$fields[[nm]]$state %||% "", character(1))
-    primary <- fm[match("raw", states)]; if (is.na(primary)) primary <- fm[1]
-    aobj <- SeuratObject::CreateAssay5Object(counts = fxc(primary))
-    for (nm in setdiff(fm, primary)) {
-      lyr <- sub(paste0("^", fax, "\\."), "", nm)               # "ADT.data" -> "data"
-      SeuratObject::LayerData(aobj, layer = lyr) <- fxc(nm)
+  # Multimodal: rebuild every non-default assay from its measures over a canonical feature axis
+  # (`proteins`/`peaks`/...). Group by the source assay name in `provenance$assay` (so an ADT assay on
+  # the `proteins` axis comes back as "ADT"); fall back to the axis name for older stores that lack it.
+  other_meas <- Filter(function(nm) { f <- ds$fields[[nm]]; sp <- as.character(f$span)
+    identical(f$role, "measure") && length(sp) == 2 && sp[1] == "cells" && sp[2] != "genes" &&
+      !is.null(ds$axes[[sp[2]]]) && identical(ds$axes[[sp[2]]]$role, "feature") }, names(ds$fields))
+  if (length(other_meas)) {
+    assay_of <- vapply(other_meas, function(nm)
+      ds$fields[[nm]]$provenance$assay %||% as.character(ds$fields[[nm]]$span)[2], character(1))
+    for (aname in unique(assay_of)) {
+      fm <- other_meas[assay_of == aname]
+      fax <- as.character(ds$fields[[fm[1]]]$span)[2]
+      feats <- as.character(ds$axes[[fax]]$labels)
+      fxc <- function(nm) { mm <- Matrix::t(as(ds$fields[[nm]]$values, "CsparseMatrix")); dimnames(mm) <- list(feats, cells); mm }
+      states <- vapply(fm, function(nm) ds$fields[[nm]]$state %||% "", character(1))
+      primary <- fm[match("raw", states)]; if (is.na(primary)) primary <- fm[1]
+      aobj <- SeuratObject::CreateAssay5Object(counts = fxc(primary))
+      for (nm in setdiff(fm, primary)) {
+        lyr <- ds$fields[[nm]]$provenance$layer %||% sub(paste0("^", aname, "\\."), "", nm)  # "ADT.data" -> "data"
+        SeuratObject::LayerData(aobj, layer = lyr) <- fxc(nm)
+      }
+      so[[aname]] <- aobj
     }
-    so[[fax]] <- aobj
   }
 
   if (!is.null(split_by) && inherits(so[["RNA"]], "Assay5")) {   # re-split a v5 integration object
@@ -732,8 +752,9 @@ read_seurat <- function(so, assay = SeuratObject::DefaultAssay(so)) {
   # ranges/fragments aren't typed yet -> recorded.)
   for (a in others) {
     feats <- rownames(so[[a]])
-    if (a %in% names(ds$axes)) { ds$dropped <- c(ds$dropped, paste0("assay/", a, " (axis-name clash)")); next }
-    ds$axes[[a]] <- list(labels = feats, origin = "observed", role = "feature")
+    cax <- .modality_axis(a, names(ds$axes))                    # ADT->proteins, ATAC->peaks (mudata vocab)
+    if (cax %in% names(ds$axes)) { ds$dropped <- c(ds$dropped, paste0("assay/", a, " (axis-name clash)")); next }
+    ds$axes[[cax]] <- list(labels = feats, origin = "observed", role = "feature")
     laca <- .seurat_layer_access(so, a)
     for (L in laca$names) {
       m <- laca$get(L)
@@ -741,9 +762,10 @@ read_seurat <- function(so, assay = SeuratObject::DefaultAssay(so)) {
         ds$dropped <- c(ds$dropped, sprintf("assay/%s layer/%s (%d of %d features)", a, L, nrow(m), length(feats)))
         next
       }
-      add(paste0(a, ".", L), Matrix::t(m), "measure", c("cells", a), state = state_of(L))
+      ds$fields[[paste0(a, ".", L)]] <- list(role = "measure", span = c("cells", cax), state = state_of(L),
+        subtype = "", values = Matrix::t(m), provenance = list(assay = a, layer = L, feature_axis = cax))
     }
-    capture_chromatin(a, a, length(feats))                      # ATAC as a non-default assay (peaks axis)
+    capture_chromatin(a, cax, length(feats))                    # ATAC as a non-default assay (peaks axis)
   }
 
   md <- so[[]]

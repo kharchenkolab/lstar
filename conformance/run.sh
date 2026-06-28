@@ -60,6 +60,11 @@ bash conformance/viewer.sh >/tmp/lstar_viewer.log 2>&1 \
   && pass "viewer@0.1 prep conformant + R==python (set PAGODA3 to also check pagoda3 prep.ts)" \
   || { echo "  FAIL viewer"; tail -20 /tmp/lstar_viewer.log; exit 1; }
 
+echo "== multimodal cross-format consistency (CITE-seq via Seurat == via MuData -> same feature axes) =="
+bash conformance/multimodal_xformat.sh >/tmp/lstar_xfmt.log 2>&1 \
+  && pass "Seurat/MuData multimodal land on the same canonical axes" \
+  || { echo "  FAIL multimodal x-format"; tail -15 /tmp/lstar_xfmt.log; exit 1; }
+
 echo "== cross-format conformance (R: Seurat + SCE) =="
 bash conformance/cross_format.sh >/tmp/lstar_cf.log 2>&1 \
   && pass "AnnData<->Seurat<->SCE via L*" || { echo "  FAIL cross-format"; tail -15 /tmp/lstar_cf.log; exit 1; }

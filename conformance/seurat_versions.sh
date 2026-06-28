@@ -100,9 +100,10 @@ ccells <- readLines(file.path(cdir, "cells.txt"))
 dimnames(crna) <- list(readLines(file.path(cdir, "genes.txt")), ccells)
 dimnames(cadt) <- list(readLines(file.path(cdir, "proteins.txt")), ccells)
 mm <- CreateSeuratObject(as(crna, "CsparseMatrix")); mm[["ADT"]] <- CreateAssay5Object(counts = as(cadt, "CsparseMatrix"))
-stores <- c(stores, rt("multimodal RNA+ADT (synth)", mm, function(ds, so2)  # ADT captured as 2nd feature space
-  "ADT" %in% names(ds$axes) && identical(ds$axes$ADT$role, "feature") &&
-  identical(as.character(ds$fields[["ADT.counts"]]$span), c("cells","ADT")) &&
+stores <- c(stores, rt("multimodal RNA+ADT (synth)", mm, function(ds, so2)  # ADT -> canonical `proteins` axis
+  "proteins" %in% names(ds$axes) && identical(ds$axes$proteins$role, "feature") &&
+  identical(as.character(ds$fields[["ADT.counts"]]$span), c("cells","proteins")) &&
+  identical(ds$fields[["ADT.counts"]]$provenance$assay, "ADT") &&          # original assay name preserved
   setequal(Assays(so2), c("RNA","ADT")) && nrow(so2[["ADT"]]) == 29 &&
   isTRUE(all.equal(as.matrix(LayerData(so2[["ADT"]],"counts")), as.matrix(cadt), check.attributes = FALSE))))
 
@@ -113,9 +114,9 @@ ecc <- CreateSeuratObject(m)
 ecc[["ADT"]] <- CreateAssay5Object(counts = mkA(8)); ecc[["HTO"]] <- CreateAssay5Object(counts = mkA(4))
 ecc[["GDO"]] <- CreateAssay5Object(counts = mkA(6))
 stores <- c(stores, rt("4-assay ECCITE (RNA+ADT+HTO+GDO)", ecc, function(ds, so2)
-  all(c("ADT","HTO","GDO") %in% names(ds$axes)) &&
-  all(vapply(c("ADT","HTO","GDO"), function(a) identical(ds$axes[[a]]$role, "feature"), logical(1))) &&
-  setequal(Assays(so2), c("RNA","ADT","HTO","GDO"))))
+  all(c("proteins","hto","gdo") %in% names(ds$axes)) &&        # ADT->proteins (vocab); HTO/GDO->sanitized name
+  all(vapply(c("proteins","hto","gdo"), function(a) identical(ds$axes[[a]]$role, "feature"), logical(1))) &&
+  setequal(Assays(so2), c("RNA","ADT","HTO","GDO"))))          # all assay names restored from provenance
 
 # synthetic Signac ChromatinAssay: peaks + genomic ranges -> a peak feature axis + typed ranges
 # (<axis>_seqnames/_start/_end). Guards the real-pbmcMultiome capture. Skips where Signac is absent.
@@ -125,8 +126,8 @@ if (requireNamespace("Signac", quietly = TRUE)) {
   ca <- Signac::CreateChromatinAssay(counts = as(pm, "CsparseMatrix"), ranges = Signac::StringToGRanges(pk, sep = c("-", "-")))
   cao <- CreateSeuratObject(m); cao[["ATAC"]] <- ca
   stores <- c(stores, rt("ChromatinAssay (synthetic)", cao, function(ds, so2)
-    "ATAC" %in% names(ds$axes) && identical(ds$axes$ATAC$role, "feature") &&
-    "ATAC_seqnames" %in% names(ds$fields) && identical(ds$fields[["ATAC_start"]]$role, "measure")))
+    "peaks" %in% names(ds$axes) && identical(ds$axes$peaks$role, "feature") &&          # ATAC -> canonical `peaks`
+    "peaks_seqnames" %in% names(ds$fields) && identical(ds$fields[["peaks_start"]]$role, "measure")))
 } else cat("  [R] ChromatinAssay (synthetic)   SKIP (Signac unavailable)\n")
 
 # spatial coordinates (Visium/FOV) live in so@images, NOT Reductions -> captured as a `spatial` observed
