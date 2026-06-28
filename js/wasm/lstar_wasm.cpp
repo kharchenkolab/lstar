@@ -69,29 +69,43 @@ static val colMeanVar(val data_js, val indptr_js, int nrows, int n_threads, bool
     return out;
 }
 
-// CSC -> CSR storage transpose (orientation flip, e.g. gene-major <-> cell-major). -> {data,indices,indptr}.
-// cscToCsr only PERMUTES the nnz values -- it never does arithmetic on them -- so it preserves the input
-// dtype end to end (Float32->Float32, Int32->Int32). Dispatching on the JS dtype avoids widening the whole
-// nnz `data` array to double just to copy it back out narrow (the dominant resident-memory term at scale;
-// counts_cellmajor is written Int32 by the prep, so the double was pure overhead). See misc note #2.
-static val cscToCsr(val data_js, val indices_js, val indptr_js, int nrows, int ncols) {
-    std::vector<int64_t> indices = to_i64(indices_js), indptr = to_i64(indptr_js);
+// emit an Int32Array from CSR index output -- native when the transpose ran at int32 width (no copy
+// beyond the JS slice), narrowing when it ran at int64. Output is always Int32Array (L* store width).
+static val emit_idx(const std::vector<int32_t>& v) { return to_i32v(v); }
+static val emit_idx(const std::vector<int64_t>& v) { return to_i32(v); }
+
+// CSC -> CSR storage transpose at a fixed index width IT (int32 | int64). cscToCsr only PERMUTES the nnz
+// values, so it preserves the value dtype end to end (Float32->Float32, Int32->Int32); reading `data` at
+// its native width avoids widening the whole nnz array to double (see misc note #2).
+template <class IT>
+static val csc_to_csr_emit(const val& data_js, const std::vector<IT>& indices, const std::vector<IT>& indptr,
+                           int nrows, int ncols) {
     const std::string dt = typed_kind(data_js);
     val out = val::object();
     if (dt == "f4") {
         auto data = convertJSArrayToNumberVector<float>(data_js);
-        auto r = lstar::csc_to_csr<float>(data.data(), indices.data(), indptr.data(), nrows, ncols);
-        out.set("data", to_f32(r.data)); out.set("indices", to_i32(r.indices)); out.set("indptr", to_i32(r.indptr));
+        auto r = lstar::csc_to_csr<float, IT>(data.data(), indices.data(), indptr.data(), nrows, ncols);
+        out.set("data", to_f32(r.data)); out.set("indices", emit_idx(r.indices)); out.set("indptr", emit_idx(r.indptr));
     } else if (dt == "i4") {
         auto data = convertJSArrayToNumberVector<int32_t>(data_js);
-        auto r = lstar::csc_to_csr<int32_t>(data.data(), indices.data(), indptr.data(), nrows, ncols);
-        out.set("data", to_i32v(r.data)); out.set("indices", to_i32(r.indices)); out.set("indptr", to_i32(r.indptr));
+        auto r = lstar::csc_to_csr<int32_t, IT>(data.data(), indices.data(), indptr.data(), nrows, ncols);
+        out.set("data", to_i32v(r.data)); out.set("indices", emit_idx(r.indices)); out.set("indptr", emit_idx(r.indptr));
     } else {
         auto data = convertJSArrayToNumberVector<double>(data_js);
-        auto r = lstar::csc_to_csr<double>(data.data(), indices.data(), indptr.data(), nrows, ncols);
-        out.set("data", to_f64(r.data)); out.set("indices", to_i32(r.indices)); out.set("indptr", to_i32(r.indptr));
+        auto r = lstar::csc_to_csr<double, IT>(data.data(), indices.data(), indptr.data(), nrows, ncols);
+        out.set("data", to_f64(r.data)); out.set("indices", emit_idx(r.indices)); out.set("indptr", emit_idx(r.indptr));
     }
     return out;
+}
+// -> {data,indices,indptr}. L* stores hold int32 indices: run the transpose at native int32 width so the
+// per-nonzero index arrays (input copy + output, the DOMINANT term at scale) stay 4 bytes instead of
+// widening to int64 in + out. Fall back to int64 only if the indices arrive wider -- which needs >2^31 nnz,
+// infeasible inside a wasm32 (4GB) address space anyway, so the int32 path is the live one in practice.
+static val cscToCsr(val data_js, val indices_js, val indptr_js, int nrows, int ncols) {
+    if (typed_kind(indices_js) == "i4" && typed_kind(indptr_js) == "i4")
+        return csc_to_csr_emit<int32_t>(data_js, convertJSArrayToNumberVector<int32_t>(indices_js),
+                                        convertJSArrayToNumberVector<int32_t>(indptr_js), nrows, ncols);
+    return csc_to_csr_emit<int64_t>(data_js, to_i64(indices_js), to_i64(indptr_js), nrows, ncols);
 }
 
 // Per-group sufficient stats over a CSC measure (cells x genes). group: Int32Array (length nrows),

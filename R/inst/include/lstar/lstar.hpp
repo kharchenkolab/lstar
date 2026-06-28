@@ -727,21 +727,26 @@ struct ColStats {
 // (compressed by gene) becomes the same matrix stored CSR (compressed by cell) -- the orientation
 // flip the Seurat/SCE profiles need (genes x cells assays) without densifying. Run it the other
 // direction to flip back; it is its own inverse on the (rows<->cols) labels.
-template <class T>
+template <class T, class Idx = int64_t>
 struct CsxArrays {
     std::vector<T> data;                  // preserves the input value dtype (no widening)
-    std::vector<int64_t> indices;
-    std::vector<int64_t> indptr;
+    std::vector<Idx> indices;             // index width follows the caller: int64 by default, int32 for
+    std::vector<Idx> indptr;              // the memory-lean WASM/browser prep (halves the per-nonzero term)
     int64_t nrows = 0, ncols = 0;
 };
 
-// indptr (length ncols+1) and indices are int64 -- normalize with as_i64() before calling. `data`
-// is templated on the stored value dtype so a float32 measure transposes as float32 (memory-lean).
-template <class T>
-inline CsxArrays<T> csc_to_csr(const T* data, const int64_t* indices, const int64_t* indptr,
-                               int64_t nrows, int64_t ncols) {
-    const int64_t nnz = indptr[ncols];
-    CsxArrays<T> out;
+// `data` is templated on the stored value dtype so a float32 measure transposes as float32 (no widening).
+// `Idx` is the index width: L* stores hold int32 indices, so the default int64 means every existing caller
+// (Python/R/core, which normalize to int64 via as_i64()) is unchanged by template *deduction* from its
+// int64 pointers, while the WASM prep passes int32 pointers to keep indices at native width -- the indices
+// are the DOMINANT per-nonzero term at scale (two int64 nnz arrays, in + out), so halving them is the bulk
+// of the browser memory win. Precondition for the int32 instantiation: nnz (and ncols/nrows) all < 2^31 --
+// always true when the caller's int32 indptr can even represent nnz.
+template <class T, class Idx = int64_t>
+inline CsxArrays<T, Idx> csc_to_csr(const T* data, const Idx* indices, const Idx* indptr,
+                                    int64_t nrows, int64_t ncols) {
+    const int64_t nnz = static_cast<int64_t>(indptr[ncols]);
+    CsxArrays<T, Idx> out;
     out.nrows = nrows;
     out.ncols = ncols;
     out.data.resize(static_cast<size_t>(nnz));
@@ -749,12 +754,12 @@ inline CsxArrays<T> csc_to_csr(const T* data, const int64_t* indices, const int6
     out.indptr.assign(static_cast<size_t>(nrows) + 1, 0);
     for (int64_t k = 0; k < nnz; ++k) out.indptr[indices[k] + 1]++;     // count per row
     for (int64_t i = 0; i < nrows; ++i) out.indptr[i + 1] += out.indptr[i];
-    std::vector<int64_t> next(out.indptr.begin(), out.indptr.end() - 1);
+    std::vector<Idx> next(out.indptr.begin(), out.indptr.end() - 1);
     for (int64_t j = 0; j < ncols; ++j) {                               // scatter by row
-        for (int64_t k = indptr[j]; k < indptr[j + 1]; ++k) {
-            int64_t dst = next[indices[k]]++;
+        for (int64_t k = static_cast<int64_t>(indptr[j]); k < static_cast<int64_t>(indptr[j + 1]); ++k) {
+            int64_t dst = static_cast<int64_t>(next[indices[k]]++);
             out.data[static_cast<size_t>(dst)] = data[k];
-            out.indices[static_cast<size_t>(dst)] = j;
+            out.indices[static_cast<size_t>(dst)] = static_cast<Idx>(j);
         }
     }
     return out;
