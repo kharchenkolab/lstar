@@ -171,6 +171,38 @@ def test_kernels_accel_matches_fallback():
     assert np.allclose(o1, o2, atol=1e-6)
 
 
+_NAV = {"counts_cellmajor", "counts_cellmajor_order", "od_score", "stats_leiden_sum",
+        "stats_leiden_sumsq", "stats_leiden_nexpr", "markers_leiden_lfc", "markers_leiden_padj"}
+
+
+def test_navigators_tagged_as_cache():
+    """extend_for_viewer tags exactly its produced navigators `provenance.cache='viewer@0.1'`; the
+    primary inputs (counts/clusters/embedding) are NOT tagged (they're kept by converters)."""
+    ds, _ = _synthetic()
+    lstar.extend_for_viewer(ds)
+    tagged = {n for n in ds.fields if (ds.field(n).provenance or {}).get("cache") == "viewer@0.1"}
+    assert tagged == _NAV, tagged ^ _NAV
+    for n in ("counts", "leiden", "umap"):
+        assert not (ds.field(n).provenance or {}).get("cache")
+
+
+def test_anndata_export_drops_cache_navigators():
+    """A non-viewer export (AnnData) drops the regenerable cache navigators and records them in
+    `dropped` — no scrambled `counts_cellmajor` layer, no navigator leaked into obs/var/obsm."""
+    import importlib.util
+    if importlib.util.find_spec("anndata") is None:
+        pytest.skip("anndata not installed")
+    from lstar.profiles.anndata import write_anndata
+    ds, _ = _synthetic()
+    lstar.extend_for_viewer(ds)
+    ad = write_anndata(ds)
+    names = set(ad.layers) | set(ad.obs.columns) | set(ad.var.columns) | set(ad.obsm) | set(ad.varm)
+    assert not any("counts_cellmajor" in str(k) for k in names)        # no scrambled layer
+    assert not (_NAV & names)                                          # nothing leaked
+    assert _NAV.issubset(set(ds.dropped))                              # recorded, not silently lost
+    assert "X_umap" in ad.obsm and "leiden" in ad.obs.columns          # primaries carried
+
+
 def test_viewer_profile_rejects_transposed_markers():
     """Markers are gene-major (ng x K); a group-major (K x ng) markers table is the R-pagoda2 drift
     this contract exists to catch."""

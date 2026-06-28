@@ -75,8 +75,18 @@
 #' @return a `Seurat` object.
 #' @seealso [read_seurat()]
 #' @export
+# A profile's `cache` fields (provenance$cache, e.g. the viewer@0.1 navigators) are regenerable from
+# primary data, so a converter to a foreign object drops them (recorded in `dropped`) rather than
+# carrying a redundant/mis-aligned copy. Read-by-name is unaffected; only this format mapping skips them.
+.lstar_drop_cache <- function(ds) {
+  cache <- names(Filter(function(f) !is.null(f$provenance$cache), ds$fields))
+  if (length(cache)) { ds$dropped <- unique(c(ds$dropped, cache)); ds$fields[cache] <- NULL }
+  ds
+}
+
 write_seurat <- function(ds) {
   if (!requireNamespace("SeuratObject", quietly = TRUE)) stop("SeuratObject is required")
+  ds <- .lstar_drop_cache(ds)
   cells <- as.character(ds$axes$cells$labels)
   genes <- as.character(ds$axes$genes$labels)
 

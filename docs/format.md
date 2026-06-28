@@ -202,6 +202,17 @@ These quantities have a single C++-core implementation bound to every surface; p
 fallbacks (Python without the accel extension, JS before WASM) must match the core within the
 conformance tolerance (`stats` exact; `lfc`/`od` to ~1e-3).
 
+**The navigators are caches.** Each of the eight fields above carries `provenance.cache = "viewer@0.1"`:
+they are *regenerable* re-encodings/summaries of `counts` (+ the grouping), carrying no decision a user
+made — unlike clusters, embeddings, or graphs (which are *primary* analysis results and are never
+tagged). The tag is **advisory metadata, not an access gate**: read-by-name (the viewer, `lstar.read`,
+byte-range reads) reads cache fields normally. What acts on the tag is **format-mapping conversion** —
+exporting a store to a non-viewer object (`write_anndata`, `write_seurat`, `write_sce`,
+`Pagoda2$fromLstar`) **drops `cache` fields and records them in `dropped`** rather than carrying a
+redundant or mis-aligned copy (notably, `counts_cellmajor` is physically row-reordered, so a generic
+consumer must not read it as an aligned matrix — the tag prevents that). Eager `lstar.read` still loads
+everything (use `lazy=True` to avoid materializing unused caches).
+
 ## Packaging — one model, four layouts
 
 Because a collection references its members by identity (axes are namespaced), packaging is decoupled

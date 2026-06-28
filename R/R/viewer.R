@@ -55,11 +55,14 @@ extend_for_viewer <- function(ds, grouping = NULL, also = character(0), counts =
   if (!length(groupings))
     stop("extend_for_viewer: no categorical grouping found (pass grouping=)", call. = FALSE)
 
+  # All fields below are viewer@0.1 caches (regenerable from counts; non-viewer converters drop+record).
+  cache <- list(cache = "viewer@0.1")
+
   # whole-dataset overdispersion (pagoda2 lowess + F-test): mean/var/nobs over log1p, shared kernel.
   g0 <- lstar_cpp_col_sum_by_group(as.double(cnt@x), cnt@p, cnt@i, nc, ng, integer(nc), 1L, TRUE)
   om <- g0$sum / nc; ov <- pmax(g0$sumsq / nc - om^2, 0)
   ds$fields[["od_score"]] <- list(values = lstar_cpp_overdispersion(om, ov, as.integer(g0$n_expr)),
-                                  role = "measure", span = gene_axis)
+                                  role = "measure", span = gene_axis, provenance = cache)
 
   primary_code <- NULL
   for (gp in groupings) {
@@ -78,11 +81,11 @@ extend_for_viewer <- function(ds, grouping = NULL, also = character(0), counts =
     gax <- paste0("groups_", gp)
     ds$axes[[gax]] <- list(labels = groups, origin = "derived", role = "feature")
     sg <- c(gax, gene_axis); mg <- c(gene_axis, gax)
-    ds$fields[[paste0("stats_", gp, "_sum")]]   <- list(values = S,  role = "measure", span = sg)
-    ds$fields[[paste0("stats_", gp, "_sumsq")]] <- list(values = SS, role = "measure", span = sg)
-    ds$fields[[paste0("stats_", gp, "_nexpr")]] <- list(values = NE, role = "measure", span = sg)
-    ds$fields[[paste0("markers_", gp, "_lfc")]]  <- list(values = lfc,  role = "measure", span = mg)
-    ds$fields[[paste0("markers_", gp, "_padj")]] <- list(values = padj, role = "measure", span = mg)
+    ds$fields[[paste0("stats_", gp, "_sum")]]   <- list(values = S,  role = "measure", span = sg, provenance = cache)
+    ds$fields[[paste0("stats_", gp, "_sumsq")]] <- list(values = SS, role = "measure", span = sg, provenance = cache)
+    ds$fields[[paste0("stats_", gp, "_nexpr")]] <- list(values = NE, role = "measure", span = sg, provenance = cache)
+    ds$fields[[paste0("markers_", gp, "_lfc")]]  <- list(values = lfc,  role = "measure", span = mg, provenance = cache)
+    ds$fields[[paste0("markers_", gp, "_padj")]] <- list(values = padj, role = "measure", span = mg, provenance = cache)
   }
   if (is.null(primary_code)) primary_code <- integer(nc)
 
@@ -92,9 +95,9 @@ extend_for_viewer <- function(ds, grouping = NULL, also = character(0), counts =
   pos_of <- integer(nc); pos_of[perm] <- seq_len(nc) - 1L
   ds$fields[["counts_cellmajor"]] <- list(values = methods::as(cnt[perm, , drop = FALSE], "RsparseMatrix"),
                                           role = "measure", span = c(cell_axis, gene_axis),
-                                          state = "raw", encoding = "csr")
+                                          state = "raw", encoding = "csr", provenance = cache)
   ds$fields[["counts_cellmajor_order"]] <- list(values = as.double(pos_of), role = "measure",
-                                                span = cell_axis, state = "permutation")
+                                                span = cell_axis, state = "permutation", provenance = cache)
 
   if (!("viewer@0.1" %in% ds$profiles)) ds$profiles <- c(ds$profiles, "viewer@0.1")
   if (!methods::is(ds, "lstar_dataset")) class(ds) <- "lstar_dataset"

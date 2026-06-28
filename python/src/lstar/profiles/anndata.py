@@ -642,6 +642,15 @@ def write_anndata(ds):
         ds = _flatten_collection(ds)
         col_dropped = getattr(ds, "_collection_dropped", [])
 
+    # A profile's `cache` fields (e.g. the viewer@0.1 navigators) are regenerable from primary data;
+    # drop+record them rather than route a redundant/mis-aligned copy (the physically-reordered
+    # counts_cellmajor would otherwise become a row-scrambled layer). Read-by-name is unaffected.
+    cache = [n for n, fl in ds.fields.items() if (fl.provenance or {}).get("cache")]
+    if cache:
+        for n in cache:
+            del ds.fields[n]
+        ds.dropped = list(ds.dropped) + cache
+
     cells = np.asarray(ds.axis("cells").labels, dtype=str)
     genes = np.asarray(ds.axis("genes").labels, dtype=str)
     r = _route_fields(ds)

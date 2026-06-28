@@ -21,6 +21,7 @@ write_sce <- function(ds) {
   if (!requireNamespace("SingleCellExperiment", quietly = TRUE) ||
       !requireNamespace("S4Vectors", quietly = TRUE))
     stop("SingleCellExperiment and S4Vectors are required")
+  ds <- .lstar_drop_cache(ds)               # regenerable profile caches aren't carried (see profile_seurat.R)
   cells <- as.character(ds$axes$cells$labels)
   genes <- as.character(ds$axes$genes$labels)
   gxc <- function(nm) { m <- Matrix::t(ds$fields[[nm]]$values); dimnames(m) <- list(genes, cells); m }

@@ -215,7 +215,7 @@ def extend_for_viewer(ds, groupings=None, order="hybrid", embedding=None, marker
     # 2) global overdispersion residual (a single "group" over all cells -> per-gene mean/var(log1p)).
     od = _od_score(X, ncells, ngenes)
     ds.add_field("od_score", od, role="measure", span=[gene_axis], state=None, encoding="dense",
-                 provenance={"method": "viewer.od", "basis": "log1p", "trend": "lowess"})
+                 provenance={"cache": VIEWER_PROFILE, "method": "viewer.od", "basis": "log1p", "trend": "lowess"})
 
     # 3) per-grouping sufficient stats + (optional) marker tables, each over an induced groups_<g> axis.
     for g in groupings:
@@ -225,15 +225,15 @@ def extend_for_viewer(ds, groupings=None, order="hybrid", embedding=None, marker
         if gaxis not in ds.axes:
             ds.add_axis(gaxis, groups, origin="derived", role="feature")
         S, SS, NE = col_sum_by_group(X, codes, K, lognorm=True)        # dense (K, ngenes), over log1p(X)
-        ds.add_field("stats_%s_sum" % g, S, role="measure", span=[gaxis, gene_axis], encoding="dense")
-        ds.add_field("stats_%s_sumsq" % g, SS, role="measure", span=[gaxis, gene_axis], encoding="dense")
-        ds.add_field("stats_%s_nexpr" % g, NE, role="measure", span=[gaxis, gene_axis], encoding="dense")
+        _cache = {"cache": VIEWER_PROFILE}
+        ds.add_field("stats_%s_sum" % g, S, role="measure", span=[gaxis, gene_axis], encoding="dense", provenance=_cache)
+        ds.add_field("stats_%s_sumsq" % g, SS, role="measure", span=[gaxis, gene_axis], encoding="dense", provenance=_cache)
+        ds.add_field("stats_%s_nexpr" % g, NE, role="measure", span=[gaxis, gene_axis], encoding="dense", provenance=_cache)
         if markers:
             lfc, padj = _markers(S, NE, codes, ncells, K, ngenes)      # dense (ngenes, K) -- genes x groups
-            ds.add_field("markers_%s_lfc" % g, lfc, role="measure", span=[gene_axis, gaxis],
-                         encoding="dense", provenance={"method": "viewer.markers", "test": "1-vs-rest"})
-            ds.add_field("markers_%s_padj" % g, padj, role="measure", span=[gene_axis, gaxis],
-                         encoding="dense", provenance={"method": "viewer.markers", "test": "1-vs-rest"})
+            _mk = {"cache": VIEWER_PROFILE, "method": "viewer.markers", "test": "1-vs-rest"}
+            ds.add_field("markers_%s_lfc" % g, lfc, role="measure", span=[gene_axis, gaxis], encoding="dense", provenance=_mk)
+            ds.add_field("markers_%s_padj" % g, padj, role="measure", span=[gene_axis, gaxis], encoding="dense", provenance=_mk)
 
     # 4) hybrid cell order: reorder counts_cellmajor rows, record each cell's physical row.
     if order == "hybrid":
@@ -250,11 +250,11 @@ def extend_for_viewer(ds, groupings=None, order="hybrid", embedding=None, marker
         pos_of[perm] = np.arange(ncells, dtype=np.float64)
         ds.add_field("counts_cellmajor_order", pos_of, role="measure", span=[cell_axis],
                      state="permutation", encoding="dense",
-                     provenance={"method": "viewer.reorder", "curve": "hilbert", "grid": N_GRID,
-                                 "group": primary})
+                     provenance={"cache": VIEWER_PROFILE, "method": "viewer.reorder", "curve": "hilbert",
+                                 "grid": N_GRID, "group": primary})
 
     ds.add_field("counts_cellmajor", Xr, role="measure", span=[cell_axis, gene_axis], state="raw",
-                 encoding="csr")
+                 encoding="csr", provenance={"cache": VIEWER_PROFILE})
 
     if VIEWER_PROFILE not in ds.profiles:
         ds.profiles.append(VIEWER_PROFILE)

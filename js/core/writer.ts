@@ -30,6 +30,7 @@ export interface FieldSpec {
   index?: BigInt64Array | ArrayLike<number>;  // partial coverage: 0-based positions into `indexAxis`
   indexAxis?: string;
   write?: WriteOptions;                       // per-field chunk/compressor override (else the call-level opts)
+  provenance?: Record<string, unknown>;       // free-form metadata persisted to the field's lstar attrs
 }
 // Aux passthrough (the lossless uns/@misc subtree): an opaque JSON `tree` plus the array leaves it
 // references by id. Leaf grammar in `tree`: {"$array":id} for a dense leaf, {"$strings":id,...} for a
@@ -144,7 +145,7 @@ async function writeField(store: LstarWritableStore, name: string, f: FieldSpec,
     coverage: partial ? "partial" : "full", index_axis: partial ? (f.indexAxis ?? null) : undefined,
     nullable: f.mask != null ? true : undefined,
     ordered: enc === "categorical" ? (f.ordered ?? false) : undefined,
-    provenance: {},
+    provenance: f.provenance ?? {},
   });
   if (enc === "categorical") {
     await writeArray(store, base + "/codes", f.codes!, [f.codes!.length], fopts);
