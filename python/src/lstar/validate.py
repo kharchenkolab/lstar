@@ -14,7 +14,7 @@ import scipy.sparse as sp
 
 CORE_ROLES = {"measure", "embedding", "loading", "relation", "label", "sequence",
               "design", "transform", "vector", "probability", "coordinate", "factor"}
-CORE_STATES = {None, "", "raw", "lognorm", "scaled", "clr"}
+CORE_STATES = {None, "", "raw", "lognorm", "scaled", "clr", "permutation"}
 
 
 def validate(ds, strict=False):
