@@ -18,97 +18,77 @@
   NULL
 }
 
-#' Export a Pagoda2 object to an L* (`*.lstar.zarr`) store.
+.p2_feature_axis <- function(ft) switch(if (is.null(ft)) "gene" else ft,
+  gene = "genes", protein = "proteins", peak = "peaks", paste0(ft, "_features"))
+
+#' Read a Pagoda2 object into an L* dataset.
 #'
-#' Writes counts (raw, cell x gene), the embedding, cluster/cell-type/QC labels, and the
-#' viewer profile's cluster sufficient stats + marker tables (`viewer@0.1`). Computes the
-#' cluster stats with the shared libstar kernel.
+#' The pagoda2 counterpart of [read_seurat()]: extracts **every facet** (RNA/ADT/ATAC… raw counts over
+#' their feature axes), **all embeddings** (`embeddings[[reduction]][[name]]`), and **all `cellMeta`
+#' columns** (categorical → a `label` field inducing a factor axis; numeric → a `measure`), each carrying
+#' the provenance ([write_pagoda2()] / `pagoda2::Pagoda2$fromLstar()` use it to reconstruct the object).
+#' Duck-typed: a facet-aware pagoda2.1 object uses `listFacets()`/`getFacet()`; a simpler object falls
+#' back to `getRawCounts()` (single RNA facet). Viewer navigators are NOT added here — call
+#' [extend_for_viewer()] for that.
 #'
-#' @param p2 a Pagoda2 (pagoda2.1) object.
-#' @param path output store path (`*.lstar.zarr`); if `NULL`, only the `lstar_dataset` is returned.
-#' @param grouping a `cellMeta` column to use as the primary clustering (default `"leiden"`).
-#' @return an `lstar_dataset` (invisibly if written).
+#' @param p2 a Pagoda2 (pagoda2.1) object (or a `getRawCounts()`/`embeddings`/`cellMeta`-shaped object).
+#' @return an `lstar_dataset` (kind `"sample"`).
+#' @seealso [extend_for_viewer()], [read_seurat()]
 #' @export
-write_pagoda2 <- function(p2, path = NULL, grouping = "leiden") {
-  cnt <- as(.p2_raw_counts(p2), "CsparseMatrix")          # cells x genes (CSC gene-major)
-  nc <- nrow(cnt); ng <- ncol(cnt)
-  cells <- rownames(cnt) %||% paste0("cell", seq_len(nc))
-  genes <- colnames(cnt) %||% paste0("g", seq_len(ng))
-  dropped <- character()
+read_pagoda2 <- function(p2) {
+  facet_names <- if (is.function(p2$listFacets)) p2$listFacets() else "RNA"
+  dfac <- if (!is.null(p2$defaultFacet)) p2$defaultFacet else "RNA"
+  axes <- list(); fields <- list(); dropped <- character(); cells <- NULL
 
-  axes <- list(
-    cells = list(labels = as.character(cells), origin = "observed", role = "observation"),
-    genes = list(labels = as.character(genes), origin = "observed", role = "feature"))
-  fields <- list(
-    counts = list(values = cnt, role = "measure", span = c("cells", "genes"), state = "raw", encoding = "csc"))
+  for (fn in facet_names) {
+    if (is.function(p2$getFacet)) {
+      f <- p2$getFacet(fn); raw <- as(f$rawCounts, "CsparseMatrix")
+      ft <- f$featureType; model <- f$modelType; dred <- f$defaultReduction
+    } else {
+      raw <- as(.p2_raw_counts(p2), "CsparseMatrix"); ft <- "gene"; model <- "plain"; dred <- "PCA"
+    }
+    if (is.null(cells)) cells <- rownames(raw) %||% paste0("cell", seq_len(nrow(raw)))
+    fax <- .p2_feature_axis(ft)
+    axes[[fax]] <- list(labels = as.character(colnames(raw) %||% paste0(fax, seq_len(ncol(raw)))),
+                        origin = "observed", role = "feature")
+    fname <- if (identical(fn, dfac)) "counts" else paste0(fn, ".counts")
+    fields[[fname]] <- list(values = raw, role = "measure", span = c("cells", fax), state = "raw",
+                            encoding = "csc", provenance = list(facet = fn, feature_axis = fax,
+                            featureType = if (is.null(ft)) "gene" else ft,
+                            model = if (is.null(model)) "plain" else model,
+                            defaultReduction = if (is.null(dred)) "PCA" else dred))
+  }
+  axes <- c(list(cells = list(labels = as.character(cells), origin = "observed", role = "observation")), axes)
 
-  # embedding
-  emb <- .first_embedding(p2$embeddings)
-  if (!is.null(emb)) {
-    axes$umap <- list(labels = c("umap0", "umap1"), origin = "derived", role = "coordinate")
-    fields$umap <- list(values = emb, role = "embedding", span = c("cells", "umap"))
-  } else dropped <- c(dropped, "embedding")
+  # embeddings: one field per embeddings[[reduction]][[name]] (role=embedding), provenance keeps both.
+  embs <- p2$embeddings
+  if (is.list(embs)) for (red in names(embs)) for (nm in names(embs[[red]])) {
+    em <- as.matrix(embs[[red]][[nm]]); if (length(dim(em)) != 2 || ncol(em) < 1) next
+    field <- make.names(tolower(if (length(embs) > 1) paste0(red, "_", nm) else nm))
+    eax <- paste0(field, "_dim")
+    axes[[eax]] <- list(labels = as.character(colnames(em) %||% paste0(tolower(nm), seq_len(ncol(em)))),
+                        origin = "derived", role = "coordinate")
+    fields[[field]] <- list(values = em, role = "embedding", span = c("cells", eax),
+                            provenance = list(reduction = red, embedding = nm))
+  }
 
-  # cell metadata: grouping, cell_type, qc. A categorical cell label is stored as a `categorical`
-  # field (factor: codes + ordered category set) and *induces* a bare-named `factor` axis (role=factor,
-  # induced_by) whose labels ARE its categories -- so per-group results (below) are fields over it.
+  # cellMeta: categorical -> label (induces a factor axis); numeric -> measure. provenance routes it back.
   meta <- p2$cellMeta
-  lei <- NULL; groups <- NULL; K <- 0L
-  if (!is.null(meta) && grouping %in% names(meta)) {
-    lei <- as.character(meta[[grouping]])
-    groups <- sort(unique(lei[!is.na(lei)])); K <- length(groups)
-    fields[[grouping]] <- list(values = factor(lei, levels = groups), role = "label",
-                               span = "cells", encoding = "categorical")
-    axes[[grouping]] <- list(labels = groups, origin = "derived", role = "factor", induced_by = grouping)
+  if (is.data.frame(meta)) for (col in colnames(meta)) {
+    v <- meta[[col]]
+    if (is.factor(v) || is.character(v)) {
+      cv <- as.character(v); lv <- sort(unique(cv[!is.na(cv)])); if (!length(lv)) next
+      fields[[col]] <- list(values = factor(cv, levels = lv), role = "label", span = "cells",
+                            encoding = "categorical", provenance = list(cellmeta = col))
+      axes[[col]] <- list(labels = lv, origin = "derived", role = "factor", induced_by = col)
+    } else if (is.numeric(v)) {
+      fields[[col]] <- list(values = as.numeric(v), role = "measure", span = "cells",
+                            provenance = list(cellmeta = col))
+    } else dropped <- c(dropped, paste0("cellMeta/", col))
   }
-  for (col in c("cell_type", "sample", "condition")) if (!is.null(meta) && col %in% names(meta)) {
-    cv <- as.character(meta[[col]]); lv <- sort(unique(cv[!is.na(cv)]))
-    fields[[col]] <- list(values = factor(cv, levels = lv), role = "label", span = "cells", encoding = "categorical")
-    axes[[col]] <- list(labels = lv, origin = "derived", role = "factor", induced_by = col)
-  }
-  for (col in c("mito", "percent_mito", "n_molecules", "n_genes"))
-    if (!is.null(meta) && col %in% names(meta))
-      fields[[col]] <- list(values = as.numeric(meta[[col]]), role = "measure", span = "cells")
 
-  # viewer@0.1 profile (docs/format.md): cluster sufficient stats + marker tables + a whole-dataset
-  # overdispersion score + a cell-major counts copy, all via the shared libstar kernels so the store
-  # matches what Python/JS produce. stats are group-major (K x genes); markers are gene-major
-  # (genes x K); od_score is per-gene.
-  profiles <- "pagoda2@0.1"
-  if (!is.null(lei)) {
-    code <- as.integer(factor(lei, levels = groups)) - 1L
-    gs <- lstar_cpp_col_sum_by_group(as.double(cnt@x), cnt@p, cnt@i, nc, ng, code, K, TRUE)
-    S <- matrix(gs$sum, nrow = K, byrow = TRUE)
-    SS <- matrix(gs$sumsq, nrow = K, byrow = TRUE)
-    NE <- matrix(gs$n_expr, nrow = K, byrow = TRUE)
-    nper <- as.integer(table(factor(lei, levels = groups)))
-    mk <- lstar_cpp_markers_one_vs_rest(gs$sum, gs$n_expr, nper, K, ng, as.double(nc))   # shared kernel
-    lfc  <- matrix(mk$lfc,  nrow = ng, ncol = K, byrow = TRUE)        # genes x K (gene-major)
-    padj <- matrix(mk$padj, nrow = ng, ncol = K, byrow = TRUE)
-    sg <- c(grouping, "genes")                                       # stats: group-major (factor, genes)
-    mg <- c("genes", grouping)                                       # markers: gene-major (genes, factor)
-    fields[[paste0("stats_", grouping, "_sum")]]   <- list(values = S,  role = "measure", span = sg)
-    fields[[paste0("stats_", grouping, "_sumsq")]] <- list(values = SS, role = "measure", span = sg)
-    fields[[paste0("stats_", grouping, "_nexpr")]] <- list(values = NE, role = "measure", span = sg)
-    fields[[paste0("markers_", grouping, "_lfc")]]  <- list(values = lfc,  role = "measure", span = mg)
-    fields[[paste0("markers_", grouping, "_padj")]] <- list(values = padj, role = "measure", span = mg)
-
-    # whole-dataset overdispersion (pagoda2 lowess + F-test, shared kernel): mean/var/nobs over log1p.
-    g0 <- lstar_cpp_col_sum_by_group(as.double(cnt@x), cnt@p, cnt@i, nc, ng, integer(nc), 1L, TRUE)
-    om <- g0$sum / nc; ov <- pmax(g0$sumsq / nc - om^2, 0)
-    od <- lstar_cpp_overdispersion(om, ov, as.integer(g0$n_expr))
-    fields[["od_score"]] <- list(values = od, role = "measure", span = "genes")
-
-    # cell-major (CSR) copy of counts -- the per-cell-read substrate.
-    fields[["counts_cellmajor"]] <- list(values = methods::as(cnt, "RsparseMatrix"),
-                                          role = "measure", span = c("cells", "genes"),
-                                          state = "raw", encoding = "csr")
-    profiles <- c(profiles, "viewer@0.1")
-  } else dropped <- c(dropped, "clustering")
-
-  ds <- list(kind = "sample", spec_version = "0.1", profiles = profiles, dropped = dropped,
+  ds <- list(kind = "sample", spec_version = "0.1", profiles = "pagoda2@0.1", dropped = dropped,
              axes = axes, fields = fields)
   class(ds) <- "lstar_dataset"
-  if (!is.null(path)) { lstar_write(ds, path); return(invisible(ds)) }
   ds
 }

@@ -18,5 +18,7 @@ p2 <- list(getRawCounts = function(...) cnt, embeddings = list(PCA = list(UMAP =
            cellMeta = meta, misc = list())
 
 if (dir.exists(out)) unlink(out, recursive = TRUE)
-write_pagoda2(p2, out, grouping = grouping)
+ds <- read_pagoda2(p2)                       # mock object -> Dataset (counts + embedding + labels)
+ds <- extend_for_viewer(ds, grouping = grouping)
+lstar_write(ds, out)
 cat("wrote", out, "\n")
