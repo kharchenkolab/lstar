@@ -8,6 +8,14 @@ lstar_cpp_subsample_de_rank <- function(data, indptr, indices, nrows, ngenes, me
   .Call(`_lstar_lstar_cpp_subsample_de_rank`, data, indptr, indices, nrows, ngenes, membership, lognorm)
 }
 
+lstar_cpp_markers_one_vs_rest <- function(S, NE, nper, ngroups, ngenes, ncells) {
+  .Call(`_lstar_lstar_cpp_markers_one_vs_rest`, S, NE, nper, ngroups, ngenes, ncells)
+}
+
+lstar_cpp_overdispersion <- function(mean, var, nobs) {
+  .Call(`_lstar_lstar_cpp_overdispersion`, mean, var, nobs)
+}
+
 lstar_cpp_stream_col_stats <- function(path, field, block, n_threads, lognorm, depth, depthScale, population) {
   .Call(`_lstar_lstar_cpp_stream_col_stats`, path, field, block, n_threads, lognorm, depth, depthScale, population)
 }

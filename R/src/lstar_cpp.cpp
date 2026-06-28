@@ -181,6 +181,31 @@ list lstar_cpp_subsample_de_rank(doubles data, integers indptr, integers indices
                          "lfc"_nm = vec_to_dbl(r.lfc), "nA"_nm = (int)r.nA, "nB"_nm = (int)r.nB});
 }
 
+// viewer@0.1: 1-vs-rest markers from per-(group,gene) stats. S, NE are flat group-major
+// (g*ngenes + gene); nper = group sizes (length ngroups). Returns lfc/padj flat GENE-major
+// (gene*ngroups + g) -- R reshapes via matrix(., nrow=ngenes, ncol=ngroups, byrow=TRUE).
+[[cpp11::register]]
+list lstar_cpp_markers_one_vs_rest(doubles S, doubles NE, integers nper, int ngroups,
+                                   int ngenes, double ncells) {
+  std::vector<double> Sv((size_t)S.size()); for (R_xlen_t i = 0; i < S.size(); ++i) Sv[(size_t)i] = S[i];
+  std::vector<double> NEv((size_t)NE.size()); for (R_xlen_t i = 0; i < NE.size(); ++i) NEv[(size_t)i] = NE[i];
+  std::vector<int64_t> np((size_t)nper.size()); for (R_xlen_t i = 0; i < nper.size(); ++i) np[(size_t)i] = nper[i];
+  auto m = lstar::markers_one_vs_rest(Sv.data(), NEv.data(), np.data(), ngroups, (int64_t)ngenes, (int64_t)ncells);
+  return writable::list({"lfc"_nm = vec_to_dbl(m.lfc), "padj"_nm = vec_to_dbl(m.padj),
+                         "ngenes"_nm = ngenes, "ngroups"_nm = ngroups});
+}
+
+// viewer@0.1: per-gene overdispersion score (pagoda2 lowess + F-test). mean/var per gene (over log1p);
+// nobs = expressing cells per gene. Same core kernel as Python/WASM.
+[[cpp11::register]]
+doubles lstar_cpp_overdispersion(doubles mean, doubles var, integers nobs) {
+  std::vector<double> mv((size_t)mean.size()); for (R_xlen_t i = 0; i < mean.size(); ++i) mv[(size_t)i] = mean[i];
+  std::vector<double> vv((size_t)var.size()); for (R_xlen_t i = 0; i < var.size(); ++i) vv[(size_t)i] = var[i];
+  std::vector<int64_t> nv((size_t)nobs.size()); for (R_xlen_t i = 0; i < nobs.size(); ++i) nv[(size_t)i] = nobs[i];
+  auto od = lstar::overdispersion(mv.data(), vv.data(), nv.data(), (int64_t)mv.size());
+  return vec_to_dbl(od);
+}
+
 // Zero-aware per-gene mean/var/nnz of a CSC measure in a store, read block-by-block so the whole
 // matrix never lands in memory (the bounded-memory reduction; same libstar kernel as Python/WASM).
 [[cpp11::register]]

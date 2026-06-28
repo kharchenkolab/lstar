@@ -20,6 +20,20 @@ extern "C" SEXP _lstar_lstar_cpp_subsample_de_rank(SEXP data, SEXP indptr, SEXP 
   END_CPP11
 }
 // lstar_cpp.cpp
+list lstar_cpp_markers_one_vs_rest(doubles S, doubles NE, integers nper, int ngroups, int ngenes, double ncells);
+extern "C" SEXP _lstar_lstar_cpp_markers_one_vs_rest(SEXP S, SEXP NE, SEXP nper, SEXP ngroups, SEXP ngenes, SEXP ncells) {
+  BEGIN_CPP11
+    return cpp11::as_sexp(lstar_cpp_markers_one_vs_rest(cpp11::as_cpp<cpp11::decay_t<doubles>>(S), cpp11::as_cpp<cpp11::decay_t<doubles>>(NE), cpp11::as_cpp<cpp11::decay_t<integers>>(nper), cpp11::as_cpp<cpp11::decay_t<int>>(ngroups), cpp11::as_cpp<cpp11::decay_t<int>>(ngenes), cpp11::as_cpp<cpp11::decay_t<double>>(ncells)));
+  END_CPP11
+}
+// lstar_cpp.cpp
+doubles lstar_cpp_overdispersion(doubles mean, doubles var, integers nobs);
+extern "C" SEXP _lstar_lstar_cpp_overdispersion(SEXP mean, SEXP var, SEXP nobs) {
+  BEGIN_CPP11
+    return cpp11::as_sexp(lstar_cpp_overdispersion(cpp11::as_cpp<cpp11::decay_t<doubles>>(mean), cpp11::as_cpp<cpp11::decay_t<doubles>>(var), cpp11::as_cpp<cpp11::decay_t<integers>>(nobs)));
+  END_CPP11
+}
+// lstar_cpp.cpp
 list lstar_cpp_stream_col_stats(std::string path, std::string field, int block, int n_threads, bool lognorm, doubles depth, double depthScale, bool population);
 extern "C" SEXP _lstar_lstar_cpp_stream_col_stats(SEXP path, SEXP field, SEXP block, SEXP n_threads, SEXP lognorm, SEXP depth, SEXP depthScale, SEXP population) {
   BEGIN_CPP11
@@ -66,6 +80,8 @@ extern "C" SEXP _lstar_lstar_cpp_write(SEXP ds, SEXP path, SEXP chunk_elems, SEX
 extern "C" {
 static const R_CallMethodDef CallEntries[] = {
     {"_lstar_lstar_cpp_col_sum_by_group",        (DL_FUNC) &_lstar_lstar_cpp_col_sum_by_group,        8},
+    {"_lstar_lstar_cpp_markers_one_vs_rest",     (DL_FUNC) &_lstar_lstar_cpp_markers_one_vs_rest,     6},
+    {"_lstar_lstar_cpp_overdispersion",          (DL_FUNC) &_lstar_lstar_cpp_overdispersion,          3},
     {"_lstar_lstar_cpp_read",                    (DL_FUNC) &_lstar_lstar_cpp_read,                    1},
     {"_lstar_lstar_cpp_read_csc_block",          (DL_FUNC) &_lstar_lstar_cpp_read_csc_block,          4},
     {"_lstar_lstar_cpp_read_csc_cols",           (DL_FUNC) &_lstar_lstar_cpp_read_csc_cols,           3},

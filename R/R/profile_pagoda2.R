@@ -70,8 +70,10 @@ write_pagoda2 <- function(p2, path = NULL, grouping = "leiden") {
     if (!is.null(meta) && col %in% names(meta))
       fields[[col]] <- list(values = as.numeric(meta[[col]]), role = "measure", span = "cells")
 
-  # viewer profile: cluster sufficient stats (libstar kernel) + marker tables, all over the induced
-  # (factor, genes) axis pair in a single canonical orientation (K x genes).
+  # viewer@0.1 profile (docs/format.md): cluster sufficient stats + marker tables + a whole-dataset
+  # overdispersion score + a cell-major counts copy, all via the shared libstar kernels so the store
+  # matches what Python/JS produce. stats are group-major (K x genes); markers are gene-major
+  # (genes x K); od_score is per-gene.
   profiles <- "pagoda2@0.1"
   if (!is.null(lei)) {
     code <- as.integer(factor(lei, levels = groups)) - 1L
@@ -79,16 +81,28 @@ write_pagoda2 <- function(p2, path = NULL, grouping = "leiden") {
     S <- matrix(gs$sum, nrow = K, byrow = TRUE)
     SS <- matrix(gs$sumsq, nrow = K, byrow = TRUE)
     NE <- matrix(gs$n_expr, nrow = K, byrow = TRUE)
-    Xl <- cnt; Xl@x <- log1p(Xl@x); grand <- Matrix::colSums(Xl)
     nper <- as.integer(table(factor(lei, levels = groups)))
-    lfc <- vapply(seq_len(K), function(g) S[g, ] / max(nper[g], 1) - (grand - S[g, ]) / max(nc - nper[g], 1), numeric(ng))  # ng x K
-    padj <- pmin(pmax(exp(-abs(lfc * sqrt(t(NE) + 1))), 1e-12), 1)                                                          # ng x K
-    sg <- c(grouping, "genes")                              # canonical (factor, genes) for stats AND markers
+    mk <- lstar_cpp_markers_one_vs_rest(gs$sum, gs$n_expr, nper, K, ng, as.double(nc))   # shared kernel
+    lfc  <- matrix(mk$lfc,  nrow = ng, ncol = K, byrow = TRUE)        # genes x K (gene-major)
+    padj <- matrix(mk$padj, nrow = ng, ncol = K, byrow = TRUE)
+    sg <- c(grouping, "genes")                                       # stats: group-major (factor, genes)
+    mg <- c("genes", grouping)                                       # markers: gene-major (genes, factor)
     fields[[paste0("stats_", grouping, "_sum")]]   <- list(values = S,  role = "measure", span = sg)
     fields[[paste0("stats_", grouping, "_sumsq")]] <- list(values = SS, role = "measure", span = sg)
     fields[[paste0("stats_", grouping, "_nexpr")]] <- list(values = NE, role = "measure", span = sg)
-    fields[[paste0("markers_", grouping, "_lfc")]]  <- list(values = t(lfc),  role = "measure", span = sg)   # ng x K -> K x ng
-    fields[[paste0("markers_", grouping, "_padj")]] <- list(values = t(padj), role = "measure", span = sg)
+    fields[[paste0("markers_", grouping, "_lfc")]]  <- list(values = lfc,  role = "measure", span = mg)
+    fields[[paste0("markers_", grouping, "_padj")]] <- list(values = padj, role = "measure", span = mg)
+
+    # whole-dataset overdispersion (pagoda2 lowess + F-test, shared kernel): mean/var/nobs over log1p.
+    g0 <- lstar_cpp_col_sum_by_group(as.double(cnt@x), cnt@p, cnt@i, nc, ng, integer(nc), 1L, TRUE)
+    om <- g0$sum / nc; ov <- pmax(g0$sumsq / nc - om^2, 0)
+    od <- lstar_cpp_overdispersion(om, ov, as.integer(g0$n_expr))
+    fields[["od_score"]] <- list(values = od, role = "measure", span = "genes")
+
+    # cell-major (CSR) copy of counts -- the per-cell-read substrate.
+    fields[["counts_cellmajor"]] <- list(values = methods::as(cnt, "RsparseMatrix"),
+                                          role = "measure", span = c("cells", "genes"),
+                                          state = "raw", encoding = "csr")
     profiles <- c(profiles, "viewer@0.1")
   } else dropped <- c(dropped, "clustering")
 
