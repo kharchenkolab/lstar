@@ -239,6 +239,31 @@ export class LstarDataset {
     return { data, indices, indptr, shape: meta.shape as number[], fmt: meta.encoding };
   }
 
+  // Bounded LRU read cache. Re-running compute over the SAME cells re-issues the SAME byte-range reads, so cache the
+  // decoded slices keyed by (array, lo, hi). Holds only RANGE reads (csrRows blocks, gene columns) — the whole-matrix
+  // fieldSparse path uses _get, not this — so it stays bounded and never pins the full matrix. LRU-evicted to a budget.
+  private _rcache = new Map<string, { v: any; bytes: number }>();
+  private _rcacheBytes = 0;
+  private _rcacheBudget = 256 * 1024 * 1024;   // 256MB default
+  /** Cap (bytes) for the in-memory read cache; LRU-evicts down to it. 0 disables + clears it. */
+  setReadCacheBudget(bytes: number): void { this._rcacheBudget = Math.max(0, Math.floor(bytes)); if (this._rcacheBudget === 0) { this._rcache.clear(); this._rcacheBytes = 0; } else this._evictReadCache(); }
+  readCacheStats(): { entries: number; bytes: number; budget: number } { return { entries: this._rcache.size, bytes: this._rcacheBytes, budget: this._rcacheBudget }; }
+  private _evictReadCache(): void {
+    while (this._rcacheBytes > this._rcacheBudget && this._rcache.size) {
+      const k = this._rcache.keys().next().value as string; const e = this._rcache.get(k)!; this._rcache.delete(k); this._rcacheBytes -= e.bytes;
+    }
+  }
+  // cache wrapper around the range reader: LRU-bump on hit, store + evict on miss (skip a slice too big to ever fit).
+  private async _rangeOrSlice(arrPath: string, lo: number, hi: number): Promise<any> {
+    const ck = arrPath + ":" + lo + ":" + hi;
+    const hit = this._rcache.get(ck);
+    if (hit) { this._rcache.delete(ck); this._rcache.set(ck, hit); return hit.v; }
+    const v = await this._readRange(arrPath, lo, hi);
+    const bytes = v?.byteLength || 0;
+    if (this._rcacheBudget > 0 && bytes > 0 && bytes <= this._rcacheBudget) { this._rcache.set(ck, { v, bytes }); this._rcacheBytes += bytes; this._evictReadCache(); }
+    return v;
+  }
+
   /**
    * Read elements [lo, hi) of a 1-D array as a typed array. Fast path: when the store supports byte
    * ranges AND the array is a single uncompressed, unfiltered chunk (known from consolidated metadata),
@@ -246,7 +271,7 @@ export class LstarDataset {
    * a few KB instead of the whole chunk. Otherwise fall back to a zarrita slice (which decompresses /
    * stitches chunks / works without consolidated metadata). Equivalent results either way.
    */
-  private async _rangeOrSlice(arrPath: string, lo: number, hi: number): Promise<any> {
+  private async _readRange(arrPath: string, lo: number, hi: number): Promise<any> {
     const za: any = this.meta[arrPath + "/.zarray"];
     const dt = za ? DTYPE[za.dtype] : undefined;
     const singleChunk = za && Array.isArray(za.chunks) && za.chunks.length === 1 &&
