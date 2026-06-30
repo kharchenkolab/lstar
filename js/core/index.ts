@@ -6,6 +6,9 @@ export type { ColStats, Metadata } from "./view.ts";
 export { writeStore, addToStore } from "./writer.ts";
 export type { LstarWritableStore, AxisSpec, FieldSpec, DatasetSpec,
   Compressor, WriteOptions, AuxSpec, AuxArraySpec } from "./writer.ts";
+// viewer@0.1 optimization (JS twin of Python extend_for_viewer): precompute the viewer navigators into a store.
+export { extendForViewer } from "./extend.ts";
+export type { ExtendOptions } from "./extend.ts";
 // HttpStore adds byte-range (`Range`) reads on top of a plain fetch, enabling the reader's sub-chunk
 // fast path over HTTP/CDN. Browser code can also use zarrita's FetchStore (no range fast path) or any
 // store implementing the optional `getRange`; NodeFSStore is in ./node-store.ts (imported separately
