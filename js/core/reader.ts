@@ -131,7 +131,9 @@ export class LstarDataset {
         }
       } catch { /* malformed consolidated metadata -> fall back to per-object reads */ }
     }
-    const grp = await zarr.open(this.root, { kind: "group" });
+    let grp;
+    try { grp = await zarr.open(this.root, { kind: "group" }); }
+    catch { throw new Error("No L* store at this location — no .zmetadata / .zgroup / zarr.json found. Check the store URL (the ?store= path)."); }   // one clear error instead of zarrita's "v3 array or group" cascade
     const m = (grp.attrs as any).lstar;
     if (!m) throw new Error("not an L* store (no 'lstar' root attribute)");
     this.kind = m.kind ?? "sample";
