@@ -16,6 +16,7 @@ const VIEWER_PROFILE = "viewer@0.1";
 export interface ExtendOptions {
   groupings?: string[];   // categorical label fields to build stats/markers for; default = auto-detect
   markers?: boolean;      // also compute 1-vs-rest marker tables (default true)
+  counts?: string;        // raw-counts measure to summarize (default "counts"; e.g. "X" for an AnnData .X)
 }
 
 // Per-cell label codes + category names, from EITHER a categorical-encoded field (codes stored) or a utf8 label
@@ -43,11 +44,12 @@ async function detectGroupings(ds: LstarDataset): Promise<string[]> {
 /** Add the `viewer@0.1` navigator fields to an existing store, in place. `store` must be read+write (e.g. NodeFSStore). */
 export async function extendForViewer(store: LstarWritableStore, opts: ExtendOptions = {}): Promise<void> {
   const ds = await openLstar(store as any);
-  if (!ds.hasField("counts")) throw new Error("extendForViewer: store has no `counts` measure");
-  const sp = await ds.fieldSparse("counts");
-  if (sp.fmt !== "csc") throw new Error("extendForViewer: `counts` must be CSC (cells x genes), got " + sp.fmt);
+  const counts = opts.counts ?? "counts";
+  if (!ds.hasField(counts)) throw new Error("extendForViewer: store has no `" + counts + "` measure");
+  const sp = await ds.fieldSparse(counts);
+  if (sp.fmt !== "csc") throw new Error("extendForViewer: `" + counts + "` must be CSC (cells x genes), got " + sp.fmt);
   const [ncells, ngenes] = sp.shape;
-  const [cellAxis, geneAxis] = ds.field("counts")!.span;
+  const [cellAxis, geneAxis] = ds.field(counts)!.span;
 
   let groupings = (opts.groupings ?? await detectGroupings(ds)).filter((g) => ds.hasField(g));
   if (!groupings.length) throw new Error("extendForViewer: no categorical grouping found (pass {groupings:[...]})");
