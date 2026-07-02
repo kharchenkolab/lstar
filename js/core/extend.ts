@@ -9,6 +9,7 @@
 // `viewer@0.1` profile. Pure Node — no Python / numpy. Kernels: ../wasm/lstar_wasm.cpp.
 import { openLstar, type LstarDataset } from "./reader.ts";
 import { addToStore, type FieldSpec, type AxisSpec, type LstarWritableStore } from "./writer.ts";
+import { selectCountsBasis } from "./basis.ts";
 import createLstarKernels from "../dist/lstar_kernels.mjs";
 
 const VIEWER_PROFILE = "viewer@0.1";
@@ -16,7 +17,8 @@ const VIEWER_PROFILE = "viewer@0.1";
 export interface ExtendOptions {
   groupings?: string[];   // categorical label fields to build stats/markers for; default = auto-detect
   markers?: boolean;      // also compute 1-vs-rest marker tables (default true)
-  counts?: string;        // raw-counts measure to summarize (default "counts"; e.g. "X" for an AnnData .X)
+  counts?: string;        // force the count measure (else auto: a raw-state measure, name "counts" as fallback)
+  basis?: string;         // "lognorm" to prep (approximately) from an already log-normalized measure
 }
 
 // Per-cell label codes + category names, from EITHER a categorical-encoded field (codes stored) or a utf8 label
@@ -44,12 +46,14 @@ async function detectGroupings(ds: LstarDataset): Promise<string[]> {
 /** Add the `viewer@0.1` navigator fields to an existing store, in place. `store` must be read+write (e.g. NodeFSStore). */
 export async function extendForViewer(store: LstarWritableStore, opts: ExtendOptions = {}): Promise<void> {
   const ds = await openLstar(store as any);
-  const counts = opts.counts ?? "counts";
-  if (!ds.hasField(counts)) throw new Error("extendForViewer: store has no `" + counts + "` measure");
+  // Select the count basis by content/state (raw preferred, log1p'd), not the literal name "counts";
+  // `counts=`/`basis=` override, and a clear error lists present measures when there's no raw basis.
+  const { field: counts, log1p } = selectCountsBasis(ds, { counts: opts.counts, basis: opts.basis });
   const sp = await ds.fieldSparse(counts);
   if (sp.fmt !== "csc") throw new Error("extendForViewer: `" + counts + "` must be CSC (cells x genes), got " + sp.fmt);
   const [ncells, ngenes] = sp.shape;
   const [cellAxis, geneAxis] = ds.field(counts)!.span;
+  const basisState = ds.field(counts)!.state ?? "raw";
 
   let groupings = (opts.groupings ?? await detectGroupings(ds)).filter((g) => ds.hasField(g));
   if (!groupings.length) throw new Error("extendForViewer: no categorical grouping found (pass {groupings:[...]})");
@@ -60,15 +64,15 @@ export async function extendForViewer(store: LstarWritableStore, opts: ExtendOpt
   const prov = { cache: VIEWER_PROFILE };
 
   // 1) global od_score — per-gene mean/var of log1p over all cells -> pagoda2 overdispersion residual.
-  const cmv = M.colMeanVar(sp.data, sp.indptr, ncells, 1, true);                 // {mean, var, nnz} per gene
-  fields["od_score"] = { role: "measure", span: [geneAxis], encoding: "dense", shape: [ngenes], data: M.overdispersion(cmv.mean, cmv.var, cmv.nnz), provenance: { ...prov, method: "viewer.od", basis: "log1p" } };
+  const cmv = M.colMeanVar(sp.data, sp.indptr, ncells, 1, log1p);                 // {mean, var, nnz} per gene
+  fields["od_score"] = { role: "measure", span: [geneAxis], encoding: "dense", shape: [ngenes], data: M.overdispersion(cmv.mean, cmv.var, cmv.nnz), provenance: { ...prov, method: "viewer.od", basis: log1p ? "log1p" : "lognorm-input" } };
 
   // 2) per grouping — sufficient stats (group-major K x ngenes) + 1-vs-rest markers (gene-major ngenes x K).
   for (const g of groupings) {
     const { codes, categories } = await labelCodes(ds, g);
     const K = categories.length, gaxis = "groups_" + g;
     axes[gaxis] = { labels: categories, origin: "derived", role: "feature" };
-    const s = M.colSumByGroup(sp.data, sp.indptr, sp.indices, ncells, ngenes, codes, K, true);
+    const s = M.colSumByGroup(sp.data, sp.indptr, sp.indices, ncells, ngenes, codes, K, log1p);
     fields["stats_" + g + "_sum"]   = { role: "measure", span: [gaxis, geneAxis], encoding: "dense", shape: [K, ngenes], data: s.sum,    provenance: prov };
     fields["stats_" + g + "_sumsq"] = { role: "measure", span: [gaxis, geneAxis], encoding: "dense", shape: [K, ngenes], data: s.sumsq,  provenance: prov };
     fields["stats_" + g + "_nexpr"] = { role: "measure", span: [gaxis, geneAxis], encoding: "dense", shape: [K, ngenes], data: s.n_expr, provenance: prov };
@@ -87,7 +91,7 @@ export async function extendForViewer(store: LstarWritableStore, opts: ExtendOpt
   const csr = M.cscToCsr(sp.data, sp.indices, sp.indptr, ncells, ngenes);
   const order = new Float64Array(ncells); for (let i = 0; i < ncells; i++) order[i] = i;
   fields["counts_cellmajor_order"] = { role: "measure", span: [cellAxis], encoding: "dense", state: "permutation", shape: [ncells], data: order, provenance: { ...prov, method: "viewer.reorder", curve: "identity" } };
-  fields["counts_cellmajor"] = { role: "measure", span: [cellAxis, geneAxis], encoding: "csr", state: "raw", shape: [ncells, ngenes], data: csr.data, indices: csr.indices, indptr: csr.indptr, provenance: prov };
+  fields["counts_cellmajor"] = { role: "measure", span: [cellAxis, geneAxis], encoding: "csr", state: basisState, shape: [ncells, ngenes], data: csr.data, indices: csr.indices, indptr: csr.indptr, provenance: prov };
 
   await addToStore(store, { axes, fields, profiles: [VIEWER_PROFILE] });
 }
