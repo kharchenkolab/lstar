@@ -108,6 +108,32 @@ static val cscToCsr(val data_js, val indices_js, val indptr_js, int nrows, int n
     return csc_to_csr_emit<int64_t>(data_js, to_i64(indices_js), to_i64(indptr_js), nrows, ncols);
 }
 
+// CSR -> CSC (orientation flip): normalize CSR counts to the CSC the viewer/DE kernels expect. A CSR
+// (nrows x ncols) is a CSC of the transpose, so this is csc_to_csr_emit with the dims swapped. Lets
+// extendForViewer accept either encoding (Python/R get this from scipy/Matrix; the browser has neither).
+static val csrToCsc(val data_js, val indices_js, val indptr_js, int nrows, int ncols) {
+    if (typed_kind(indices_js) == "i4" && typed_kind(indptr_js) == "i4")
+        return csc_to_csr_emit<int32_t>(data_js, convertJSArrayToNumberVector<int32_t>(indices_js),
+                                        convertJSArrayToNumberVector<int32_t>(indptr_js), ncols, nrows);
+    return csc_to_csr_emit<int64_t>(data_js, to_i64(indices_js), to_i64(indptr_js), ncols, nrows);
+}
+
+// viewer@0.1 canonical cell order (the SAME libstar routine Python/R call). primary_code: Int32Array
+// (per-cell 0-based cluster code). emb: Float64Array, row-major ncells x 2 (or null/empty for a
+// cluster-only order). Returns Int32Array pos_of (0-based physical row per cell) -- identical to Py/R.
+static val viewerCellOrder(val primary_code_js, val emb_js, int ncells, int grid) {
+    std::vector<int> pc = to_int(primary_code_js);
+    std::vector<int64_t> pos;
+    if (emb_js.isNull() || emb_js.isUndefined()) {
+        pos = lstar::viewer_cell_order(pc.data(), nullptr, ncells, grid);
+    } else {
+        std::vector<double> e = convertJSArrayToNumberVector<double>(emb_js);   // row-major ncells x 2, or empty
+        if (e.empty()) pos = lstar::viewer_cell_order(pc.data(), nullptr, ncells, grid);
+        else           pos = lstar::viewer_cell_order(pc.data(), e.data(), ncells, grid);
+    }
+    return to_i32(pos);
+}
+
 // Per-group sufficient stats over a CSC measure (cells x genes). group: Int32Array (length nrows),
 // cell -> group in [0,ngroups) or <0 to skip. -> {sum,sumsq,n_expr} flat (ngroups x ncols), ngenes.
 static val colSumByGroup(val data_js, val indptr_js, val indices_js, int nrows, int ncols, val group_js, int ngroups, bool lognorm) {
@@ -186,6 +212,8 @@ static std::string version() { return "lstar-wasm 0.0.4"; }
 EMSCRIPTEN_BINDINGS(lstar_wasm) {
     function("colMeanVar", &colMeanVar);
     function("cscToCsr", &cscToCsr);
+    function("csrToCsc", &csrToCsc);
+    function("viewerCellOrder", &viewerCellOrder);
     function("colSumByGroup", &colSumByGroup);
     function("subsampleDeRank", &subsampleDeRank);
     function("markersOneVsRest", &markersOneVsRest);

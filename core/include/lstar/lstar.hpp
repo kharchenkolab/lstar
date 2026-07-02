@@ -765,6 +765,16 @@ inline CsxArrays<T, Idx> csc_to_csr(const T* data, const Idx* indices, const Idx
     return out;
 }
 
+// CSR -> CSC storage transpose (orientation flip), value dtype preserved. A CSR (nrows x ncols) is
+// byte-identical to a CSC of the transpose (ncols x nrows), so this is csc_to_csr with the dims swapped.
+// Lets a binding normalize CSR counts to the CSC the viewer/DE kernels expect (Python/R get this from
+// scipy/Matrix; JS-WASM has no such library, so it calls this).
+template <class T, class Idx = int64_t>
+inline CsxArrays<T, Idx> csr_to_csc(const T* data, const Idx* indices, const Idx* indptr,
+                                    int64_t nrows, int64_t ncols) {
+    return csc_to_csr<T, Idx>(data, indices, indptr, ncols, nrows);
+}
+
 // Zero-aware per-column mean/variance of a CSC matrix with `nrows` rows and `ncols` columns.
 // `data` are the nnz values; `indptr` is length ncols+1. Implicit zeros are accounted for.
 //
