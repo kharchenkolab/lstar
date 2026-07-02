@@ -4,16 +4,27 @@
 \alias{extend_for_viewer}
 \title{Extend an L* dataset with the viewer@0.1 navigator fields (native R).}
 \usage{
-extend_for_viewer(ds, grouping = NULL, also = character(0), counts = "counts")
+extend_for_viewer(
+  ds,
+  grouping = NULL,
+  also = character(0),
+  counts = NULL,
+  basis = NULL
+)
 }
 \arguments{
-\item{ds}{an \code{lstar_dataset} (a \code{counts} measure + at least one categorical cell label).}
+\item{ds}{an \code{lstar_dataset} (a raw-counts measure + at least one categorical cell label).}
 
 \item{grouping}{primary grouping label (default: auto-detect; clustering/cell-type names preferred).}
 
 \item{also}{additional grouping labels to also summarize (e.g. \code{"cell_type"}).}
 
-\item{counts}{name of the raw counts measure (default \code{"counts"}).}
+\item{counts}{name of the count measure to use. Default \code{NULL} = auto-detect by state: a measure
+named \code{counts}, else any measure with \code{state == "raw"}. An error (listing the present measures)
+is raised if none is found.}
+
+\item{basis}{\code{NULL} (raw basis, \code{log1p}-transformed) or \code{"lognorm"} to prep -- approximately --
+from an already log-normalized measure (values used as-is; stats are var-of-lognorm).}
 }
 \value{
 \code{ds} with the navigator fields added and \verb{viewer@0.1} in \code{ds$profiles}.

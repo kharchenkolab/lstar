@@ -216,6 +216,14 @@ def extend_for_viewer(ds, groupings=None, order="hybrid", embedding=None, marker
         The embedding field used for the Hilbert key; ``None`` auto-detects (prefers ``umap``).
     markers : bool
         Also compute the 1-vs-rest ``markers_<g>_{lfc,padj}`` tables (default ``True``).
+    counts : str | None
+        Name of the count measure to build from. ``None`` (default) auto-detects by state: a measure
+        named ``counts``, else any measure with ``state == "raw"``. Raises a clear error listing the
+        present measures if none is found (e.g. a scaled ``X`` + lognorm ``raw`` with no counts).
+    basis : {None, "lognorm"}
+        ``None`` = raw basis (``log1p``-transformed). ``"lognorm"`` preps -- approximately -- from an
+        already log-normalized measure (values used as-is; stats are var-of-lognorm, not
+        var-of-log1p(counts)).
 
     Returns
     -------

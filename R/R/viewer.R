@@ -34,10 +34,14 @@
 #' physically reordered cluster-contiguous, and its `counts_cellmajor_order` permutation. Stamps the
 #' `viewer@0.1` profile. The store this writes is interchangeable with a Python/JS-prepped one.
 #'
-#' @param ds an `lstar_dataset` (a `counts` measure + at least one categorical cell label).
+#' @param ds an `lstar_dataset` (a raw-counts measure + at least one categorical cell label).
 #' @param grouping primary grouping label (default: auto-detect; clustering/cell-type names preferred).
 #' @param also additional grouping labels to also summarize (e.g. `"cell_type"`).
-#' @param counts name of the raw counts measure (default `"counts"`).
+#' @param counts name of the count measure to use. Default `NULL` = auto-detect by state: a measure
+#'   named `counts`, else any measure with `state == "raw"`. An error (listing the present measures)
+#'   is raised if none is found.
+#' @param basis `NULL` (raw basis, `log1p`-transformed) or `"lognorm"` to prep -- approximately --
+#'   from an already log-normalized measure (values used as-is; stats are var-of-lognorm).
 #' @return `ds` with the navigator fields added and `viewer@0.1` in `ds$profiles`.
 #' @seealso [viewer_extend()], [lstar_write_viewer()]
 #' @export
