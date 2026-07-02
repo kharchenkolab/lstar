@@ -2,19 +2,22 @@
 % Please edit documentation in R/profile_seurat.R
 \name{write_seurat}
 \alias{write_seurat}
-\title{Build a Seurat object from an L* dataset.}
+\title{Write an L* dataset to a Seurat object.}
 \usage{
 write_seurat(ds)
 }
 \arguments{
-\item{ds}{an \code{lstar_dataset}}
+\item{ds}{an \code{lstar_dataset}.}
 }
 \value{
 a \code{Seurat} object.
 }
 \description{
-Measures over \verb{(cells, genes)} become assay layers (transposed to Seurat's genes x cells
-orientation); embeddings become \code{DimReduc}s; arity-1 cell fields become \code{meta.data}.
+The inverse of \code{\link[=read_seurat]{read_seurat()}}: each measure becomes a Seurat (v5) assay — the original assay name is
+restored from the measure's \code{provenance$assay} where present — with embeddings as \code{DimReduc}s and cell
+labels/measures in \code{meta.data}. A collection materializes as a v5 \emph{split} assay (per-sample gene sets
+unioned by name). Regenerable \code{cache}-tagged viewer navigators are dropped, and no corrected/integrated
+expression is fabricated.
 }
 \seealso{
 \code{\link[=read_seurat]{read_seurat()}}

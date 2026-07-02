@@ -99,6 +99,18 @@
   ax
 }
 
+#' Write an L* dataset to a Seurat object.
+#'
+#' The inverse of [read_seurat()]: each measure becomes a Seurat (v5) assay — the original assay name is
+#' restored from the measure's `provenance$assay` where present — with embeddings as `DimReduc`s and cell
+#' labels/measures in `meta.data`. A collection materializes as a v5 *split* assay (per-sample gene sets
+#' unioned by name). Regenerable `cache`-tagged viewer navigators are dropped, and no corrected/integrated
+#' expression is fabricated.
+#'
+#' @param ds an `lstar_dataset`.
+#' @return a `Seurat` object.
+#' @seealso [read_seurat()]
+#' @export
 write_seurat <- function(ds) {
   if (!requireNamespace("SeuratObject", quietly = TRUE)) stop("SeuratObject is required")
   ds <- .lstar_drop_cache(ds)

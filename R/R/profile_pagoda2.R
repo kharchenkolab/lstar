@@ -26,7 +26,7 @@
 #' The pagoda2 counterpart of [read_seurat()]: extracts **every facet** (RNA/ADT/ATAC… raw counts over
 #' their feature axes), **all embeddings** (`embeddings[[reduction]][[name]]`), and **all `cellMeta`
 #' columns** (categorical → a `label` field inducing a factor axis; numeric → a `measure`), each carrying
-#' the provenance ([write_pagoda2()] / `pagoda2::Pagoda2$fromLstar()` use it to reconstruct the object).
+#' the provenance (`pagoda2::Pagoda2$fromLstar()` uses it to reconstruct the object).
 #' Duck-typed: a facet-aware pagoda2.1 object uses `listFacets()`/`getFacet()`; a simpler object falls
 #' back to `getRawCounts()` (single RNA facet). Viewer navigators are NOT added here — call
 #' [extend_for_viewer()] for that.
