@@ -133,6 +133,8 @@ jobs:
         run: bash conformance/r_write_chunked.sh
       - name: disk-backed targets (backed AnnData always; Seurat+BPCells / SCE+HDF5Array skip if absent)
         run: bash conformance/backed_targets.sh
+      - name: viewer@0.1 cross-surface parity (Python prep == native R extend_for_viewer, incl. cell-major layout)
+        run: bash conformance/viewer.sh
 
   js-wasm:
     runs-on: ubuntu-latest
@@ -151,3 +153,5 @@ jobs:
         run: cd js && npm install
       - name: JS/WASM conformance (build WASM kernels + Node kernels/reader/view vs Python store)
         run: bash conformance/js.sh
+      - name: JS viewer@0.1 parity (lstar's own extend-viewer.ts == Python prep; CSC + CSR counts)
+        run: bash conformance/viewer_js.sh

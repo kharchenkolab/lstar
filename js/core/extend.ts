@@ -24,10 +24,21 @@ export interface ExtendOptions {
 // Per-cell label codes + category names, from EITHER a categorical-encoded field (codes stored) or a utf8 label
 // field (strings → derived codes) — both are valid L* label encodings; the viewer treats them the same.
 async function labelCodes(ds: LstarDataset, name: string): Promise<{ codes: Int32Array; categories: string[] }> {
-  if (ds.field(name)?.encoding === "categorical") { const c = await ds.fieldCategorical(name); return { codes: c.codes, categories: c.categories }; }
-  const strings = await ds.fieldStrings(name);
-  const idx = new Map<string, number>(), categories: string[] = [], codes = new Int32Array(strings.length);
-  for (let i = 0; i < strings.length; i++) { const s = strings[i]; let c = idx.get(s); if (c === undefined) { c = categories.length; categories.push(s); idx.set(s, c); } codes[i] = c; }
+  // Decode to per-cell strings from EITHER a categorical (stored codes+categories) or a utf8 label field.
+  let strings: string[];
+  if (ds.field(name)?.encoding === "categorical") {
+    const c = await ds.fieldCategorical(name);
+    strings = Array.from(c.codes, (k) => (k >= 0 ? c.categories[k] : ""));
+  } else {
+    strings = await ds.fieldStrings(name);
+  }
+  // Category order MUST be sorted-unique to match Python (np.unique) and R (sort(unique)) so the induced
+  // groups_<g> axis + the group codes align field-for-field across surfaces. Was: first-seen (utf8) /
+  // stored (categorical) order -- a silent divergence that permuted stats/markers rows and the reorder key.
+  const categories = Array.from(new Set(strings)).sort();
+  const idx = new Map(categories.map((s, i) => [s, i] as [string, number]));
+  const codes = new Int32Array(strings.length);
+  for (let i = 0; i < strings.length; i++) codes[i] = idx.get(strings[i])!;
   return { codes, categories };
 }
 
