@@ -38,9 +38,15 @@ a, b = read(sys.argv[1]), read(sys.argv[2])
 def dense(ds, k):
     v = ds.field(k).values
     return v.toarray() if sp.issparse(v) else np.asarray(v)
-# the cross-format-robust shared vocabulary survives end to end. The count measure is named by each
-# format's convention -- anndata `.raw` -> L* 'raw'; Seurat counts -> L* 'counts' -- so compare across.
-assert np.allclose(dense(a, "raw"), dense(b, "counts"), rtol=1e-4), "counts mismatch through the chain"
+# the cross-format-robust shared vocabulary survives end to end. pbmc68k has NO raw counts (.X scaled,
+# .raw log-normalized), so the lognorm expression is the datum that must survive: anndata `.raw` ->
+# Seurat `data` -> SCE `logcounts` -> L*, landing on a lognorm-state measure. Compare that (the DATA,
+# not the label). (Before content-based state inference this compared a['raw'] to b['counts'], which
+# only held because .raw was mislabeled 'raw'; it's log-normalized, not counts.)
+def lognorm_measure(ds):
+    return next(k for k in ds.fields if ds.field(k).role == "measure"
+                and len(ds.field(k).span) == 2 and ds.field(k).state == "lognorm")
+assert np.allclose(dense(a, "raw"), dense(b, lognorm_measure(b)), rtol=1e-4), "lognorm data mismatch through the chain"
 for k in ("pca", "umap"):                                          # embeddings preserved
     assert np.allclose(dense(a, k), dense(b, k), rtol=1e-4, equal_nan=True), "mismatch in " + k
 assert (np.asarray(a.field("louvain").values) == np.asarray(b.field("louvain").values)).all()

@@ -55,8 +55,8 @@ def run():
     ds = read_anndata(a)
 
     # shared-vocabulary signatures on real data
-    assert ds.field("X").role == "measure"
-    assert ds.field("raw").state == "raw"
+    assert ds.field("X").role == "measure" and ds.field("X").state == "scaled"   # scaled .X, inferred from content
+    assert ds.field("raw").state == "lognorm"                                    # pbmc68k .raw is log-normalized, not raw counts
     assert ds.field("pca").role == "embedding" and "pca" in ds.axes
     assert ds.field("bulk_labels").role == "label" and ds.axis("bulk_labels").role == "factor"
     assert ds.field("connectivities").role == "relation"
