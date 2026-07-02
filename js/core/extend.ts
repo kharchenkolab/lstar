@@ -61,9 +61,11 @@ function detectEmbedding(ds: LstarDataset, cellAxis: string): string | null {
   const cands: string[] = [];
   for (const name of ds.fieldNames()) {
     const f = ds.field(name);
-    if (!f || f.role !== "embedding" || !f.span || f.span[0] !== cellAxis) continue;
-    const shp = f.shape;
-    if (!shp || shp.length < 2 || shp[1] < 2) continue;
+    // Dense fields don't carry `shape` in the field manifest (the zarr array holds it), so key off the
+    // span: an embedding over the cell axis whose 2nd axis has >=2 dims. (Was: `f.shape[1]` -> undefined
+    // for a dense embedding -> every embedding skipped -> cluster-only order, diverging from Python/R.)
+    if (!f || f.role !== "embedding" || !f.span || f.span[0] !== cellAxis || f.span.length < 2) continue;
+    if (ds.axisLength(f.span[1]) < 2) continue;
     cands.push(name);
   }
   if (!cands.length) return null;
