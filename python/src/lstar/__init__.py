@@ -15,6 +15,7 @@ from .collection import collection_from
 from .profiles.anndata import (read_anndata, write_anndata, convert_anndata,
                                write_anndata_streamed, convert_to_h5ad)
 from .profiles.mudata import read_mudata, write_mudata, convert_h5mu
+from .view import view
 
 __all__ = ["Dataset", "Axis", "Field", "Categorical", "read", "write", "validate", "OBSERVED", "DERIVED",
            "LazyDense", "LazyCSX", "stream_col_stats", "has_accel", "show_config",
@@ -23,5 +24,6 @@ __all__ = ["Dataset", "Axis", "Field", "Categorical", "read", "write", "validate
            "collection_from",
            "read_anndata", "write_anndata", "convert_anndata",
            "write_anndata_streamed", "convert_to_h5ad",
-           "read_mudata", "write_mudata", "convert_h5mu"]
+           "read_mudata", "write_mudata", "convert_h5mu",
+           "view"]
 __version__ = "0.1.1"
