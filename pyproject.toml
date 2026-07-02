@@ -67,3 +67,11 @@ manylinux-x86_64-image = "manylinux_2_28"
 # would reject that). setup.py reads $LSTAR_LIBOMP; target 11.0 (the arm64 floor) covers x86_64 too.
 before-all = "bash {project}/build_tools/cibw_macos_openmp.sh"
 environment = { LSTAR_LIBOMP = "$HOME/libomp", MACOSX_DEPLOYMENT_TARGET = "11.0" }
+# After delocate bundles libomp, rename _accel's dependency back to the dyld-coalescible `@rpath/libomp.dylib`
+# so a host libomp (scikit-learn/numba/scipy) is REUSED instead of a second copy loading -- the second copy
+# is what cross-binds llvm-openmp's __kmp_* machinery and SIGSEGVs on arm64. See the script for the mechanism.
+repair-wheel-command = "bash {project}/build_tools/cibw_macos_repair.sh {wheel} {dest_dir} {delocate_archs}"
+# macOS wheel test also runs the dual-libomp regression: scikit-learn brings a 2nd libomp, then we run the
+# extend_for_viewer kernels that crashed. (Overrides the top-level test-requires/test-command for macOS.)
+test-requires = ["numcodecs", "scikit-learn"]
+test-command = "python -c \"import lstar; lstar.show_config(); assert lstar.has_accel(), 'accelerator missing in wheel'\" && python {project}/python/tests/test_lazy.py && python {project}/build_tools/macos_libomp_repro.py"
