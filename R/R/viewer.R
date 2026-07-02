@@ -4,11 +4,24 @@
 # kernels (the same C++ core bound to Python/WASM), so an R-prepped store is byte-equivalent to a
 # Python/JS-prepped one and to what the viewer computes live. No Python or shell-out.
 
-# Pick a categorical cell label to summarize by: a `label`-role field over the cell axis with 2..60
-# distinct values, preferring clustering / cell-type names.
-.detect_grouping <- function(ds, cell_axis) {
-  pref <- c("leiden", "cluster", "clusters", "cell_type", "celltype", "cell_types",
-            "louvain", "seurat_clusters", "annotation")
+# Canonical viewer@0.1 grouping-detection policy (single source: mirrors Python `_PREFERRED_GROUPINGS`
+# and js/core/policy.ts; enforced against conformance/viewer_policy.json by conformance/policy_linter.py).
+.VIEWER_PREFERRED_GROUPINGS <- c("leiden", "cluster", "clusters", "cell_type", "celltype", "cell_types",
+                                 "louvain", "seurat_clusters", "annotation", "cluster_label")
+
+# Preference rank of a label name: index of the first preferred term that is a substring of the lowercased
+# name (matches sort first, by list position); non-matches rank last. Mirrors Python `_rank`.
+.viewer_grouping_rank <- function(nm) {
+  low <- tolower(nm)
+  for (i in seq_along(.VIEWER_PREFERRED_GROUPINGS))
+    if (grepl(.VIEWER_PREFERRED_GROUPINGS[i], low, fixed = TRUE)) return(i)
+  length(.VIEWER_PREFERRED_GROUPINGS) + 1L
+}
+
+# ALL usable cell groupings (not just one): `label`-role fields over the cell axis with 2..60 distinct
+# values, preferred clustering/cell-type names first (by list position), then alphabetical -- identical to
+# Python `_detect_groupings`. (Was `.detect_grouping`, which returned a single primary and diverged.)
+.detect_groupings <- function(ds, cell_axis) {
   cand <- character(0)
   for (nm in names(ds$fields)) {
     f <- ds$fields[[nm]]
@@ -21,9 +34,8 @@
   if (!length(cand))
     stop("extend_for_viewer: no categorical grouping (2..60 levels) over '", cell_axis,
          "'; pass grouping=", call. = FALSE)
-  isp <- vapply(cand, function(nm) any(vapply(pref, function(p) grepl(p, tolower(nm), fixed = TRUE),
-                                              logical(1))), logical(1))
-  cand[order(!isp, cand)][1]
+  ranks <- vapply(cand, .viewer_grouping_rank, integer(1))
+  cand[order(ranks, cand)]
 }
 
 # Pick the primary embedding that keys the within-cluster (Hilbert) locality order: an `embedding`-role
@@ -70,11 +82,12 @@ extend_for_viewer <- function(ds, grouping = NULL, also = character(0), counts =
   cell_axis <- span[1]; gene_axis <- span[2]
   nc <- nrow(cnt); ng <- ncol(cnt)
 
-  if (is.null(grouping)) grouping <- .detect_grouping(ds, cell_axis)
-  groupings <- unique(c(grouping, also))
+  if (is.null(grouping)) groupings <- .detect_groupings(ds, cell_axis)   # ALL detected (parity with Python)
+  else groupings <- unique(c(grouping, also))
   groupings <- groupings[vapply(groupings, function(g) !is.null(ds$fields[[g]]), logical(1))]
   if (!length(groupings))
     stop("extend_for_viewer: no categorical grouping found (pass grouping=)", call. = FALSE)
+  primary <- groupings[1]                                                # reorder keys on the first grouping
 
   # All fields below are viewer@0.1 caches (regenerable from counts; non-viewer converters drop+record).
   cache <- list(cache = "viewer@0.1")
@@ -90,7 +103,7 @@ extend_for_viewer <- function(ds, grouping = NULL, also = character(0), counts =
     lab <- as.character(ds$fields[[gp]]$values)
     groups <- sort(unique(lab[!is.na(lab)])); K <- length(groups)
     code <- as.integer(factor(lab, levels = groups)) - 1L
-    if (gp == grouping) primary_code <- code
+    if (identical(gp, primary)) primary_code <- code
     gs <- lstar_cpp_col_sum_by_group(as.double(cnt@x), cnt@p, cnt@i, nc, ng, code, K, use_lognorm)
     S <- matrix(gs$sum, nrow = K, byrow = TRUE)
     SS <- matrix(gs$sumsq, nrow = K, byrow = TRUE)

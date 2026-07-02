@@ -34,3 +34,10 @@ for the browser) rather than reimplementing the same logic four times and lettin
 When adding or changing a feature, treat all four surfaces as one system: keep the behavior, the API
 shape, and the results identical across languages, and extend the `conformance/` suite so any drift
 is caught.
+
+## Testing
+Roundtrip and other conversions with a corpus of tests datasets provides a powerful test. See python/tests/corpus.py and corpus data on mendel.
+CI in the repo is kept light, relying on synthetic data (don't check in real datasets into the repo - if you need to add a tests case, figure out how to generate appropriate synthetic)
+
+## Docs
+On major udpates, especially those impacting compatibility, do examine relevant docs and update them. The docs are not meant to be a journal, so first analyze the scope and decide whether something within the overall aims and narrative of the document should be updated, and if so implement the update while maintaining the integrity of the document. Items such as minor bugfixes, etc. generally won't make it into these docs. However, an update like compatibility with a specific format/version, or cli/api change must make it.

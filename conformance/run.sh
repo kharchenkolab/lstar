@@ -55,6 +55,11 @@ echo "== DE-bundle conformance (rank_genes_groups -> (factor,genes) bundle; lsta
 bash conformance/de.sh >/tmp/lstar_de.log 2>&1 \
   && pass "DE bundle round-trips + tidy markers (Py + R)" || { echo "  FAIL de"; tail -15 /tmp/lstar_de.log; exit 1; }
 
+echo "== viewer@0.1 grouping-policy linter (Python/R/JS preferred-grouping lists single-sourced) =="
+python3 conformance/policy_linter.py >/tmp/lstar_policy.log 2>&1 \
+  && pass "grouping-detection policy single-sourced across Py/R/JS" \
+  || { echo "  FAIL policy linter"; cat /tmp/lstar_policy.log; exit 1; }
+
 echo "== viewer@0.1 profile conformance (python prep + R pagoda2 + native-R extend, vs the spec) =="
 bash conformance/viewer.sh >/tmp/lstar_viewer.log 2>&1 \
   && pass "viewer@0.1 prep conformant + R==python (set PAGODA3 to also check pagoda3 prep.ts)" \

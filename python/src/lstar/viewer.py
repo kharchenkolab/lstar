@@ -37,6 +37,8 @@ N_GRID = 1024                                          # Hilbert grid resolution
 # auto-detection of the grouping labels and the embedding to extend over
 # ---------------------------------------------------------------------------------------------------
 
+# Canonical grouping-detection policy -- the single source R (.VIEWER_PREFERRED_GROUPINGS) and JS
+# (policy.ts) must match; enforced against conformance/viewer_policy.json by conformance/policy_linter.py.
 _PREFERRED_GROUPINGS = ("leiden", "cluster", "clusters", "cell_type", "celltype", "cell_types",
                         "louvain", "seurat_clusters", "annotation", "cluster_label")
 

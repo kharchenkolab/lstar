@@ -133,6 +133,8 @@ jobs:
         run: bash conformance/r_write_chunked.sh
       - name: disk-backed targets (backed AnnData always; Seurat+BPCells / SCE+HDF5Array skip if absent)
         run: bash conformance/backed_targets.sh
+      - name: viewer@0.1 grouping-policy linter (Python + R lists match the canonical)
+        run: python conformance/policy_linter.py
       - name: viewer@0.1 cross-surface parity (Python prep == native R extend_for_viewer, incl. cell-major layout)
         run: bash conformance/viewer.sh
 
@@ -153,5 +155,7 @@ jobs:
         run: cd js && npm install
       - name: JS/WASM conformance (build WASM kernels + Node kernels/reader/view vs Python store)
         run: bash conformance/js.sh
+      - name: viewer@0.1 grouping-policy linter (Python + JS lists match the canonical)
+        run: python conformance/policy_linter.py
       - name: JS viewer@0.1 parity (lstar's own extend-viewer.ts == Python prep; CSC + CSR counts)
         run: bash conformance/viewer_js.sh

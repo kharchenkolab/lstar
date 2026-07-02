@@ -10,6 +10,7 @@
 import { openLstar, type LstarDataset } from "./reader.ts";
 import { addToStore, type FieldSpec, type AxisSpec, type LstarWritableStore } from "./writer.ts";
 import { selectCountsBasis } from "./basis.ts";
+import { MIN_GROUPS, MAX_GROUPS, groupingRank } from "./policy.ts";
 import createLstarKernels from "../dist/lstar_kernels.mjs";
 
 const VIEWER_PROFILE = "viewer@0.1";
@@ -48,10 +49,11 @@ async function detectGroupings(ds: LstarDataset): Promise<string[]> {
   for (const name of ds.fieldNames()) {
     const f = ds.field(name);
     if (!f || (f.encoding !== "categorical" && f.encoding !== "utf8") || (f.span?.length ?? 0) !== 1) continue;
-    try { const { categories } = await labelCodes(ds, name); if (categories.length >= 2 && categories.length <= 60) out.push(name); } catch { /* not a clean label */ }
+    try { const { categories } = await labelCodes(ds, name); if (categories.length >= MIN_GROUPS && categories.length <= MAX_GROUPS) out.push(name); } catch { /* not a clean label */ }
   }
-  const rank = (n: string) => (/leiden|cluster|cell.?type|louvain/i.test(n) ? 0 : 1);
-  return out.sort((a, b) => rank(a) - rank(b));
+  // preferred names (clustering / cell-type) first by list position, then alphabetical -- identical to
+  // Python _detect_groupings / R .detect_groupings (single source: policy.ts <-> viewer_policy.json).
+  return out.sort((a, b) => groupingRank(a) - groupingRank(b) || (a < b ? -1 : a > b ? 1 : 0));
 }
 
 // The primary embedding that keys the within-cluster (Hilbert) locality order: an `embedding`-role field
