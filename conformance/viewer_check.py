@@ -109,6 +109,30 @@ def cmd_equiv(a, b):
             d = float(np.nanmax(np.abs(va - vb)))
             _fail(f"{nm}: values differ (max abs {d:.3g} > rtol {rtol})")
         print(f"  OK: {nm} agrees ({sa} {va.shape})")
+
+    # physical-layout equivalence -- the fields the old equiv OMITTED, which let Python's cluster+Hilbert
+    # reorder and R's cluster-only reorder (and JS's identity stub) all pass as "equivalent". The target
+    # contract is a byte-identical store across surfaces, so these must match exactly.
+    oa = np.rint(np.asarray(da.field("counts_cellmajor_order").values)).astype("i8")
+    ob = np.rint(np.asarray(db.field("counts_cellmajor_order").values)).astype("i8")
+    if oa.shape != ob.shape:
+        _fail(f"counts_cellmajor_order: shape differs {oa.shape} != {ob.shape}")
+    if not np.array_equal(oa, ob):
+        ndiff = int(np.sum(oa != ob))
+        _fail(f"counts_cellmajor_order: physical row order differs ({ndiff}/{oa.size} cells) -- the "
+              f"cell reorder is not identical across surfaces")
+    print(f"  OK: counts_cellmajor_order matches ({oa.size} cells)")
+
+    ca, cb = da.field("counts_cellmajor").values, db.field("counts_cellmajor").values
+    A = ca.toarray() if sp.issparse(ca) else np.asarray(ca)
+    B = cb.toarray() if sp.issparse(cb) else np.asarray(cb)
+    if A.shape != B.shape:
+        _fail(f"counts_cellmajor: shape differs {A.shape} != {B.shape}")
+    if not np.array_equal(A, B):
+        _fail(f"counts_cellmajor: physical cell-major payload differs (max abs "
+              f"{float(np.max(np.abs(A.astype('f8') - B.astype('f8')))):.3g})")
+    print(f"  OK: counts_cellmajor matches ({A.shape})")
+
     print(f"  OK: {a} and {b} agree on the viewer fields")
 
 
