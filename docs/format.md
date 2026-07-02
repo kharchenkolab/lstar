@@ -158,13 +158,22 @@ binds a store **only when it declares `viewer@0.1`**; a bare store is valid and 
 Because the precompute and the on-the-fly path call the **same** core kernels, a prepped field equals
 its live-computed value (within the conformance tolerance).
 
+**Cross-surface consistency.** The Python, R, and JS/WASM preps drive the *same* C++ core for both the
+heavy kernels **and** the cell reorder (`viewer_cell_order`: cluster-contiguous, then a Hilbert curve
+over the embedding when present), and each normalizes the input `counts` to the layout the kernels
+expect — so counts may arrive **CSR or CSC**, and a store prepped by any surface is field-for-field
+identical to one prepped by another (byte-identical on `counts_cellmajor` / `counts_cellmajor_order`;
+stats/markers/`od_score` to the conformance tolerance). Grouping auto-detection is single-sourced across
+the surfaces. The `conformance/viewer*.sh` legs (incl. a corpus-driven cross-surface check) and
+`conformance/policy_linter.py` enforce this.
+
 A `viewer@0.1` store contains, for **at least one** categorical cell grouping `<g>` (e.g. `leiden`,
 `cell_type`), with `cells`/`genes` standing for the observation/feature axes and `K` = number of
 groups in `<g>` (an induced factor axis `groups_<g>` or the grouping's own factor axis):
 
 | field | required | encoding | span (orientation) | meaning |
 |---|---|---|---|---|
-| `counts_cellmajor` | **yes** | `csr` (`state="raw"`) | `[cells, genes]` | cell-major copy of `counts`; substrate for per-cell row reads + scope compute |
+| `counts_cellmajor` | **yes** | `csr` (`state` follows the basis: raw counts → int; `lognorm` → float) | `[cells, genes]` | cell-major copy of the count basis; substrate for per-cell row reads + scope compute |
 | `stats_<g>_sum` | **yes** | dense | `[<g>, genes]` = **K×ng** | Σ `log1p(counts)` per (group, gene) |
 | `stats_<g>_sumsq` | **yes** | dense | `[<g>, genes]` = K×ng | Σ `log1p(counts)²` per (group, gene) |
 | `stats_<g>_nexpr` | **yes** | dense | `[<g>, genes]` = K×ng | count of nonzero cells per (group, gene) |

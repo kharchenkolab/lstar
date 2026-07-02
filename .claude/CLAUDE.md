@@ -33,7 +33,9 @@ by minimizing code duplication** (share the C++ core; bind it from Python and R;
 for the browser) rather than reimplementing the same logic four times and letting the versions drift.
 When adding or changing a feature, treat all four surfaces as one system: keep the behavior, the API
 shape, and the results identical across languages, and extend the `conformance/` suite so any drift
-is caught.
+is caught. **See `docs/parity.md`** for the concrete contract and the checklist to follow (one recipe /
+N thin bindings; single-sourced policy + linter; a cross-surface conformance leg spanning the input
+space, wired into CI).
 
 ## Testing
 Roundtrip and other conversions with a corpus of tests datasets provides a powerful test. See python/tests/corpus.py and corpus data on mendel.
