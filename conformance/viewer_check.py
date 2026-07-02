@@ -18,10 +18,11 @@ import scipy.sparse as sp
 import lstar
 
 
-def _synthetic(nc=200, ng=50, K=5, seed=0):
+def _synthetic(nc=200, ng=50, K=5, seed=0, fmt="csc"):
     rng = np.random.default_rng(seed)
     X = sp.random(nc, ng, density=0.2, format="csc", random_state=seed)
     X.data = (rng.poisson(3, size=X.data.shape) + 1).astype(np.int32)
+    X = X.tocsr() if fmt == "csr" else X.tocsc()           # counts may arrive in either encoding (A1)
     ds = lstar.Dataset(kind="sample")
     ds.add_axis("cells", [f"c{i}" for i in range(nc)])
     ds.add_axis("genes", [f"g{j}" for j in range(ng)])
@@ -41,10 +42,11 @@ def _fail(msg):
     sys.exit(1)
 
 
-def cmd_make_base(out):
-    """Write a bare (un-prepped) synthetic store — the shared input both preps extend."""
-    lstar.write(_synthetic(), out)
-    print(f"  OK: wrote base store {out}")
+def cmd_make_base(out, fmt="csc"):
+    """Write a bare (un-prepped) synthetic store — the shared input both preps extend. `fmt` sets the
+    counts encoding (csc|csr) so the JS/cross-surface legs can exercise the A1 normalization path."""
+    lstar.write(_synthetic(fmt=fmt), out)
+    print(f"  OK: wrote base store {out} (counts={fmt})")
 
 
 def cmd_prep_lstar(base, out):
@@ -143,7 +145,7 @@ if __name__ == "__main__":
     elif cmd == "validate":
         cmd_validate(sys.argv[2])
     elif cmd == "make-base":
-        cmd_make_base(sys.argv[2])
+        cmd_make_base(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else "csc")
     elif cmd == "prep-lstar":
         cmd_prep_lstar(sys.argv[2], sys.argv[3])
     elif cmd == "equiv":
