@@ -214,8 +214,11 @@ def extend_for_viewer(ds, groupings=None, order="hybrid", embedding=None, marker
         embedding = _detect_embedding(ds)
 
     # 1) cell-major (CSR) copy of counts -- the substrate for scope compute and per-cell range reads.
+    #    Compact raw integer counts to int32; a lognorm-basis measure is float and MUST stay float (an
+    #    int32 cast there truncates the values to garbage -- and diverges from R, which keeps float).
     Xr = X.tocsr()
-    Xr.data = Xr.data.astype(np.int32, copy=False)
+    if use_lognorm:                                    # use_lognorm==True is the RAW basis (log1p applied downstream)
+        Xr.data = Xr.data.astype(np.int32, copy=False)
     Xr.indices = Xr.indices.astype(np.int32, copy=False)
     Xr.indptr = Xr.indptr.astype(np.int32, copy=False)
 
@@ -306,7 +309,7 @@ def _reorder_csr_rows(Xr, perm):
     dest_starts = new_indptr[:-1].astype(np.int64)
     offset = np.repeat(src_starts - dest_starts, counts)
     gather = offset + np.arange(nnz, dtype=np.int64)
-    new_data = Xr.data[gather].astype(np.int32, copy=False)
+    new_data = Xr.data[gather]                          # preserve dtype (int32 raw counts / float lognorm)
     new_indices = Xr.indices[gather].astype(np.int32, copy=False)
     out = sp.csr_matrix((new_data, new_indices, new_indptr), shape=Xr.shape)
     return out

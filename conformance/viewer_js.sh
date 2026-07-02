@@ -50,5 +50,11 @@ echo "  -- lstar JS extend-viewer.ts on CSR counts == python prep (A1 encoding i
 cp -r "$TMP/base_csr.lstar.zarr" "$TMP/js_csr.lstar.zarr"
 if jsprep "$TMP/js_csr.lstar.zarr"; then "$PY" "$CHK" equiv "$TMP/py.lstar.zarr" "$TMP/js_csr.lstar.zarr" || fail=1; else fail=1; fi
 
+echo "  -- lstar JS extend-viewer.ts on competing groupings == python prep (#4 detection + group order) --"
+"$PY" "$CHK" make-base "$TMP/base_multi.lstar.zarr" csc multi || fail=1
+"$PY" "$CHK" prep-lstar "$TMP/base_multi.lstar.zarr" "$TMP/py_multi.lstar.zarr" >/dev/null || fail=1
+cp -r "$TMP/base_multi.lstar.zarr" "$TMP/js_multi.lstar.zarr"
+if jsprep "$TMP/js_multi.lstar.zarr"; then "$PY" "$CHK" equiv "$TMP/py_multi.lstar.zarr" "$TMP/js_multi.lstar.zarr" || fail=1; else fail=1; fi
+
 if [ "$fail" -eq 0 ]; then echo "  JS viewer parity OK"; else echo "  JS viewer parity FAIL"; fi
 exit "$fail"

@@ -65,6 +65,11 @@ bash conformance/viewer.sh >/tmp/lstar_viewer.log 2>&1 \
   && pass "viewer@0.1 prep conformant + R==python (set PAGODA3 to also check pagoda3 prep.ts)" \
   || { echo "  FAIL viewer"; tail -20 /tmp/lstar_viewer.log; exit 1; }
 
+echo "== viewer@0.1 corpus-driven parity (convert corpus -> prep -> Py==R[==JS] on all fields) =="
+bash conformance/viewer_corpus.sh >/tmp/lstar_viewer_corpus.log 2>&1 \
+  && pass "viewer@0.1 corpus-driven cross-surface parity" \
+  || { echo "  FAIL viewer corpus"; tail -25 /tmp/lstar_viewer_corpus.log; exit 1; }
+
 echo "== multimodal cross-format consistency (CITE-seq via Seurat == via MuData -> same feature axes) =="
 bash conformance/multimodal_xformat.sh >/tmp/lstar_xfmt.log 2>&1 \
   && pass "Seurat/MuData multimodal land on the same canonical axes" \

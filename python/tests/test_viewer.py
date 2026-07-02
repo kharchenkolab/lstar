@@ -118,6 +118,29 @@ def test_encoding_invariance():
         assert same, f"{f} differs between CSC and CSR counts input -- encoding not normalized"
 
 
+def test_lognorm_basis_keeps_counts_cellmajor_float():
+    """A lognorm-basis prep must keep counts_cellmajor FLOAT -- an int32 cast (fine for raw counts)
+    truncates normalized values to garbage. Regression for the Python-only bug the corpus lognorm case
+    surfaced (R kept float, Python didn't -> the cell-major payloads diverged)."""
+    rng = np.random.default_rng(0)
+    nc, ng = 120, 30
+    Xf = sp.random(nc, ng, density=0.3, format="csc", random_state=0)
+    Xf.data = (np.abs(Xf.data).astype(np.float32) * 0.5 + 0.01)     # sub-1 floats -> an int cast would zero them
+    ds = lstar.Dataset(kind="sample")
+    ds.add_axis("cells", [f"c{i}" for i in range(nc)]); ds.add_axis("genes", [f"g{j}" for j in range(ng)])
+    ds.add_axis("umap", ["u1", "u2"])
+    ds.add_field("X", Xf, role="measure", span=["cells", "genes"], state="lognorm")   # no raw counts -> basis lognorm
+    ds.add_field("umap", rng.normal(size=(nc, 2)), role="embedding", span=["cells", "umap"])
+    ds.add_field("leiden", rng.integers(0, 4, size=nc).astype(str), role="label", span=["cells"])
+    lstar.extend_for_viewer(ds, basis="lognorm")
+    cm = ds.field("counts_cellmajor").values
+    assert cm.dtype.kind == "f", f"lognorm counts_cellmajor must stay float, got {cm.dtype}"
+    pos = np.asarray(ds.field("counts_cellmajor_order").values).astype(int)
+    cmr, Xr = cm.tocsr(), Xf.tocsr()
+    for cell in range(nc):                                          # values preserved (not truncated), row-for-row
+        assert np.allclose(cmr.getrow(int(pos[cell])).toarray().ravel(), Xr.getrow(cell).toarray().ravel())
+
+
 # --------------------------------------------------------------------------------------------------
 # 2) equivalence vs the JS-prepped reference store
 # --------------------------------------------------------------------------------------------------

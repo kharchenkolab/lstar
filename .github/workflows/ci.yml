@@ -137,6 +137,8 @@ jobs:
         run: python conformance/policy_linter.py
       - name: viewer@0.1 cross-surface parity (Python prep == native R extend_for_viewer, incl. cell-major layout)
         run: bash conformance/viewer.sh
+      - name: viewer@0.1 corpus-driven parity (convert corpus -> prep -> Py==R on all fields; synthetic-faithful in CI)
+        run: bash conformance/viewer_corpus.sh
 
   js-wasm:
     runs-on: ubuntu-latest
