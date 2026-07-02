@@ -15,7 +15,7 @@ import scipy.sparse as sp
 import pytest
 
 import lstar
-from lstar.viewer import _xy2d
+from lstar.kernels import _xy2d          # Hilbert primitive now lives in the shared kernels module
 
 
 # A JS-prepped reference store to cross-check against. Overridable via $LSTAR_PBMC6 so the gate

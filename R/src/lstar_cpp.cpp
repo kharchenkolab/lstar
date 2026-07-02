@@ -168,6 +168,27 @@ list lstar_cpp_col_sum_by_group(doubles data, integers indptr, integers indices,
                          "n_expr"_nm = vec_to_dbl(s.n_expr), "ngroups"_nm = ngroups, "ngenes"_nm = (int)s.ngenes});
 }
 
+// viewer@0.1: canonical cell order -- the SAME libstar routine Python/WASM call ("one kernel, every
+// runtime"). primary_code: per-cell 0-based cluster code (length ncells). emb: a cells x >=2 embedding
+// (column-major from R; first 2 cols used) or length 0 for a cluster-only order (no embedding). Returns
+// pos_of (0-based physical row per cell) -- byte-identical to the Python/JS surfaces.
+[[cpp11::register]]
+integers lstar_cpp_viewer_cell_order(integers primary_code, doubles emb, int ncells, int grid) {
+  std::vector<int> pc((size_t)primary_code.size());
+  for (R_xlen_t i = 0; i < primary_code.size(); ++i) pc[(size_t)i] = primary_code[i];
+  std::vector<int64_t> pos;
+  if (emb.size() == 0) {
+    pos = lstar::viewer_cell_order(pc.data(), nullptr, ncells, grid);
+  } else {
+    std::vector<double> emb2((size_t)ncells * 2);            // R matrix is column-major: col0=emb[i], col1=emb[ncells+i]
+    for (int i = 0; i < ncells; ++i) { emb2[(size_t)(2 * i)] = emb[i]; emb2[(size_t)(2 * i + 1)] = emb[(R_xlen_t)ncells + i]; }
+    pos = lstar::viewer_cell_order(pc.data(), emb2.data(), ncells, grid);
+  }
+  writable::integers out((R_xlen_t)pos.size());
+  for (R_xlen_t i = 0; i < (R_xlen_t)pos.size(); ++i) out[i] = (int)pos[(size_t)i];
+  return out;
+}
+
 // Subsample DE ranker over a CSR submatrix (sampled cells x genes). membership: 0=A, 1=B, <0=skip.
 [[cpp11::register]]
 list lstar_cpp_subsample_de_rank(doubles data, integers indptr, integers indices,

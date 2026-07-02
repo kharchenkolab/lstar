@@ -165,6 +165,30 @@ static py::array_t<double> overdispersion(py::array mean_, py::array var_, py::a
     return py::array_t<double>(od.size(), od.data());
 }
 
+// viewer@0.1: canonical cell order (the single source all bindings share). primary_code int32 (ncells);
+// emb float64 (ncells, >=2; first 2 cols used) or None -> cluster-only. Returns pos_of int64 (ncells).
+static py::array_t<int64_t> viewer_cell_order(py::array primary_code, py::object emb, int64_t grid) {
+    auto pc = py::array_t<int32_t, py::array::c_style | py::array::forcecast>::ensure(primary_code);
+    if (!pc || pc.ndim() != 1) throw std::runtime_error("primary_code must be a 1-D int array");
+    const int64_t ncells = pc.size();
+    std::vector<int64_t> pos;
+    if (emb.is_none()) {
+        py::gil_scoped_release rel;
+        pos = lstar::viewer_cell_order(pc.data(), nullptr, ncells, grid);
+    } else {
+        auto e = py::array_t<double, py::array::c_style | py::array::forcecast>::ensure(emb);
+        if (!e || e.ndim() != 2 || e.shape(1) < 2) throw std::runtime_error("emb must be (ncells, >=2)");
+        if (e.shape(0) != ncells) throw std::runtime_error("emb rows must equal ncells");
+        const int64_t ecols = e.shape(1);
+        const double* ep = e.data();
+        std::vector<double> emb2((size_t)ncells * 2);          // pack first 2 cols row-major (matches Python emb[:, :2])
+        for (int64_t i = 0; i < ncells; i++) { emb2[(size_t)(2 * i)] = ep[i * ecols]; emb2[(size_t)(2 * i + 1)] = ep[i * ecols + 1]; }
+        py::gil_scoped_release rel;
+        pos = lstar::viewer_cell_order(pc.data(), emb2.data(), ncells, grid);
+    }
+    return py::array_t<int64_t>(pos.size(), pos.data());
+}
+
 static int max_threads() {
 #ifdef _OPENMP
     return omp_get_max_threads();

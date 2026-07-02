@@ -4,6 +4,10 @@ lstar_cpp_col_sum_by_group <- function(data, indptr, indices, nrows, ncols, grou
   .Call(`_lstar_lstar_cpp_col_sum_by_group`, data, indptr, indices, nrows, ncols, group, ngroups, lognorm)
 }
 
+lstar_cpp_viewer_cell_order <- function(primary_code, emb, ncells, grid) {
+  .Call(`_lstar_lstar_cpp_viewer_cell_order`, primary_code, emb, ncells, grid)
+}
+
 lstar_cpp_subsample_de_rank <- function(data, indptr, indices, nrows, ngenes, membership, lognorm) {
   .Call(`_lstar_lstar_cpp_subsample_de_rank`, data, indptr, indices, nrows, ngenes, membership, lognorm)
 }

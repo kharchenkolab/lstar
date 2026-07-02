@@ -1201,6 +1201,18 @@ inline std::vector<int64_t> cell_order_pos(const int* primary_code, const int64_
     for (int64_t p = 0; p < ncells; p++) pos[(size_t)perm[(size_t)p]] = p;
     return pos;
 }
+// Canonical viewer cell order -- the SINGLE source of truth every binding (Python/R/WASM) calls, so all
+// surfaces emit a byte-identical `counts_cellmajor_order`. pos_of[cell] = physical row, stable-sorted by
+// (cluster `primary_code`, then Hilbert index of the embedding when `emb2d` is given, else cell index).
+// `emb2d` is row-major ncells x 2 (or null for a cluster-only order when no embedding is available).
+inline std::vector<int64_t> viewer_cell_order(const int* primary_code, const double* emb2d,
+                                              int64_t ncells, int64_t grid = 1024) {
+    if (emb2d) {
+        std::vector<int64_t> hil = hilbert_index(emb2d, ncells, grid);
+        return cell_order_pos(primary_code, hil.data(), ncells);
+    }
+    return cell_order_pos(primary_code, nullptr, ncells);
+}
 
 // Streaming per-(group, gene) SUM of a CSC measure read straight from a store, with the same optional
 // "plain" view (depth-normalize + log1p) as stream_csc_col_mean_var -- the fused counterpart of

@@ -26,6 +26,23 @@
   cand[order(!isp, cand)][1]
 }
 
+# Pick the primary embedding that keys the within-cluster (Hilbert) locality order: an `embedding`-role
+# field over the cell axis with >=2 dims, preferring umap. Mirrors Python's `_detect_embedding` so the
+# shared core reorder gets the same secondary key on every surface. NULL when no embedding is present.
+.detect_embedding <- function(ds, cell_axis) {
+  cand <- character(0)
+  for (nm in names(ds$fields)) {
+    f <- ds$fields[[nm]]
+    if (is.null(f$role) || f$role != "embedding") next
+    if (is.null(f$span) || length(f$span) < 1L || f$span[[1]] != cell_axis) next
+    v <- f$values
+    if (is.null(dim(v)) || ncol(v) < 2L) next
+    cand <- c(cand, nm)
+  }
+  if (!length(cand)) return(NULL)
+  cand[order(!grepl("umap", tolower(cand)), cand)][1]
+}
+
 #' Extend an L* dataset with the viewer@0.1 navigator fields (native R).
 #'
 #' Precomputes, via the shared libstar kernels: per-grouping cluster sufficient stats
@@ -93,10 +110,13 @@ extend_for_viewer <- function(ds, grouping = NULL, also = character(0), counts =
   }
   if (is.null(primary_code)) primary_code <- integer(nc)
 
-  # cell-major counts, physically reordered cluster-contiguous; counts_cellmajor_order = pos_of (cell
-  # -> physical row), so the reader's `<field>_order` sibling coalesces a cluster/lasso into ~1 read.
-  perm <- order(primary_code, method = "radix")                  # 1-based: perm[p] = cell at row p
-  pos_of <- integer(nc); pos_of[perm] <- seq_len(nc) - 1L
+  # cell-major counts, physically reordered via the SHARED core reorder (cluster code, then Hilbert of
+  # the embedding when present) -- byte-identical to the Python/JS surfaces. counts_cellmajor_order =
+  # pos_of (cell -> physical row), so the reader's `<field>_order` sibling coalesces a cluster/lasso read.
+  emb_nm <- .detect_embedding(ds, cell_axis)
+  emb <- if (!is.null(emb_nm)) as.matrix(ds$fields[[emb_nm]]$values)[, 1:2, drop = FALSE] else numeric(0)
+  pos_of <- lstar_cpp_viewer_cell_order(as.integer(primary_code), as.double(emb), nc, 1024L)  # 0-based row
+  perm <- integer(nc); perm[pos_of + 1L] <- seq_len(nc)          # inverse: perm[p] = cell at 1-based row p
   ds$fields[["counts_cellmajor"]] <- list(values = methods::as(cnt[perm, , drop = FALSE], "RsparseMatrix"),
                                           role = "measure", span = c(cell_axis, gene_axis),
                                           state = if (!is.null(cf$state)) cf$state else "raw",

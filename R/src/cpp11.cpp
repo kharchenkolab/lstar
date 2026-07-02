@@ -13,6 +13,13 @@ extern "C" SEXP _lstar_lstar_cpp_col_sum_by_group(SEXP data, SEXP indptr, SEXP i
   END_CPP11
 }
 // lstar_cpp.cpp
+integers lstar_cpp_viewer_cell_order(integers primary_code, doubles emb, int ncells, int grid);
+extern "C" SEXP _lstar_lstar_cpp_viewer_cell_order(SEXP primary_code, SEXP emb, SEXP ncells, SEXP grid) {
+  BEGIN_CPP11
+    return cpp11::as_sexp(lstar_cpp_viewer_cell_order(cpp11::as_cpp<cpp11::decay_t<integers>>(primary_code), cpp11::as_cpp<cpp11::decay_t<doubles>>(emb), cpp11::as_cpp<cpp11::decay_t<int>>(ncells), cpp11::as_cpp<cpp11::decay_t<int>>(grid)));
+  END_CPP11
+}
+// lstar_cpp.cpp
 list lstar_cpp_subsample_de_rank(doubles data, integers indptr, integers indices, int nrows, int ngenes, integers membership, bool lognorm);
 extern "C" SEXP _lstar_lstar_cpp_subsample_de_rank(SEXP data, SEXP indptr, SEXP indices, SEXP nrows, SEXP ngenes, SEXP membership, SEXP lognorm) {
   BEGIN_CPP11
@@ -88,6 +95,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_lstar_lstar_cpp_stream_col_stats",        (DL_FUNC) &_lstar_lstar_cpp_stream_col_stats,        8},
     {"_lstar_lstar_cpp_stream_col_sum_by_group", (DL_FUNC) &_lstar_lstar_cpp_stream_col_sum_by_group, 9},
     {"_lstar_lstar_cpp_subsample_de_rank",       (DL_FUNC) &_lstar_lstar_cpp_subsample_de_rank,       7},
+    {"_lstar_lstar_cpp_viewer_cell_order",       (DL_FUNC) &_lstar_lstar_cpp_viewer_cell_order,       4},
     {"_lstar_lstar_cpp_write",                   (DL_FUNC) &_lstar_lstar_cpp_write,                   5},
     {NULL, NULL, 0}
 };
