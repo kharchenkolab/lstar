@@ -28,6 +28,7 @@ def test_records_anndata_version():
 def test_raw_with_divergent_genes():
     import anndata as ad
     rawX = sp.random(30, 50, density=0.2, format="csr")
+    rawX.data = np.rint(rawX.data * 10) + 1                    # integer -> genuinely raw counts
     raw = ad.AnnData(X=rawX, var=pd.DataFrame(index=[f"g{i}" for i in range(50)]))
     a = ad.AnnData(X=rawX[:, :20].copy(), var=pd.DataFrame(index=[f"g{i}" for i in range(20)]))
     a.raw = raw

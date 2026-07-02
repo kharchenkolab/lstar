@@ -30,3 +30,30 @@ test_that("write_seurat / .lstar_drop_cache drop viewer@0.1 cache navigators, ke
   expect_true("umap" %in% SeuratObject::Reductions(so))
   expect_true("leiden" %in% colnames(so[[]]))
 })
+
+# extend_for_viewer selects the count basis by STATE, not the literal name "counts": a raw measure
+# named otherwise is auto-picked; no raw basis gives a clear error; basis="lognorm" preps from a log
+# measure. (Regression for the anndata-class bug where converters named the raw matrix `X`/modality.)
+test_that("extend_for_viewer selects basis by state (not the name 'counts')", {
+  skip_if_not_installed("Matrix")
+  set.seed(2); nc <- 60L; ng <- 20L
+  mk <- function(state) {
+    cnt <- as(Matrix::Matrix(rpois(nc * ng, 1.2) + 1L, nc, ng, sparse = TRUE), "CsparseMatrix")
+    rownames(cnt) <- paste0("c", 1:nc); colnames(cnt) <- paste0("g", 1:ng)
+    structure(list(kind = "sample", spec_version = "0.1", profiles = character(0), dropped = character(0),
+      axes = list(cells = list(labels = rownames(cnt), origin = "observed", role = "observation"),
+                  genes = list(labels = colnames(cnt), origin = "observed", role = "feature")),
+      fields = list(X = list(values = cnt, role = "measure", span = c("cells", "genes"), state = state),
+                    leiden = list(values = factor(paste0("k", (0:(nc - 1)) %% 3)), role = "label", span = "cells", encoding = "categorical"))),
+      class = "lstar_dataset")
+  }
+  # raw counts under the name "X" -> auto-picked by state
+  d <- extend_for_viewer(mk("raw"), grouping = "leiden")
+  expect_false(is.null(d$fields[["od_score"]]))
+  expect_false(is.null(d$fields[["counts_cellmajor"]]))
+  # no raw basis -> clear, actionable error (not a bare "no counts measure")
+  expect_error(extend_for_viewer(mk("scaled"), grouping = "leiden"), "no raw counts measure")
+  # opt-in lognorm basis
+  d3 <- extend_for_viewer(mk("lognorm"), grouping = "leiden", basis = "lognorm")
+  expect_equal(d3$fields[["counts_cellmajor"]]$state, "lognorm")
+})

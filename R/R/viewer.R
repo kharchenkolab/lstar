@@ -41,9 +41,9 @@
 #' @return `ds` with the navigator fields added and `viewer@0.1` in `ds$profiles`.
 #' @seealso [viewer_extend()], [lstar_write_viewer()]
 #' @export
-extend_for_viewer <- function(ds, grouping = NULL, also = character(0), counts = "counts") {
-  cf <- ds$fields[[counts]]
-  if (is.null(cf)) stop("extend_for_viewer: no counts measure '", counts, "'", call. = FALSE)
+extend_for_viewer <- function(ds, grouping = NULL, also = character(0), counts = NULL, basis = NULL) {
+  sel <- .viewer_counts_basis(ds, counts, basis)   # pick basis by state, not the literal name "counts"
+  cf <- ds$fields[[sel$name]]; use_lognorm <- sel$log1p
   cnt <- methods::as(cf$values, "CsparseMatrix")                 # cells x genes (CSC)
   span <- if (!is.null(cf$span)) cf$span else c("cells", "genes")
   cell_axis <- span[1]; gene_axis <- span[2]
@@ -59,7 +59,7 @@ extend_for_viewer <- function(ds, grouping = NULL, also = character(0), counts =
   cache <- list(cache = "viewer@0.1")
 
   # whole-dataset overdispersion (pagoda2 lowess + F-test): mean/var/nobs over log1p, shared kernel.
-  g0 <- lstar_cpp_col_sum_by_group(as.double(cnt@x), cnt@p, cnt@i, nc, ng, integer(nc), 1L, TRUE)
+  g0 <- lstar_cpp_col_sum_by_group(as.double(cnt@x), cnt@p, cnt@i, nc, ng, integer(nc), 1L, use_lognorm)
   om <- g0$sum / nc; ov <- pmax(g0$sumsq / nc - om^2, 0)
   ds$fields[["od_score"]] <- list(values = lstar_cpp_overdispersion(om, ov, as.integer(g0$n_expr)),
                                   role = "measure", span = gene_axis, provenance = cache)
@@ -70,7 +70,7 @@ extend_for_viewer <- function(ds, grouping = NULL, also = character(0), counts =
     groups <- sort(unique(lab[!is.na(lab)])); K <- length(groups)
     code <- as.integer(factor(lab, levels = groups)) - 1L
     if (gp == grouping) primary_code <- code
-    gs <- lstar_cpp_col_sum_by_group(as.double(cnt@x), cnt@p, cnt@i, nc, ng, code, K, TRUE)
+    gs <- lstar_cpp_col_sum_by_group(as.double(cnt@x), cnt@p, cnt@i, nc, ng, code, K, use_lognorm)
     S <- matrix(gs$sum, nrow = K, byrow = TRUE)
     SS <- matrix(gs$sumsq, nrow = K, byrow = TRUE)
     NE <- matrix(gs$n_expr, nrow = K, byrow = TRUE)
@@ -95,13 +95,42 @@ extend_for_viewer <- function(ds, grouping = NULL, also = character(0), counts =
   pos_of <- integer(nc); pos_of[perm] <- seq_len(nc) - 1L
   ds$fields[["counts_cellmajor"]] <- list(values = methods::as(cnt[perm, , drop = FALSE], "RsparseMatrix"),
                                           role = "measure", span = c(cell_axis, gene_axis),
-                                          state = "raw", encoding = "csr", provenance = cache)
+                                          state = if (!is.null(cf$state)) cf$state else "raw",
+                                          encoding = "csr", provenance = cache)
   ds$fields[["counts_cellmajor_order"]] <- list(values = as.double(pos_of), role = "measure",
                                                 span = cell_axis, state = "permutation", provenance = cache)
 
   if (!("viewer@0.1" %in% ds$profiles)) ds$profiles <- c(ds$profiles, "viewer@0.1")
   if (!methods::is(ds, "lstar_dataset")) class(ds) <- "lstar_dataset"
   ds
+}
+
+# Select the viewer count basis by content/state (not the literal name "counts"), so a converter that
+# named its raw matrix `X` or a modality is still preppable. A raw measure is preferred and log1p'd;
+# `counts=` forces a field; `basis="lognorm"` preps (approximately) from a log-normalized measure.
+.viewer_counts_basis <- function(ds, counts = NULL, basis = NULL) {
+  is_cxg <- function(f) identical(f$role, "measure") && !is.null(f$span) && length(f$span) == 2 &&
+    grepl("^cells", as.character(f$span[[1]]))
+  twod <- Filter(function(nm) is_cxg(ds$fields[[nm]]), names(ds$fields))
+  st <- function(nm) { s <- ds$fields[[nm]]$state; if (is.null(s)) NA_character_ else s }
+  present <- if (length(twod)) paste(vapply(twod, function(nm) sprintf("%s[%s]", nm, st(nm)), ""), collapse = ", ") else "(none)"
+  if (!is.null(counts)) {
+    if (is.null(ds$fields[[counts]]))
+      stop(sprintf("extend_for_viewer: counts='%s' is not a measure (present: %s)", counts, present), call. = FALSE)
+    return(list(name = counts, log1p = !identical(basis, "lognorm") && !identical(st(counts), "lognorm")))
+  }
+  if (identical(basis, "lognorm")) {
+    pick <- twod[vapply(twod, function(nm) identical(st(nm), "lognorm"), logical(1))]
+    if (!length(pick)) pick <- intersect(c("X", "data", "logcounts"), twod)
+    if (!length(pick))
+      stop(sprintf("extend_for_viewer: basis='lognorm' but no log-normalized measure found (present: %s)", present), call. = FALSE)
+    return(list(name = pick[1], log1p = FALSE))
+  }
+  pick <- if ("counts" %in% twod) "counts" else twod[vapply(twod, function(nm) identical(st(nm), "raw"), logical(1))]
+  if (length(pick)) return(list(name = pick[1], log1p = TRUE))
+  stop(sprintf(paste0("extend_for_viewer: no raw counts measure found (present cells x genes measures: %s). ",
+                      "Pass counts=<field>, provide raw counts, or basis='lognorm' to prep from a log-normalized measure."),
+               present), call. = FALSE)
 }
 
 #' Extend an existing L* store in place with the viewer@0.1 navigator fields.

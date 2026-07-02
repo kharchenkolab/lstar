@@ -45,6 +45,42 @@ def _guess_state(layer_name):
     return None
 
 
+def _value_sample(m, k=50000):
+    """Up to `k` values from a matrix / backed source, for content-based state inference. Uses the
+    nonzeros for sparse (implicit zeros don't change the sign/integer checks) and a flat prefix for
+    dense. Returns a 1-D float ndarray, or None if the source can't be cheaply sampled."""
+    try:
+        import scipy.sparse as _sp
+        if isinstance(m, _BackedH5Sparse):
+            n = min(int(m.nnz), k)
+            return np.asarray(m._data[:n], dtype=float) if n else np.empty(0)
+        if _sp.issparse(m):
+            return np.asarray(m.data[:k], dtype=float)
+        return np.asarray(m).reshape(-1)[:k].astype(float, copy=False)
+    except Exception:
+        return None
+
+
+def _infer_state(m, name=None, explicit=None):
+    """Infer a measure's ``state`` from its DATA, not its provenance/position. Negative values ->
+    ``"scaled"`` (z-scored/centered); non-negative integers -> ``"raw"`` (counts); other non-negative
+    -> ``"lognorm"``. An ``explicit`` hint (e.g. ``uns['lstar/state']``) wins; a ``name`` hint is the
+    last resort when content is undecidable (empty / all-zero). Content beats name so a ``.raw``
+    holding log-normalized data isn't mislabeled ``raw`` (and a scaled ``.X`` isn't left ``None``)."""
+    if explicit:
+        return explicit
+    s = _value_sample(m)
+    if s is not None and s.size:
+        s = s[np.isfinite(s)]
+        if s.size:
+            if float(s.min()) < -1e-6:
+                return "scaled"
+            if np.allclose(s, np.round(s), atol=1e-6):
+                return "raw"
+            return "lognorm"
+    return _guess_state(name) if name else None
+
+
 def _guess_subtype(key):
     n = key.lower()
     if "dist" in n:
@@ -225,11 +261,15 @@ def read_anndata(adata, kind="sample"):
 
     if adata.X is not None:
         try:
-            state = adata.uns.get("lstar/state")
+            hint = adata.uns.get("lstar/state")
         except Exception:
-            state = None
+            hint = None
         x = _backed_sparse(fn, "X") or adata.X      # backed -> streaming source; else the in-memory X
-        ds.add_field("X", x, role="measure", span=["cells", "genes"],
+        state = _infer_state(x, name="X", explicit=hint)   # content-based (was: uns hint or None)
+        # A genuinely-raw .X *is* the counts measure the viewer contract wants -- name it `counts`
+        # (unless a real `counts` layer already claims that name). Provenance stays "X" for round-trip.
+        xname = "counts" if (state == "raw" and "counts" not in adata.layers) else "X"
+        ds.add_field(xname, x, role="measure", span=["cells", "genes"],
                      state=state, provenance={"anndata": "X"})
 
     # .raw: older pipelines stash pre-HVG raw counts here, frequently over a *larger* gene set.
@@ -245,12 +285,12 @@ def read_anndata(adata, kind="sample"):
             ds.add_axis(gax, raw_genes, origin=OBSERVED, role="feature")
         rawx = _backed_sparse(fn, "raw/X", "raw.X") or raw.X    # modern vs legacy raw location
         ds.add_field("raw", rawx, role="measure", span=["cells", gax],
-                     state="raw", provenance={"anndata": "raw/X"})
+                     state=_infer_state(rawx, name="raw"), provenance={"anndata": "raw/X"})
 
     for k in list(adata.layers.keys()):
         lk = _backed_sparse(fn, "layers/%s" % k) or adata.layers[k]
         ds.add_field(_uniq(ds, str(k), "layer"), lk, role="measure", span=["cells", "genes"],
-                     state=_guess_state(k), provenance={"anndata": "layers/%s" % k})
+                     state=_infer_state(lk, name=str(k)), provenance={"anndata": "layers/%s" % k})
 
     for col in adata.obs.columns:
         vals, role, mask = _by_dtype_series(adata.obs[col])

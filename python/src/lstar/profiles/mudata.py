@@ -70,7 +70,9 @@ def read_mudata(md, kind="sample"):
                          provenance={"mudata": "%s/%s" % (m, name.split(".")[-1])})
         _add_measure(_uniq(ds, m, "mod"), am.X, _guess_state_mod(am))
         for lk in list(am.layers.keys()):
-            _add_measure(_uniq(ds, "%s.%s" % (m, lk), "mod"), am.layers[lk], None)
+            from .anndata import _infer_state
+            _add_measure(_uniq(ds, "%s.%s" % (m, lk), "mod"), am.layers[lk],
+                         _infer_state(am.layers[lk], name=str(lk)))
 
         for col in am.var.columns:                   # per-modality feature metadata over the feature axis
             vals, role, mask = _by_dtype_series(am.var[col])
@@ -143,11 +145,11 @@ def read_mudata(md, kind="sample"):
 
 
 def _guess_state_mod(am):
+    # content-based (shared with the anndata reader): neg -> scaled, non-neg int -> raw, else lognorm.
+    # (Was a `max>30 & integer` heuristic that mislabeled low-count raw as lognorm and missed scaled.)
+    from .anndata import _infer_state
     try:
-        x = am.X
-        import scipy.sparse as sp
-        d = x.data if sp.issparse(x) else np.asarray(x)
-        return "raw" if d.size and float(np.max(d)) > 30 and np.allclose(d, np.round(d)) else "lognorm"
+        return _infer_state(am.X)
     except Exception:
         return None
 

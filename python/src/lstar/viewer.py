@@ -118,6 +118,40 @@ def _gene_axis(ds):
     return "genes"
 
 
+def _select_counts_basis(ds, counts=None, basis=None):
+    """Choose ``(field_name, apply_log1p)`` the viewer navigators are built from.
+
+    Selected by *content/state*, not a magic field name (a converter that named its raw matrix ``X``
+    or a modality is still viewer-preppable). A **raw** measure is preferred and the kernels apply
+    ``log1p`` to it. Pass ``counts=<field>`` to force a measure, or ``basis="lognorm"`` to prep
+    (approximately) from an already log-normalized measure -- then ``apply_log1p`` is False, so the
+    stats are var-of-lognorm rather than var-of-log1p(counts)."""
+    twod = [n for n, f in ds.fields.items()
+            if f.role == "measure" and f.span and len(f.span) == 2
+            and (f.span[0] == "cells" or str(f.span[0]).startswith("cells"))]
+    present = ", ".join("%s[%s]" % (n, ds.field(n).state) for n in twod) or "(none)"
+    if counts is not None:
+        if counts not in ds.fields:
+            raise ValueError("extend_for_viewer: counts=%r is not a measure (present cells x genes "
+                             "measures: %s)" % (counts, present))
+        return counts, (basis != "lognorm" and ds.field(counts).state != "lognorm")
+    if basis == "lognorm":
+        pick = next((n for n in twod if ds.field(n).state == "lognorm"), None) \
+            or next((n for n in twod if n in ("X", "data", "logcounts")), None)
+        if pick is None:
+            raise ValueError("extend_for_viewer: basis='lognorm' but no log-normalized measure "
+                             "found (present: %s)" % present)
+        return pick, False
+    pick = ("counts" if "counts" in twod else None) \
+        or next((n for n in twod if ds.field(n).state == "raw"), None)
+    if pick is not None:
+        return pick, True
+    raise ValueError(
+        "extend_for_viewer: no raw counts measure found (present cells x genes measures: %s). "
+        "Viewer prep needs raw counts; pass counts=<field>, provide a raw-counts measure, or pass "
+        "basis='lognorm' to prep (approximately) from a log-normalized measure." % present)
+
+
 # ---------------------------------------------------------------------------------------------------
 # the Hilbert curve (canonical xy -> d on an N x N grid; N a power of two)
 # ---------------------------------------------------------------------------------------------------
@@ -162,7 +196,8 @@ def _hilbert_index(emb):
 # the public entry point
 # ---------------------------------------------------------------------------------------------------
 
-def extend_for_viewer(ds, groupings=None, order="hybrid", embedding=None, markers=True):
+def extend_for_viewer(ds, groupings=None, order="hybrid", embedding=None, markers=True,
+                      counts=None, basis=None):
     """Add the viewer's precomputed fields to ``ds`` in place (and return it).
 
     Parameters
@@ -188,12 +223,14 @@ def extend_for_viewer(ds, groupings=None, order="hybrid", embedding=None, marker
         The same dataset, with ``counts_cellmajor``, ``stats_<g>_*``, ``markers_<g>_*``, ``od_score``
         and (for ``order="hybrid"``) ``counts_cellmajor_order`` added.
     """
-    if "counts" not in ds.fields:
-        raise ValueError("extend_for_viewer: dataset has no `counts` measure")
-    cell_axis = _cell_axis(ds)
-    gene_axis = _gene_axis(ds)
+    # Select the count basis by content/state (not the literal name "counts"): a raw measure is
+    # preferred and log1p'd; `counts=`/`basis=` override. Clear error if nothing usable.
+    counts_field, use_lognorm = _select_counts_basis(ds, counts=counts, basis=basis)
+    basis_state = ds.field(counts_field).state
+    cf_span = ds.field(counts_field).span
+    cell_axis, gene_axis = cf_span[0], cf_span[1]
 
-    X = ds.field("counts").values
+    X = ds.field(counts_field).values
     X = X.tocsc() if sp.issparse(X) else sp.csc_matrix(X)
     ncells, ngenes = X.shape
 
@@ -213,9 +250,10 @@ def extend_for_viewer(ds, groupings=None, order="hybrid", embedding=None, marker
     Xr.indptr = Xr.indptr.astype(np.int32, copy=False)
 
     # 2) global overdispersion residual (a single "group" over all cells -> per-gene mean/var(log1p)).
-    od = _od_score(X, ncells, ngenes)
+    od = _od_score(X, ncells, ngenes, lognorm=use_lognorm)
     ds.add_field("od_score", od, role="measure", span=[gene_axis], state=None, encoding="dense",
-                 provenance={"cache": VIEWER_PROFILE, "method": "viewer.od", "basis": "log1p", "trend": "lowess"})
+                 provenance={"cache": VIEWER_PROFILE, "method": "viewer.od",
+                             "basis": "log1p" if use_lognorm else "lognorm-input", "trend": "lowess"})
 
     # 3) per-grouping sufficient stats + (optional) marker tables, each over an induced groups_<g> axis.
     for g in groupings:
@@ -224,7 +262,7 @@ def extend_for_viewer(ds, groupings=None, order="hybrid", embedding=None, marker
         gaxis = "groups_%s" % g
         if gaxis not in ds.axes:
             ds.add_axis(gaxis, groups, origin="derived", role="feature")
-        S, SS, NE = col_sum_by_group(X, codes, K, lognorm=True)        # dense (K, ngenes), over log1p(X)
+        S, SS, NE = col_sum_by_group(X, codes, K, lognorm=use_lognorm)  # (K, ngenes); log1p iff raw basis
         _cache = {"cache": VIEWER_PROFILE}
         ds.add_field("stats_%s_sum" % g, S, role="measure", span=[gaxis, gene_axis], encoding="dense", provenance=_cache)
         ds.add_field("stats_%s_sumsq" % g, SS, role="measure", span=[gaxis, gene_axis], encoding="dense", provenance=_cache)
@@ -253,8 +291,8 @@ def extend_for_viewer(ds, groupings=None, order="hybrid", embedding=None, marker
                      provenance={"cache": VIEWER_PROFILE, "method": "viewer.reorder", "curve": "hilbert",
                                  "grid": N_GRID, "group": primary})
 
-    ds.add_field("counts_cellmajor", Xr, role="measure", span=[cell_axis, gene_axis], state="raw",
-                 encoding="csr", provenance={"cache": VIEWER_PROFILE})
+    ds.add_field("counts_cellmajor", Xr, role="measure", span=[cell_axis, gene_axis],
+                 state=(basis_state or "raw"), encoding="csr", provenance={"cache": VIEWER_PROFILE})
 
     if VIEWER_PROFILE not in ds.profiles:
         ds.profiles.append(VIEWER_PROFILE)
@@ -265,10 +303,11 @@ def extend_for_viewer(ds, groupings=None, order="hybrid", embedding=None, marker
 # computations (faithful ports of the viewer's JS store-prep)
 # ---------------------------------------------------------------------------------------------------
 
-def _od_score(X, ncells, ngenes):
+def _od_score(X, ncells, ngenes, lognorm=True):
     """Per-gene overdispersion score (pagoda2 lowess + F-test) over ``log1p(counts)`` across all
-    cells. Delegates to the shared :func:`lstar.kernels.overdispersion` (core C++ / numpy fallback)."""
-    S, SS, NE = col_sum_by_group(X, np.zeros(ncells, dtype=np.int32), 1, lognorm=True)
+    cells. Delegates to the shared :func:`lstar.kernels.overdispersion` (core C++ / numpy fallback).
+    ``lognorm=False`` when the basis is already log-normalized (the values are used as-is)."""
+    S, SS, NE = col_sum_by_group(X, np.zeros(ncells, dtype=np.int32), 1, lognorm=lognorm)
     mean = S[0] / ncells
     var = np.maximum(SS[0] / ncells - mean * mean, 0.0)
     nobs = NE[0].astype("i8")                          # expressing cells per gene (the F-test dof)
