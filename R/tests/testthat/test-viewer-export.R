@@ -57,3 +57,31 @@ test_that("extend_for_viewer selects basis by state (not the name 'counts')", {
   d3 <- extend_for_viewer(mk("lognorm"), grouping = "leiden", basis = "lognorm")
   expect_equal(d3$fields[["counts_cellmajor"]]$state, "lognorm")
 })
+
+# A1 contract: extend_for_viewer output is identical whether counts arrive CSC (CsparseMatrix) or CSR
+# (RsparseMatrix) -- R normalizes on input like Python, so encoding must not change any navigator field.
+test_that("extend_for_viewer is invariant to the counts encoding (CSC vs CSR)", {
+  skip_if_not_installed("Matrix")
+  mk <- function(fmt) {
+    set.seed(7); nc <- 80L; ng <- 25L                       # same seed -> identical counts values, umap, labels
+    m <- Matrix::Matrix(rpois(nc * ng, 1.0) + 1L, nc, ng, sparse = TRUE)
+    cnt <- as(m, if (fmt == "csr") "RsparseMatrix" else "CsparseMatrix")
+    rownames(cnt) <- paste0("c", 1:nc); colnames(cnt) <- paste0("g", 1:ng)
+    structure(list(kind = "sample", spec_version = "0.1", profiles = character(0), dropped = character(0),
+      axes = list(cells = list(labels = rownames(cnt), origin = "observed", role = "observation"),
+                  genes = list(labels = colnames(cnt), origin = "observed", role = "feature"),
+                  umap = list(labels = c("u1", "u2"), origin = "derived", role = "coordinate")),
+      fields = list(counts = list(values = cnt, role = "measure", span = c("cells", "genes"), state = "raw",
+                                  encoding = if (fmt == "csr") "csr" else "csc"),
+                    umap = list(values = matrix(rnorm(nc * 2), nc, 2), role = "embedding", span = c("cells", "umap")),
+                    leiden = list(values = factor(paste0("k", (0:(nc - 1)) %% 4)), role = "label", span = "cells", encoding = "categorical"))),
+      class = "lstar_dataset")
+  }
+  a <- extend_for_viewer(mk("csc"), grouping = "leiden")
+  b <- extend_for_viewer(mk("csr"), grouping = "leiden")
+  expect_equal(a$fields[["counts_cellmajor_order"]]$values, b$fields[["counts_cellmajor_order"]]$values)
+  expect_equal(as.matrix(a$fields[["counts_cellmajor"]]$values), as.matrix(b$fields[["counts_cellmajor"]]$values))
+  expect_equal(a$fields[["od_score"]]$values, b$fields[["od_score"]]$values)
+  expect_equal(a$fields[["stats_leiden_sum"]]$values, b$fields[["stats_leiden_sum"]]$values)
+  expect_equal(a$fields[["markers_leiden_lfc"]]$values, b$fields[["markers_leiden_lfc"]]$values)
+})

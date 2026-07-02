@@ -24,10 +24,11 @@ PBMC6 = os.environ.get(
     "LSTAR_PBMC6", "/Users/peter.kharchenko/pagoda/lstar-viewer/web/public/pbmc6.lstar.zarr")
 
 
-def _synthetic(nc=200, ng=50, K=5, seed=0):
+def _synthetic(nc=200, ng=50, K=5, seed=0, fmt="csc"):
     rng = np.random.default_rng(seed)
     X = sp.random(nc, ng, density=0.2, format="csc", random_state=seed)
     X.data = (rng.poisson(3, size=X.data.shape) + 1).astype(np.int32)
+    X = X.tocsr() if fmt == "csr" else X.tocsc()             # counts may arrive in either encoding
     ds = lstar.Dataset(kind="sample")
     ds.add_axis("cells", [f"c{i}" for i in range(nc)])
     ds.add_axis("genes", [f"g{j}" for j in range(ng)])
@@ -99,6 +100,22 @@ def test_order_none_skips_reorder():
     # rows stay in cell order
     cm = ds.field("counts_cellmajor").values.tocsr()
     assert np.array_equal(cm.toarray(), X.tocsr().toarray())
+
+
+def test_encoding_invariance():
+    """A1 contract: `extend_for_viewer` output is identical whether counts arrive CSC or CSR. The
+    divergence this guards against (JS *threw* on CSR while Python/R silently normalized) is the exact
+    bug that motivated the parity work -- a CSC-only fixture never exercised it."""
+    a, _ = _synthetic(fmt="csc"); lstar.extend_for_viewer(a)
+    b, _ = _synthetic(fmt="csr"); lstar.extend_for_viewer(b)
+    assert a.field("counts").encoding == "csc" and b.field("counts").encoding == "csr"   # genuinely different inputs
+    for f in ("counts_cellmajor_order", "od_score", "stats_leiden_sum", "stats_leiden_sumsq",
+              "stats_leiden_nexpr", "markers_leiden_lfc", "markers_leiden_padj", "counts_cellmajor"):
+        va, vb = a.field(f).values, b.field(f).values
+        A = va.toarray() if sp.issparse(va) else np.asarray(va)
+        B = vb.toarray() if sp.issparse(vb) else np.asarray(vb)
+        same = np.array_equal(A, B) if A.dtype.kind in "iu" else np.allclose(A, B)
+        assert same, f"{f} differs between CSC and CSR counts input -- encoding not normalized"
 
 
 # --------------------------------------------------------------------------------------------------
