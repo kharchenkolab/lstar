@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lstar-sc"                         # PyPI distribution name ("lstar" is taken); import stays `import lstar`
-version = "0.1.0"
+version = "0.1.1"
 description = "L* model and Zarr interchange for single-cell/spatial omics, with a fast C++ core"
 readme = "README.md"
 requires-python = ">=3.8"

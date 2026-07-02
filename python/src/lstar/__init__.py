@@ -24,4 +24,4 @@ __all__ = ["Dataset", "Axis", "Field", "Categorical", "read", "write", "validate
            "read_anndata", "write_anndata", "convert_anndata",
            "write_anndata_streamed", "convert_to_h5ad",
            "read_mudata", "write_mudata", "convert_h5mu"]
-__version__ = "0.1.0"
+__version__ = "0.1.1"
