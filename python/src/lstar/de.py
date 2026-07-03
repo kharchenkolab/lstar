@@ -49,25 +49,20 @@ def pseudobulk(ds, factor, field="counts", lognorm=False, add=True):
 
     from .model import as_categorical
 
+    from .kernels import col_sum_by_group
+
     cat = as_categorical(ds.field(factor).values)
-    codes = np.asarray(cat.codes)
+    codes = np.asarray(cat.codes).astype(np.int32)
     groups = np.asarray(cat.categories, dtype=str)
     M = ds.field(field).values
-    M = M.tocsr() if sp.issparse(M) else sp.csr_matrix(M)
     gene_axis = ds.field(field).span[1]
-    K, ng = len(groups), M.shape[1]
-    mean = np.zeros((K, ng)); frac = np.zeros((K, ng))
-    for k in range(K):
-        rows = np.nonzero(codes == k)[0]
-        if not len(rows):
-            continue
-        sub = M[rows]
-        vals = sub.copy()
-        if lognorm:
-            vals.data = np.log1p(vals.data)
-        mean[k] = np.asarray(vals.sum(axis=0)).ravel() / len(rows)       # mean (log1p) expression
-        frac[k] = np.asarray((sub > 0).sum(axis=0)).ravel() / len(rows)  # fraction expressing
-    out = {"mean": mean, "frac": frac}
+    K = len(groups)
+    # per-(group, gene) sum + n_expr via the SHARED core kernel -- was a numpy per-group loop that
+    # duplicated col_sum_by_group (so it missed the C++/OpenMP path and could drift from the viewer stats).
+    S, _SS, NE = col_sum_by_group(M, codes, K, lognorm=lognorm)          # S = sum(log1p iff lognorm), NE = n_expr
+    nper = np.bincount(codes[codes >= 0], minlength=K).astype(np.float64)
+    denom = np.where(nper > 0, nper, 1.0)[:, None]                        # empty group -> 0/1 == 0 (matches old)
+    out = {"mean": S / denom, "frac": NE / denom}                        # mean expression; fraction expressing
     if add:
         for stat, arr in out.items():
             ds.add_field("pb.%s.%s" % (factor, stat), arr, role="measure", span=[factor, gene_axis],

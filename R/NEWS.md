@@ -10,6 +10,17 @@
 * Enforced by cross-surface conformance legs (`conformance/viewer*.sh`, including a corpus-driven check
   over `corpus.py`/`synth.py`) and `conformance/policy_linter.py`. See `docs/parity.md`.
 
+## Cross-surface fidelity (parity audit)
+
+* R now preserves a float32 value dtype (was widened f4→f8) and a graph relation's `directed`/`weighted`
+  flags (were dropped) across a `lstar_read`/`lstar_write` round-trip. Guarded by `conformance/r_fidelity.sh`.
+* `extend_for_viewer` gains `order=` and `markers=` (parity with Python); grouping detection restricted to
+  string-like labels over the cell axis; the lognorm measure-name fallback now picks in field order (was
+  name-list order). All viewer policy constants are single-sourced (`viewer_policy.json` + `policy_linter.py`).
+* Store fidelity: coo matrices normalize to csc on write (portable to every reader); dense fields carry
+  their shape in the manifest; the C++ core preserves a field's `uncertainty`; the `.h5ad` direct backend
+  infers `state` from content like the native backend.
+
 # lstar 0.1.0
 
 First release. lstar is a uniform data model (L\*) and a Zarr interchange format for single-cell /

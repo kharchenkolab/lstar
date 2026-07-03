@@ -79,8 +79,11 @@ list (from the parity audit) so a real gap is never confused with an intentional
   name (reliable for canonical `counts`/`data`/`logcounts`/`scale.data` slots).
 
 **Scoped / follow-up (a real gap, intentionally deferred — do not silently widen):**
-- **DE analysis (`pseudobulk`, `collection_pseudobulk`, `de_bundle`, `de_factors`) is Python-only.** Other
-  surfaces read a stored DE bundle but don't compute one. Port to R if it must be cross-surface.
+- **DE analysis API (`pseudobulk`, `collection_pseudobulk`, `de_bundle`, `de_factors`) is Python-only**, but
+  its per-(group,gene) reduction now routes through the shared `col_sum_by_group` core kernel (was a numpy
+  per-group loop that duplicated it). The interactive selection-DE in the pagoda3 viewer is a *separate* JS
+  implementation that should likewise call the WASM `subsampleDeRank`/`colSumByGroup` kernels rather than
+  reimplement the reduction. Port the DE *API* to R if it must be cross-surface; the *kernel* is now shared.
 - **Depth-normalized streaming reducers (`stream_col_stats` depth/population args, streamed pseudobulk)**
   are R/C++-only (R is the pagoda2 host); Python's `stream_col_stats` is lognorm-only.
 - **`subsample_de_rank`** kernel is bound on Python/R/WASM but the live selection-DE is the JS viewer's own

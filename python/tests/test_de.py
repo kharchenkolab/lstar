@@ -118,6 +118,30 @@ def test_pseudobulk_bundle():
     print("pseudobulk (real pbmc68k counts): (factor,genes) mean+frac match manual reduction; round-trips")
 
 
+def test_pseudobulk_kernel_reduction():
+    """pseudobulk routes its per-(group,gene) reduction through the SHARED col_sum_by_group kernel (was a
+    numpy per-group loop that duplicated it). Its mean/frac must equal a direct reduction, both bases."""
+    import scipy.sparse as sp
+    rng = np.random.default_rng(0); nc, ng, K = 150, 30, 4
+    X = sp.random(nc, ng, density=0.3, format="csr", random_state=0)
+    X.data = (rng.poisson(3, X.data.shape) + 1).astype(np.float64)
+    codes = rng.integers(0, K, size=nc)
+    ds = lstar.Dataset(kind="sample")
+    ds.add_axis("cells", [f"c{i}" for i in range(nc)]); ds.add_axis("genes", [f"g{j}" for j in range(ng)])
+    ds.add_field("counts", X, role="measure", span=["cells", "genes"], state="raw")
+    ds.add_field("grp", lstar.Categorical(codes.astype(np.int32), np.array([str(k) for k in range(K)])), span=["cells"])
+    for lognorm in (False, True):
+        pb = lstar.pseudobulk(ds, "grp", field="counts", lognorm=lognorm, add=False)
+        for k in range(K):
+            rows = np.nonzero(codes == k)[0]
+            sub = X[rows]; vals = sub.copy()
+            if lognorm:
+                vals.data = np.log1p(vals.data)
+            assert np.allclose(pb["mean"][k], np.asarray(vals.sum(0)).ravel() / len(rows))
+            assert np.allclose(pb["frac"][k], np.asarray((sub > 0).sum(0)).ravel() / len(rows))
+    print("pseudobulk kernel-reduction: mean/frac == direct reduction (raw + lognorm)")
+
+
 def test_pairwise_de_stays_passthrough():
     a = corpus.pbmc3k_processed()
     if a is None:
@@ -145,4 +169,5 @@ if __name__ == "__main__":
     test_de_logreg_scoreonly_variant()
     test_markers_tidy_view()
     test_pseudobulk_bundle()
+    test_pseudobulk_kernel_reduction()
     test_pairwise_de_stays_passthrough()
