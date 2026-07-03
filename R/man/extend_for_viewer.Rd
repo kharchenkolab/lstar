@@ -9,7 +9,9 @@ extend_for_viewer(
   grouping = NULL,
   also = character(0),
   counts = NULL,
-  basis = NULL
+  basis = NULL,
+  order = "hybrid",
+  markers = TRUE
 )
 }
 \arguments{
@@ -25,6 +27,12 @@ is raised if none is found.}
 
 \item{basis}{\code{NULL} (raw basis, \code{log1p}-transformed) or \code{"lognorm"} to prep -- approximately --
 from an already log-normalized measure (values used as-is; stats are var-of-lognorm).}
+
+\item{order}{\code{"hybrid"} (default) physically reorders \code{counts_cellmajor} (cluster-contiguous, then a
+Hilbert curve over the embedding) and adds \code{counts_cellmajor_order}; \code{"none"} keeps rows in cell
+order and omits the permutation.}
+
+\item{markers}{if \code{TRUE} (default), also compute the 1-vs-rest \verb{markers_<g>_\{lfc,padj\}} tables.}
 }
 \value{
 \code{ds} with the navigator fields added and \verb{viewer@0.1} in \code{ds$profiles}.

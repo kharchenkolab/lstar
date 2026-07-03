@@ -85,6 +85,10 @@
 #'   is raised if none is found.
 #' @param basis `NULL` (raw basis, `log1p`-transformed) or `"lognorm"` to prep -- approximately --
 #'   from an already log-normalized measure (values used as-is; stats are var-of-lognorm).
+#' @param order `"hybrid"` (default) physically reorders `counts_cellmajor` (cluster-contiguous, then a
+#'   Hilbert curve over the embedding) and adds `counts_cellmajor_order`; `"none"` keeps rows in cell
+#'   order and omits the permutation.
+#' @param markers if `TRUE` (default), also compute the 1-vs-rest `markers_<g>_{lfc,padj}` tables.
 #' @return `ds` with the navigator fields added and `viewer@0.1` in `ds$profiles`.
 #' @seealso [viewer_extend()], [lstar_write_viewer()]
 #' @export
