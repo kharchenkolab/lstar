@@ -35,6 +35,11 @@ echo "== synthetic-faithfulness guard (synthetic structure ⊆ real corpus) =="
 PYTHONPATH=python/src python3 python/tests/test_synth_faithful.py >/tmp/lstar_faithful.log 2>&1 \
   && pass "synthetic fixtures mirror the real corpus" || { echo "  FAIL faithfulness"; cat /tmp/lstar_faithful.log; exit 1; }
 
+echo "== binding-parity tripwire (a shared kernel bound in one surface must be bound in all) =="
+python3 conformance/binding_parity.py >/tmp/lstar_bindparity.log 2>&1 \
+  && pass "compute kernels bound symmetrically across Python/R/WASM" \
+  || { echo "  FAIL binding parity"; cat /tmp/lstar_bindparity.log; exit 1; }
+
 echo "== categorical-encoding conformance (codes/categories/ordered/-1 across Py/C++/R) =="
 bash conformance/categorical.sh >/tmp/lstar_cat.log 2>&1 \
   && pass "categorical round-trips Py<->C++<->R" || { echo "  FAIL categorical"; tail -15 /tmp/lstar_cat.log; exit 1; }

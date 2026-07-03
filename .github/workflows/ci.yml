@@ -35,6 +35,8 @@ jobs:
       - run: pip install ${{ matrix.pip }}
       - name: build libstar (C++ core)
         run: cmake -S core -B core/build -DCMAKE_BUILD_TYPE=Release && cmake --build core/build -j2
+      - name: binding-parity tripwire (a shared kernel bound in one surface must be bound in all)
+        run: python conformance/binding_parity.py
       - name: python tests + Python<->C++ cross-impl
         run: |
           for t in ${{ matrix.tests }}; do
