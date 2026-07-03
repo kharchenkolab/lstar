@@ -60,17 +60,6 @@ contract is: **the fixture must span the input space, and the equality check mus
 When a new divergence class appears, the fix is not just the code — it's the fixture axis + the field
 comparison that would have caught it.
 
-A third structural lesson (the `ZipStore` leading-slash data-collapse): **test a store backend at the
-layer real consumers use — decoded field *values* read through `openLstar` — never just "it opens" or
-raw-`get` byte-parity.** "Opens" ≠ "reads data correctly": a store that returns `undefined` for every
-chunk still opens (metadata is slashless / served from `.zmetadata`) and yields non-empty axes/fields —
-it just silently zeros all data. Byte-parity that feeds the *same* (slashless) key to two backends never
-exercises the reader's actual `/`-prefixed chunk keys. So the store-backend conformance leg
-(`conformance/zip_js.sh` → `js/test/store_backends.test.ts`) reads a categorical, an embedding, a full
-sparse matrix, and a byte-range column **through the reader** and asserts value-equality across **every**
-backend (FS-dir, FS-zip, HTTP-dir, HTTP-zip) — backend-agnostic, so it catches this class regardless of
-which backend has the key inconsistency.
-
 ## Cross-surface scope & known asymmetries
 
 Not everything is uniform across surfaces, and some asymmetries are deliberate. This is the authoritative
