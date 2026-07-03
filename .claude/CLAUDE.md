@@ -40,6 +40,7 @@ space, wired into CI).
 ## Testing
 Roundtrip and other conversions with a corpus of tests datasets provides a powerful test. See python/tests/corpus.py and corpus data on mendel.
 CI in the repo is kept light, relying on synthetic data (don't check in real datasets into the repo - if you need to add a tests case, figure out how to generate appropriate synthetic)
+Periodically run a cross-surface **parity/duplication audit** (method + prior findings in `docs/parity.md` and `misc/parity_audit.md`): fan out read-only agents over the C++/Python/R/JS surfaces to hunt feature-parity gaps, per-language reimplementations of shared logic, and behavioral/policy divergences. The conformance legs + `conformance/policy_linter.py` catch known drift; new *classes* of divergence need a fresh agent sweep (not currently automatable).
 
 ## Docs
 On major udpates, especially those impacting compatibility, do examine relevant docs and update them. The docs are not meant to be a journal, so first analyze the scope and decide whether something within the overall aims and narrative of the document should be updated, and if so implement the update while maintaining the integrity of the document. Items such as minor bugfixes, etc. generally won't make it into these docs. However, an update like compatibility with a specific format/version, or cli/api change must make it.
