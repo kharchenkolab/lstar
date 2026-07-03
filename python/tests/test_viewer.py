@@ -209,6 +209,13 @@ def test_kernels_accel_matches_fallback():
     o1 = k.overdispersion(mean, var, nobs, engine="c++")
     o2 = k.overdispersion(mean, var, nobs, engine="python")
     assert np.allclose(o1, o2, atol=1e-6)
+    # cell_order must reach the core (viewer_cell_order was defined in _accel.cpp but not registered,
+    # so Python silently always used the numpy fallback -- guard the c++ path here now that it's bound).
+    from lstar._engine import _accel
+    assert hasattr(_accel, "viewer_cell_order"), "viewer_cell_order not registered in _accel"
+    code = rng.integers(0, 6, size=250).astype(np.int32); emb = rng.normal(size=(250, 2))
+    assert np.array_equal(k.cell_order(code, emb, engine="c++"), k.cell_order(code, emb, engine="python"))
+    assert np.array_equal(k.cell_order(code, None, engine="c++"), k.cell_order(code, None, engine="python"))
 
 
 _NAV = {"counts_cellmajor", "counts_cellmajor_order", "od_score", "stats_leiden_sum",

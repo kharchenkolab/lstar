@@ -15,7 +15,7 @@ from __future__ import annotations
 import numpy as np
 
 from ..model import Categorical, Dataset, OBSERVED
-from .anndata import (_coord_axis, _guess_state, _guess_subtype, _pair_coord_axis,
+from .anndata import (_coord_axis, _guess_subtype, _infer_state, _pair_coord_axis,
                       _sparse_attrs, _strip_x, _uniq)
 
 
@@ -136,13 +136,17 @@ def read_h5ad_direct(path: str) -> Dataset:
         ds.add_axis("cells", cells, origin=OBSERVED, role="observation")
         ds.add_axis("genes", genes, origin=OBSERVED, role="feature")
 
-        state = None
+        hint = None
         if "uns/lstar/state" in f:                                       # lstar's own state marker
             sv = f["uns/lstar/state"][()]
-            state = sv.decode("utf-8") if isinstance(sv, bytes) else sv
+            hint = sv.decode("utf-8") if isinstance(sv, bytes) else sv
 
         if "X" in f:
-            ds.add_field("X", _read_matrix(f["X"]), role="measure", span=["cells", "genes"],
+            x = _read_matrix(f["X"])
+            state = _infer_state(x, name="X", explicit=hint)             # content-based -- match the native reader
+            # a genuinely-raw .X is the counts measure; name it `counts` (unless a counts layer already exists)
+            xname = "counts" if (state == "raw" and "layers/counts" not in f) else "X"
+            ds.add_field(xname, x, role="measure", span=["cells", "genes"],
                          state=state, provenance={"anndata": "X"})
 
         if "raw" in f and "raw/X" in f:                                  # pre-HVG raw, possibly larger gene set
@@ -153,13 +157,15 @@ def read_h5ad_direct(path: str) -> Dataset:
             else:
                 gax = "genes_raw"
                 ds.add_axis(gax, raw_genes, origin=OBSERVED, role="feature")
-            ds.add_field("raw", _read_matrix(f["raw/X"]), role="measure", span=["cells", gax],
-                         state="raw", provenance={"anndata": "raw/X"})
+            rawx = _read_matrix(f["raw/X"])
+            ds.add_field("raw", rawx, role="measure", span=["cells", gax],
+                         state=_infer_state(rawx, name="raw"), provenance={"anndata": "raw/X"})
 
         if "layers" in f:
             for k in f["layers"].keys():
-                ds.add_field(_uniq(ds, str(k), "layer"), _read_matrix(f["layers"][k]), role="measure",
-                             span=["cells", "genes"], state=_guess_state(k),
+                lk = _read_matrix(f["layers"][k])
+                ds.add_field(_uniq(ds, str(k), "layer"), lk, role="measure",
+                             span=["cells", "genes"], state=_infer_state(lk, name=str(k)),
                              provenance={"anndata": "layers/%s" % k})
 
         for axis, group in (("cells", "obs"), ("genes", "var")):

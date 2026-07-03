@@ -69,6 +69,22 @@ def test_roundtrip(tmp_path):
     run(str(tmp_path / "s.lstar.zarr"))
 
 
+def test_coo_normalized_to_csc(tmp_path):
+    """A coo_matrix field is a valid in-memory construction, but coo has no C++/R/JS reader, so it must
+    be normalized to csc on write -- otherwise the store is unreadable off Python (audit T1.1)."""
+    store = str(tmp_path / "coo.lstar.zarr")
+    C = sp.random(40, 12, density=0.3, format="coo", random_state=0)
+    ds = lstar.Dataset(kind="sample")
+    ds.add_axis("cells", ["c%d" % i for i in range(40)])
+    ds.add_axis("genes", ["g%d" % j for j in range(12)])
+    ds.add_field("weights", C, role="measure", span=["cells", "genes"])
+    assert ds.field("weights").encoding == "coo"          # in-memory: coo is fine
+    write(ds, store)
+    d2 = read(store)
+    assert d2.field("weights").encoding == "csc"          # on disk: normalized to a portable encoding
+    assert np.allclose(d2.field("weights").values.toarray(), C.toarray())
+
+
 if __name__ == "__main__":
     d = tempfile.mkdtemp()
     run(os.path.join(d, "s.lstar.zarr"))

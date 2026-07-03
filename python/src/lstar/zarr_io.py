@@ -223,11 +223,12 @@ def _write_values(g, fl, meta, compressor, chunk_elems=None):
         _ds(g, "indices", m.indices, compressor, chunk_elems)
         _ds(g, "indptr", m.indptr, compressor, chunk_elems)
         meta["shape"] = [int(x) for x in m.shape]
-    elif enc == "coo":
-        m = fl.values.tocoo()
-        _ds(g, "row", m.row, compressor, chunk_elems)
-        _ds(g, "col", m.col, compressor, chunk_elems)
-        _ds(g, "weight", m.data, compressor, chunk_elems)
+    elif enc == "coo":                                 # coo is a Python-only on-disk form (C++/R/JS have no
+        m = fl.values.tocsc()                          # coo reader) -> normalize to csc so every surface reads it
+        _ds(g, "data", m.data, compressor, chunk_elems)
+        _ds(g, "indices", m.indices, compressor, chunk_elems)
+        _ds(g, "indptr", m.indptr, compressor, chunk_elems)
+        meta["encoding"] = "csc"
         meta["shape"] = [int(x) for x in m.shape]
     elif enc == "categorical" or _is_categorical(fl.values):
         cat = as_categorical(fl.values)                # codes (-1 = missing) + categories + ordered

@@ -85,5 +85,23 @@ def test_anndata_roundtrip():
     run()
 
 
+def test_native_direct_backend_state_parity(tmp_path):
+    """The native (anndata) and direct (h5py) `.h5ad` backends must infer the SAME measure state + names,
+    so a store's `state` (and thus viewer-prep success) doesn't depend on whether `anndata` is installed
+    (audit T1.2). Direct previously left X `state=None`, named `X`; now it shares `_infer_state`."""
+    import anndata as ad
+    from lstar.profiles.anndata_direct import read_h5ad_direct
+    rng = np.random.default_rng(0)
+    Xraw = sp.random(30, 10, density=0.4, format="csr", random_state=0)
+    Xraw.data = (rng.poisson(3, Xraw.data.shape) + 1).astype(np.float32)          # genuinely-raw counts
+    a = ad.AnnData(X=Xraw)
+    a.layers["lognorm"] = a.X.copy(); a.layers["lognorm"].data = np.log1p(a.layers["lognorm"].data)
+    h5 = str(tmp_path / "t.h5ad"); a.write_h5ad(h5)
+    meas = lambda ds: {n: (f.role, f.state) for n, f in ds.fields.items() if f.role == "measure"}
+    native, direct = meas(read_anndata(a)), meas(read_h5ad_direct(h5))
+    assert native == direct, f"backend state/name drift: native={native} direct={direct}"
+    assert native.get("counts") == ("measure", "raw")                            # raw X renamed to counts on both
+
+
 if __name__ == "__main__":
     run()

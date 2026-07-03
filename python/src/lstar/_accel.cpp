@@ -212,6 +212,8 @@ PYBIND11_MODULE(_accel, m) {
     m.def("markers_one_vs_rest", &markers_one_vs_rest, py::arg("S"), py::arg("NE"),
           py::arg("nper"), py::arg("ncells"));
     m.def("overdispersion", &overdispersion, py::arg("mean"), py::arg("var"), py::arg("nobs"));
+    m.def("viewer_cell_order", &viewer_cell_order, py::arg("primary_code"),
+          py::arg("emb") = py::none(), py::arg("grid") = 1024);
     m.def("max_threads", &max_threads);
 #ifdef _OPENMP
     m.attr("openmp") = true;
