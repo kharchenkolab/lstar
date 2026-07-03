@@ -142,13 +142,16 @@ jobs:
 
   js-wasm:
     runs-on: ubuntu-latest
+    env:
+      LSTAR_SYNTHETIC_CORPUS: "1"          # viewer_corpus.sh: synthetic-faithful corpus (no real data)
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      # make_store.py drives the Python L* writer (PYTHONPATH=python/src) to emit the test store.
-      - run: pip install numpy scipy "zarr<3"
+      # make_store.py drives the Python L* writer (PYTHONPATH=python/src) to emit the test store;
+      # anndata/scanpy/mudata let viewer_corpus.sh build the synthetic corpus for the JS==Python leg.
+      - run: pip install numpy scipy "zarr<3" anndata scanpy mudata
       - uses: mymindstorm/setup-emsdk@v14
         with:
           version: 6.0.0          # bundles node 22.16 -> supports `node --experimental-strip-types`
@@ -161,3 +164,5 @@ jobs:
         run: python conformance/policy_linter.py
       - name: JS viewer@0.1 parity (lstar's own extend-viewer.ts == Python prep; CSC + CSR counts)
         run: bash conformance/viewer_js.sh
+      - name: viewer@0.1 corpus-driven JS parity (convert corpus -> JS extend == Python; real categoricals + lognorm + embeddings)
+        run: bash conformance/viewer_corpus.sh

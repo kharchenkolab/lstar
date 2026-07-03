@@ -34,6 +34,9 @@ def _synthetic(nc=200, ng=50, K=5, seed=0, fmt="csc", multi=False):
         ds.add_field("louvain", rng.integers(0, 4, size=nc).astype(str), role="label", span=["cells"])
         ds.add_field("annotation", rng.integers(0, 6, size=nc).astype(str), role="label", span=["cells"])
         ds.add_field("phase", np.array(["G1", "S", "G2M"])[rng.integers(0, 3, size=nc)], role="label", span=["cells"])
+        # a GENE-axis label (like AnnData's highly_variable) -- must NOT be picked as a CELL grouping (T1.3):
+        # every surface must exclude it (JS previously accepted any 1-D label -> ngenes codes -> crash).
+        ds.add_field("highly_variable", np.array(["True", "False"])[rng.integers(0, 2, size=ng)], role="label", span=["genes"])
     return ds
 
 

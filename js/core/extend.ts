@@ -44,11 +44,14 @@ async function labelCodes(ds: LstarDataset, name: string): Promise<{ codes: Int3
 }
 
 // Per-cell label fields (categorical or utf8) with 2..60 distinct values; clustering / cell-type names sort first.
-async function detectGroupings(ds: LstarDataset): Promise<string[]> {
+async function detectGroupings(ds: LstarDataset, cellAxis: string): Promise<string[]> {
   const out: string[] = [];
   for (const name of ds.fieldNames()) {
     const f = ds.field(name);
-    if (!f || (f.encoding !== "categorical" && f.encoding !== "utf8") || (f.span?.length ?? 0) !== 1) continue;
+    // Must be a label over the CELL axis: `span[0] === cellAxis`, not merely 1-D. Without this, a 1-D
+    // label over the GENE axis (e.g. a `highly_variable` gene flag with 2..60 levels) was picked as a
+    // grouping in JS but rejected by Py/R -> ngenes codes fed to a cells kernel -> out-of-bounds/garbage.
+    if (!f || (f.encoding !== "categorical" && f.encoding !== "utf8") || (f.span?.length ?? 0) !== 1 || f.span![0] !== cellAxis) continue;
     try { const { categories } = await labelCodes(ds, name); if (categories.length >= MIN_GROUPS && categories.length <= MAX_GROUPS) out.push(name); } catch { /* not a clean label */ }
   }
   // preferred names (clustering / cell-type) first by list position, then alphabetical -- identical to
@@ -122,7 +125,7 @@ export async function extendForViewer(store: LstarWritableStore, opts: ExtendOpt
     throw new Error("extendForViewer: `" + counts + "` must be CSC or CSR (cells x genes), got " + raw.fmt);
   }
 
-  let groupings = (opts.groupings ?? await detectGroupings(ds)).filter((g) => ds.hasField(g));
+  let groupings = (opts.groupings ?? await detectGroupings(ds, cellAxis)).filter((g) => ds.hasField(g));
   if (!groupings.length) throw new Error("extendForViewer: no categorical grouping found (pass {groupings:[...]})");
   const markers = opts.markers ?? true;
   const axes: Record<string, AxisSpec> = {}, fields: Record<string, FieldSpec> = {};

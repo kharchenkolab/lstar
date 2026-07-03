@@ -28,7 +28,8 @@
     if (is.null(f$role) || f$role != "label") next
     if (is.null(f$span) || length(f$span) != 1L || f$span[1] != cell_axis) next
     v <- f$values
-    lv <- if (is.factor(v)) levels(v) else unique(as.character(v[!is.na(v)]))
+    if (!is.factor(v) && !is.character(v)) next           # string-like labels only (match Python: skip numeric/logical)
+    lv <- if (is.factor(v)) levels(v) else unique(v[!is.na(v)])
     if (length(lv) >= 2L && length(lv) <= 60L) cand <- c(cand, nm)
   }
   if (!length(cand))
