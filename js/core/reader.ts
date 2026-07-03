@@ -59,10 +59,14 @@ class ConsolidatedStore {
       const v = this.meta[norm];
       return v === undefined ? undefined : TE.encode(JSON.stringify(v));
     }
-    return this.inner.get(key);
+    // pass the NORMALIZED (slash-stripped) key to the inner store — zarrita forms chunk paths with a
+    // leading slash, and a store must not depend on independently stripping it (the ZipStore data-collapse
+    // bug: exact key match against slashless central-directory names returned undefined for every chunk).
+    return this.inner.get(norm);
   }
   async getRange(key: string, start: number, end: number): Promise<Uint8Array | undefined> {
-    return this.inner.getRange?.(key, start, end);
+    const norm = key[0] === "/" ? key.slice(1) : key;
+    return this.inner.getRange?.(norm, start, end);
   }
 }
 

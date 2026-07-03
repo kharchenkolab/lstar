@@ -132,16 +132,16 @@ export class ZipStore implements LstarStore {
   }
 
   async get(key: string): Promise<Uint8Array | undefined> {
-    const e = this.idx.get(key);
-    if (!e) return undefined;
-    const off = await this.dataOffset(e);
+    const e = this.idx.get(key[0] === "/" ? key.slice(1) : key); // tolerate a leading-slash key (zarrita
+    if (!e) return undefined;                                    // forms chunk paths with one); central-dir
+    const off = await this.dataOffset(e);                        // names are slashless, like FS/HTTP stores
     return this.src.range(off, off + e.size);
   }
 
   async getRange(key: string, start: number, end: number): Promise<Uint8Array | undefined> {
-    const e = this.idx.get(key);
-    if (!e) return undefined;
-    const off = await this.dataOffset(e);
+    const e = this.idx.get(key[0] === "/" ? key.slice(1) : key); // tolerate a leading-slash key (zarrita
+    if (!e) return undefined;                                    // forms chunk paths with one); central-dir
+    const off = await this.dataOffset(e);                        // names are slashless, like FS/HTTP stores
     const s = off + Math.max(0, start), en = off + Math.min(e.size, Math.max(0, end));
     return this.src.range(s, Math.max(s, en));
   }
