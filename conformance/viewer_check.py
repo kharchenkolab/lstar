@@ -5,8 +5,12 @@ Subcommands:
                             print the produced viewer-field shapes/spans.
   validate  <store>         read a store and assert it satisfies the viewer@0.1 contract (exit 1 on
                             any viewer ERROR) -- used to check what *other* surfaces wrote.
-  equiv     <a> <b>         assert two viewer-extended stores agree on the viewer fields: stats exact
-                            (rtol 1e-5), markers lfc to 1e-3, od_score to 1e-3, shapes/spans identical.
+  equiv     <a> <b>         assert two viewer-extended stores agree on ALL viewer fields, for every
+                            grouping. Tolerances (generous for f4-vs-f8 across surfaces, tight enough to
+                            catch a method/orientation drift): stats sum/sumsq rtol 1e-4, nexpr 1e-5,
+                            markers lfc 2e-3, od_score 5e-3; counts_cellmajor[_order] exact; spans/shapes
+                            identical. The looser od_score reflects the naive-vs-stable variance across
+                            surfaces (see audit); tighten once od variance is single-sourced.
 
 Exit code 0 == pass. Used by conformance/viewer.sh; importable pieces kept tiny on purpose.
 """

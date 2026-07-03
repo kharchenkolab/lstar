@@ -59,3 +59,39 @@ cross-surface equality check ignored the fields that diverged (`counts_cellmajor
 contract is: **the fixture must span the input space, and the equality check must compare every field.**
 When a new divergence class appears, the fix is not just the code — it's the fixture axis + the field
 comparison that would have caught it.
+
+## Cross-surface scope & known asymmetries
+
+Not everything is uniform across surfaces, and some asymmetries are deliberate. This is the authoritative
+list (from the parity audit) so a real gap is never confused with an intentional one.
+
+**By design (surface-native capabilities):**
+- **Format IO profiles.** AnnData / MuData live in Python; Seurat / SingleCellExperiment / Conos / pagoda2
+  live in R. Each ecosystem's object model is native to one language; all funnel into the *same* L* core
+  representation (`cross_format.sh` proves the chain), so this is not a core-representation divergence.
+- **Interactive query API.** `LstarView` / Crossfilter / live `colStats` / `scalarToRGBA` are JS-only; the
+  Python/R `view()` delegate to the pagoda3 viewer. The precompute-once half (`extend_for_viewer`) is
+  uniform across Python/R/JS and fully conformance-covered.
+- **`validate()` is the canonical structural validator (Python).** R/JS/C++ have no separate validator;
+  instead every surface's *output* store is Python-validated in CI (the viewer / cross-format legs do this).
+- **Content-based `state` inference is AnnData-scoped.** The AnnData reader (native *and* direct, now in
+  agreement) infers raw/lognorm/scaled from content; the R Seurat/SCE profiles infer `state` from the slot
+  name (reliable for canonical `counts`/`data`/`logcounts`/`scale.data` slots).
+
+**Scoped / follow-up (a real gap, intentionally deferred — do not silently widen):**
+- **DE analysis (`pseudobulk`, `collection_pseudobulk`, `de_bundle`, `de_factors`) is Python-only.** Other
+  surfaces read a stored DE bundle but don't compute one. Port to R if it must be cross-surface.
+- **Depth-normalized streaming reducers (`stream_col_stats` depth/population args, streamed pseudobulk)**
+  are R/C++-only (R is the pagoda2 host); Python's `stream_col_stats` is lognorm-only.
+- **`subsample_de_rank`** kernel is bound on Python/R/WASM but the live selection-DE is the JS viewer's own
+  (`LstarView.subsampleDE`); the kernel is available for callers who want cross-surface-identical ranking.
+- **`uncertainty`** round-trips through Python and the C++ core, but is not threaded through the R bridge
+  (rare, AnnData-specific).
+- **Compression codec.** gzip is the portable codec (all surfaces read it); C++/R also read zlib; JS reads
+  gzip only. Python can write any numcodecs codec, but a non-gzip store is not portable — prefer gzip.
+
+**Metadata that is non-normative** (excluded from the "byte-identical store" contract): a viewer field's
+`provenance` stamp carries surface-specific detail (`method`/`curve`/`grid`), so `cmd_equiv` compares the
+*data* fields (stats/markers/od/`counts_cellmajor[_order]`) and not provenance. The `od_score` tolerance is
+looser than the rest because Python derives its per-gene variance naively while the core uses a stable
+centered form (they agree through the F-test; unify the od variance to tighten it).
