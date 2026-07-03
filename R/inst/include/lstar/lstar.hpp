@@ -121,6 +121,7 @@ struct Field {
     std::string subtype;              // "" == none
     std::vector<std::string> span;
     json provenance = json::object();
+    json uncertainty = json(nullptr);   // optional per-value uncertainty metadata (round-trips verbatim)
     bool directed = false, has_directed = false;
     bool weighted = false, has_weighted = false;
 
@@ -565,6 +566,7 @@ inline Dataset read(const fs::path& root) {
         if (m.contains("span") && !m["span"].is_null())
             f.span = m["span"].get<std::vector<std::string>>();
         if (m.contains("provenance") && !m["provenance"].is_null()) f.provenance = m["provenance"];
+        if (m.contains("uncertainty") && !m["uncertainty"].is_null()) f.uncertainty = m["uncertainty"];
         if (m.contains("directed") && !m["directed"].is_null()) {
             f.directed = m["directed"].get<bool>();
             f.has_directed = true;
@@ -669,7 +671,7 @@ inline void write(const Dataset& ds, const fs::path& root,
         fl["subtype"] = f.subtype.empty() ? json(nullptr) : json(f.subtype);
         fl["coverage"] = f.has_index ? json("partial") : json(f.coverage.empty() ? "full" : f.coverage);
         fl["index_axis"] = f.has_index && !f.index_axis.empty() ? json(f.index_axis) : json(nullptr);
-        fl["uncertainty"] = nullptr;
+        fl["uncertainty"] = f.uncertainty;   // preserve verbatim (was hardcoded null -> silent data loss)
         fl["provenance"] = f.provenance;
         fl["directed"] = f.has_directed ? json(f.directed) : json(nullptr);
         fl["weighted"] = f.has_weighted ? json(f.weighted) : json(nullptr);
@@ -680,6 +682,8 @@ inline void write(const Dataset& ds, const fs::path& root,
             fl["shape"] = std::vector<int64_t>{f.codes.nelem()};
             fl["ordered"] = f.has_ordered ? json(f.ordered) : json(false);
         }
+        if (!(f.encoding == "csr" || f.encoding == "csc" || f.encoding == "utf8" || f.encoding == "categorical"))
+            fl["shape"] = f.dense.shape;   // dense: shape in the manifest too (parity; a reader shouldn't need values/.zarray)
         write_group(g, json{{"lstar", fl}});
         if (f.encoding == "csr" || f.encoding == "csc") {
             write_array(g / "data", f.data, chunk_elems, compressor);

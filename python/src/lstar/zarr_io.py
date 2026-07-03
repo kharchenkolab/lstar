@@ -247,6 +247,7 @@ def _write_values(g, fl, meta, compressor, chunk_elems=None):
         else:
             _ds(g, "values", arr, compressor, chunk_elems)
             meta["encoding"] = "dense"
+            meta["shape"] = [int(x) for x in arr.shape]   # dense: shape in the manifest too (parity with sparse)
 
 
 def _read_values(g, m):
