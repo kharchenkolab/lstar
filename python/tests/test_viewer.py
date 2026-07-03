@@ -15,7 +15,7 @@ import scipy.sparse as sp
 import pytest
 
 import lstar
-from lstar.viewer import _xy2d
+from lstar.kernels import _xy2d          # Hilbert primitive now lives in the shared kernels module
 
 
 # A JS-prepped reference store to cross-check against. Overridable via $LSTAR_PBMC6 so the gate
@@ -24,10 +24,11 @@ PBMC6 = os.environ.get(
     "LSTAR_PBMC6", "/Users/peter.kharchenko/pagoda/lstar-viewer/web/public/pbmc6.lstar.zarr")
 
 
-def _synthetic(nc=200, ng=50, K=5, seed=0):
+def _synthetic(nc=200, ng=50, K=5, seed=0, fmt="csc"):
     rng = np.random.default_rng(seed)
     X = sp.random(nc, ng, density=0.2, format="csc", random_state=seed)
     X.data = (rng.poisson(3, size=X.data.shape) + 1).astype(np.int32)
+    X = X.tocsr() if fmt == "csr" else X.tocsc()             # counts may arrive in either encoding
     ds = lstar.Dataset(kind="sample")
     ds.add_axis("cells", [f"c{i}" for i in range(nc)])
     ds.add_axis("genes", [f"g{j}" for j in range(ng)])
@@ -99,6 +100,45 @@ def test_order_none_skips_reorder():
     # rows stay in cell order
     cm = ds.field("counts_cellmajor").values.tocsr()
     assert np.array_equal(cm.toarray(), X.tocsr().toarray())
+
+
+def test_encoding_invariance():
+    """A1 contract: `extend_for_viewer` output is identical whether counts arrive CSC or CSR. The
+    divergence this guards against (JS *threw* on CSR while Python/R silently normalized) is the exact
+    bug that motivated the parity work -- a CSC-only fixture never exercised it."""
+    a, _ = _synthetic(fmt="csc"); lstar.extend_for_viewer(a)
+    b, _ = _synthetic(fmt="csr"); lstar.extend_for_viewer(b)
+    assert a.field("counts").encoding == "csc" and b.field("counts").encoding == "csr"   # genuinely different inputs
+    for f in ("counts_cellmajor_order", "od_score", "stats_leiden_sum", "stats_leiden_sumsq",
+              "stats_leiden_nexpr", "markers_leiden_lfc", "markers_leiden_padj", "counts_cellmajor"):
+        va, vb = a.field(f).values, b.field(f).values
+        A = va.toarray() if sp.issparse(va) else np.asarray(va)
+        B = vb.toarray() if sp.issparse(vb) else np.asarray(vb)
+        same = np.array_equal(A, B) if A.dtype.kind in "iu" else np.allclose(A, B)
+        assert same, f"{f} differs between CSC and CSR counts input -- encoding not normalized"
+
+
+def test_lognorm_basis_keeps_counts_cellmajor_float():
+    """A lognorm-basis prep must keep counts_cellmajor FLOAT -- an int32 cast (fine for raw counts)
+    truncates normalized values to garbage. Regression for the Python-only bug the corpus lognorm case
+    surfaced (R kept float, Python didn't -> the cell-major payloads diverged)."""
+    rng = np.random.default_rng(0)
+    nc, ng = 120, 30
+    Xf = sp.random(nc, ng, density=0.3, format="csc", random_state=0)
+    Xf.data = (np.abs(Xf.data).astype(np.float32) * 0.5 + 0.01)     # sub-1 floats -> an int cast would zero them
+    ds = lstar.Dataset(kind="sample")
+    ds.add_axis("cells", [f"c{i}" for i in range(nc)]); ds.add_axis("genes", [f"g{j}" for j in range(ng)])
+    ds.add_axis("umap", ["u1", "u2"])
+    ds.add_field("X", Xf, role="measure", span=["cells", "genes"], state="lognorm")   # no raw counts -> basis lognorm
+    ds.add_field("umap", rng.normal(size=(nc, 2)), role="embedding", span=["cells", "umap"])
+    ds.add_field("leiden", rng.integers(0, 4, size=nc).astype(str), role="label", span=["cells"])
+    lstar.extend_for_viewer(ds, basis="lognorm")
+    cm = ds.field("counts_cellmajor").values
+    assert cm.dtype.kind == "f", f"lognorm counts_cellmajor must stay float, got {cm.dtype}"
+    pos = np.asarray(ds.field("counts_cellmajor_order").values).astype(int)
+    cmr, Xr = cm.tocsr(), Xf.tocsr()
+    for cell in range(nc):                                          # values preserved (not truncated), row-for-row
+        assert np.allclose(cmr.getrow(int(pos[cell])).toarray().ravel(), Xr.getrow(cell).toarray().ravel())
 
 
 # --------------------------------------------------------------------------------------------------

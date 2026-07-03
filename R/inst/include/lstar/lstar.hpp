@@ -765,6 +765,16 @@ inline CsxArrays<T, Idx> csc_to_csr(const T* data, const Idx* indices, const Idx
     return out;
 }
 
+// CSR -> CSC storage transpose (orientation flip), value dtype preserved. A CSR (nrows x ncols) is
+// byte-identical to a CSC of the transpose (ncols x nrows), so this is csc_to_csr with the dims swapped.
+// Lets a binding normalize CSR counts to the CSC the viewer/DE kernels expect (Python/R get this from
+// scipy/Matrix; JS-WASM has no such library, so it calls this).
+template <class T, class Idx = int64_t>
+inline CsxArrays<T, Idx> csr_to_csc(const T* data, const Idx* indices, const Idx* indptr,
+                                    int64_t nrows, int64_t ncols) {
+    return csc_to_csr<T, Idx>(data, indices, indptr, ncols, nrows);
+}
+
 // Zero-aware per-column mean/variance of a CSC matrix with `nrows` rows and `ncols` columns.
 // `data` are the nnz values; `indptr` is length ncols+1. Implicit zeros are accounted for.
 //
@@ -1200,6 +1210,18 @@ inline std::vector<int64_t> cell_order_pos(const int* primary_code, const int64_
     std::vector<int64_t> pos((size_t)ncells);
     for (int64_t p = 0; p < ncells; p++) pos[(size_t)perm[(size_t)p]] = p;
     return pos;
+}
+// Canonical viewer cell order -- the SINGLE source of truth every binding (Python/R/WASM) calls, so all
+// surfaces emit a byte-identical `counts_cellmajor_order`. pos_of[cell] = physical row, stable-sorted by
+// (cluster `primary_code`, then Hilbert index of the embedding when `emb2d` is given, else cell index).
+// `emb2d` is row-major ncells x 2 (or null for a cluster-only order when no embedding is available).
+inline std::vector<int64_t> viewer_cell_order(const int* primary_code, const double* emb2d,
+                                              int64_t ncells, int64_t grid = 1024) {
+    if (emb2d) {
+        std::vector<int64_t> hil = hilbert_index(emb2d, ncells, grid);
+        return cell_order_pos(primary_code, hil.data(), ncells);
+    }
+    return cell_order_pos(primary_code, nullptr, ncells);
 }
 
 // Streaming per-(group, gene) SUM of a CSC measure read straight from a store, with the same optional

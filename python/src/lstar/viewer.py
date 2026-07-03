@@ -26,7 +26,7 @@ fields that matter (the stats match exactly; the marker ``lfc``/``padj`` match t
 import numpy as np
 import scipy.sparse as sp
 
-from .kernels import col_sum_by_group, markers_one_vs_rest, overdispersion
+from .kernels import col_sum_by_group, markers_one_vs_rest, overdispersion, cell_order
 from .model import as_categorical, _is_categorical
 
 VIEWER_PROFILE = "viewer@0.1"
@@ -37,6 +37,8 @@ N_GRID = 1024                                          # Hilbert grid resolution
 # auto-detection of the grouping labels and the embedding to extend over
 # ---------------------------------------------------------------------------------------------------
 
+# Canonical grouping-detection policy -- the single source R (.VIEWER_PREFERRED_GROUPINGS) and JS
+# (policy.ts) must match; enforced against conformance/viewer_policy.json by conformance/policy_linter.py.
 _PREFERRED_GROUPINGS = ("leiden", "cluster", "clusters", "cell_type", "celltype", "cell_types",
                         "louvain", "seurat_clusters", "annotation", "cluster_label")
 
@@ -153,46 +155,6 @@ def _select_counts_basis(ds, counts=None, basis=None):
 
 
 # ---------------------------------------------------------------------------------------------------
-# the Hilbert curve (canonical xy -> d on an N x N grid; N a power of two)
-# ---------------------------------------------------------------------------------------------------
-
-def _xy2d(N, x, y):
-    """Canonical Hilbert index of grid cell (x, y) on an N x N curve (N a power of two).
-
-    A faithful port of the viewer's ``xy2d`` (reorder.mjs): the reflection uses ``N - 1`` (the full
-    grid extent), not ``s - 1``.
-    """
-    d = 0
-    s = N >> 1
-    while s > 0:
-        rx = 1 if (x & s) else 0
-        ry = 1 if (y & s) else 0
-        d += s * s * ((3 * rx) ^ ry)
-        if ry == 0:
-            if rx == 1:
-                x = N - 1 - x
-                y = N - 1 - y
-            x, y = y, x
-        s >>= 1
-    return d
-
-
-def _hilbert_index(emb):
-    """Per-cell Hilbert index over a 1024x1024 grid of the (min-max scaled) 2-D embedding."""
-    xy = np.asarray(emb, dtype=np.float64)[:, :2]
-    x, y = xy[:, 0], xy[:, 1]
-    n = xy.shape[0]
-    out = np.empty(n, dtype=np.float64)
-    xr = (x.max() - x.min()) or 1.0
-    yr = (y.max() - y.min()) or 1.0
-    gx = np.minimum(N_GRID - 1, np.floor((x - x.min()) / xr * (N_GRID - 1))).astype(np.int64)
-    gy = np.minimum(N_GRID - 1, np.floor((y - y.min()) / yr * (N_GRID - 1))).astype(np.int64)
-    for i in range(n):                                 # the curve is cheap; n is the cell count
-        out[i] = _xy2d(N_GRID, int(gx[i]), int(gy[i]))
-    return out
-
-
-# ---------------------------------------------------------------------------------------------------
 # the public entry point
 # ---------------------------------------------------------------------------------------------------
 
@@ -252,8 +214,11 @@ def extend_for_viewer(ds, groupings=None, order="hybrid", embedding=None, marker
         embedding = _detect_embedding(ds)
 
     # 1) cell-major (CSR) copy of counts -- the substrate for scope compute and per-cell range reads.
+    #    Compact raw integer counts to int32; a lognorm-basis measure is float and MUST stay float (an
+    #    int32 cast there truncates the values to garbage -- and diverges from R, which keeps float).
     Xr = X.tocsr()
-    Xr.data = Xr.data.astype(np.int32, copy=False)
+    if use_lognorm:                                    # use_lognorm==True is the RAW basis (log1p applied downstream)
+        Xr.data = Xr.data.astype(np.int32, copy=False)
     Xr.indices = Xr.indices.astype(np.int32, copy=False)
     Xr.indptr = Xr.indptr.astype(np.int32, copy=False)
 
@@ -285,18 +250,18 @@ def extend_for_viewer(ds, groupings=None, order="hybrid", embedding=None, marker
     if order == "hybrid":
         primary = groupings[0]
         _, primary_codes = _label_codes(ds, primary)
-        if embedding is not None and embedding in ds.fields:
-            hil = _hilbert_index(ds.field(embedding).values)
-        else:                                                          # no embedding -> stable cell order
-            hil = np.arange(ncells, dtype=np.float64)
-        # physical row p holds cell perm[p]: primary key = cluster code, secondary = Hilbert index.
-        perm = np.lexsort((hil, primary_codes.astype(np.int64)))       # last key is primary
+        emb = ds.field(embedding).values if (embedding is not None and embedding in ds.fields) else None
+        # pos_of[cell] = physical row, from the SHARED core reorder (cluster code, then Hilbert(embedding)
+        # when present) -- identical across Python/R/JS. perm is its inverse (physical row -> cell) for
+        # the CSR row gather.
+        pos_of = cell_order(primary_codes, emb, grid=N_GRID)
+        perm = np.empty(ncells, dtype=np.int64)
+        perm[pos_of] = np.arange(ncells)
         Xr = _reorder_csr_rows(Xr, perm)
-        pos_of = np.empty(ncells, dtype=np.float64)                    # cell -> physical row (exact ints, f8)
-        pos_of[perm] = np.arange(ncells, dtype=np.float64)
-        ds.add_field("counts_cellmajor_order", pos_of, role="measure", span=[cell_axis],
+        ds.add_field("counts_cellmajor_order", pos_of.astype(np.float64), role="measure", span=[cell_axis],
                      state="permutation", encoding="dense",
-                     provenance={"cache": VIEWER_PROFILE, "method": "viewer.reorder", "curve": "hilbert",
+                     provenance={"cache": VIEWER_PROFILE, "method": "viewer.reorder",
+                                 "curve": "hilbert" if emb is not None else "cluster",
                                  "grid": N_GRID, "group": primary})
 
     ds.add_field("counts_cellmajor", Xr, role="measure", span=[cell_axis, gene_axis],
@@ -344,7 +309,7 @@ def _reorder_csr_rows(Xr, perm):
     dest_starts = new_indptr[:-1].astype(np.int64)
     offset = np.repeat(src_starts - dest_starts, counts)
     gather = offset + np.arange(nnz, dtype=np.int64)
-    new_data = Xr.data[gather].astype(np.int32, copy=False)
+    new_data = Xr.data[gather]                          # preserve dtype (int32 raw counts / float lognorm)
     new_indices = Xr.indices[gather].astype(np.int32, copy=False)
     out = sp.csr_matrix((new_data, new_indices, new_indptr), shape=Xr.shape)
     return out

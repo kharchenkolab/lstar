@@ -1,3 +1,15 @@
+# lstar (development version)
+
+## viewer@0.1 cross-language parity
+
+* `extend_for_viewer` now yields a store field-for-field identical to the Python and JS/WASM preps.
+  The cell reorder is the shared C++ core (`viewer_cell_order`: cluster-contiguous, then a Hilbert curve
+  over the embedding) instead of a cluster-only sort; grouping auto-detection returns **all** groupings
+  ranked by a single-sourced preferred-name policy (was: a single grouping, ranked differently); and a
+  `basis = "lognorm"` prep keeps `counts_cellmajor` float.
+* Enforced by cross-surface conformance legs (`conformance/viewer*.sh`, including a corpus-driven check
+  over `corpus.py`/`synth.py`) and `conformance/policy_linter.py`. See `docs/parity.md`.
+
 # lstar 0.1.0
 
 First release. lstar is a uniform data model (L\*) and a Zarr interchange format for single-cell /

@@ -98,3 +98,57 @@ def overdispersion(mean, var, nobs, engine="auto"):
         res = ys - _lowess_predict(xs, ys)
         od[ok] = -_f.logsf(np.exp(res), nobs[ok], nobs[ok])
     return od
+
+
+# --- viewer@0.1 canonical cell order (the physical row reorder key) --------------------------------
+_N_GRID = 1024                                            # Hilbert grid resolution (power of two)
+
+
+def _xy2d(N, x, y):
+    """Canonical Hilbert index of grid cell (x, y) on an N x N curve (reflection uses N-1) -- the
+    numpy-fallback twin of ``lstar::hilbert_xy2d``."""
+    d = 0; s = N >> 1
+    while s > 0:
+        rx = 1 if (x & s) else 0; ry = 1 if (y & s) else 0
+        d += s * s * ((3 * rx) ^ ry)
+        if ry == 0:
+            if rx == 1:
+                x = N - 1 - x; y = N - 1 - y
+            x, y = y, x
+        s >>= 1
+    return d
+
+
+def _hilbert_index(emb, grid=_N_GRID):
+    """Per-cell Hilbert index over a ``grid`` x ``grid`` grid of the min-max-scaled first 2 embedding
+    dims -- the numpy-fallback twin of ``lstar::hilbert_index``."""
+    xy = np.asarray(emb, dtype=np.float64)[:, :2]
+    x, y = xy[:, 0], xy[:, 1]; n = xy.shape[0]
+    xr = (x.max() - x.min()) or 1.0; yr = (y.max() - y.min()) or 1.0
+    gx = np.minimum(grid - 1, np.floor((x - x.min()) / xr * (grid - 1))).astype(np.int64)
+    gy = np.minimum(grid - 1, np.floor((y - y.min()) / yr * (grid - 1))).astype(np.int64)
+    out = np.empty(n, dtype=np.int64)
+    for i in range(n):
+        out[i] = _xy2d(grid, int(gx[i]), int(gy[i]))
+    return out
+
+
+def cell_order(primary_code, embedding=None, grid=_N_GRID, engine="auto"):
+    """viewer@0.1 canonical physical cell order shared by Python/R/JS (C++ core ``viewer_cell_order``).
+
+    Returns ``pos_of`` (int64, length ncells): each cell's physical row after a stable sort by
+    (cluster ``primary_code``, then Hilbert index of ``embedding`` when given, else cell index). The
+    numpy fallback matches the core exactly, so a store prepped without the accelerator is byte-identical
+    to one prepped with it (and to the R/JS surfaces)."""
+    primary_code = np.ascontiguousarray(primary_code, dtype=np.int32)
+    n = primary_code.size
+    emb = None if embedding is None else np.ascontiguousarray(np.asarray(embedding, dtype=np.float64))
+    if resolve_engine(engine) == "c++" and hasattr(_accel, "viewer_cell_order"):
+        return np.asarray(_accel.viewer_cell_order(primary_code, emb, int(grid)), dtype=np.int64)
+    pc64 = primary_code.astype(np.int64)
+    if emb is None:                                      # sort by (cluster, cell index) -- lexsort last key = primary
+        perm = np.lexsort((np.arange(n), pc64))
+    else:
+        perm = np.lexsort((np.arange(n), _hilbert_index(emb, grid), pc64))
+    pos = np.empty(n, dtype=np.int64); pos[perm] = np.arange(n)
+    return pos
