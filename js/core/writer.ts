@@ -195,6 +195,9 @@ export async function writeStore(store: LstarWritableStore, ds: DatasetSpec, opt
   // readers (Python `zarr`) won't navigate into them (zarrita is lenient and resolves by path).
   await rec.set("axes/.zgroup", j({ zarr_format: 2 }));
   await rec.set("fields/.zgroup", j({ zarr_format: 2 }));
+  // an empty `models/` container group is always present in Python/C++/R-written stores (it lands in the
+  // consolidated .zmetadata); create it here too so a JS-written top-level tree matches (axes/fields/models).
+  await rec.set("models/.zgroup", j({ zarr_format: 2 }));
   if (ds.aux && Object.keys(ds.aux).length) await rec.set("passthrough/.zgroup", j({ zarr_format: 2 }));
   for (const [name, ax] of Object.entries(ds.axes)) await writeAxis(rec, name, ax, opts);
   for (const [name, f] of Object.entries(ds.fields)) await writeField(rec, name, f, opts);

@@ -20,6 +20,7 @@ export interface ExtendOptions {
   markers?: boolean;      // also compute 1-vs-rest marker tables (default true)
   counts?: string;        // force the count measure (else auto: a raw-state measure, name "counts" as fallback)
   basis?: string;         // "lognorm" to prep (approximately) from an already log-normalized measure
+  order?: string;         // "hybrid" (default) locality reorder + _order; "none" keeps rows in cell order
 }
 
 // Per-cell label codes + category names, from EITHER a categorical-encoded field (codes stored) or a utf8 label
@@ -153,17 +154,22 @@ export async function extendForViewer(store: LstarWritableStore, opts: ExtendOpt
     }
   }
 
-  // 3) cell-major (CSR) counts, physically reordered via the SHARED core reorder (cluster code, then
-  //    Hilbert of the embedding when present) -- byte-identical to the Python/R surfaces. pos_of[cell] =
-  //    physical row; perm is its inverse (physical row -> cell) for the CSR row gather.
-  const primaryCodes = (await labelCodes(ds, groupings[0])).codes;
-  const embName = detectEmbedding(ds, cellAxis);
-  const emb = embName ? await readEmbedding2(ds, embName, ncells) : null;
-  const posOf: Int32Array = M.viewerCellOrder(primaryCodes, emb, ncells, HILBERT_GRID);
-  const perm = new Int32Array(ncells); for (let i = 0; i < ncells; i++) perm[posOf[i]] = i;
-  const csr = reorderCsrRows(M.cscToCsr(cscData, cscIndices, cscIndptr, ncells, ngenes), perm);
-  const order = new Float64Array(ncells); for (let i = 0; i < ncells; i++) order[i] = posOf[i];
-  fields["counts_cellmajor_order"] = { role: "measure", span: [cellAxis], encoding: "dense", state: "permutation", shape: [ncells], data: order, provenance: { ...prov, method: "viewer.reorder", curve: emb ? "hilbert" : "cluster" } };
+  // 3) cell-major (CSR) counts. order="hybrid" (default) physically reorders rows via the SHARED core
+  //    reorder (cluster code, then Hilbert of the embedding) + writes counts_cellmajor_order -- byte-
+  //    identical to Python/R. order="none" keeps rows in cell order and omits _order (parity with Python).
+  let csr: { data: any; indices: any; indptr: any };
+  if ((opts.order ?? "hybrid") !== "none") {
+    const primaryCodes = (await labelCodes(ds, groupings[0])).codes;
+    const embName = detectEmbedding(ds, cellAxis);
+    const emb = embName ? await readEmbedding2(ds, embName, ncells) : null;
+    const posOf: Int32Array = M.viewerCellOrder(primaryCodes, emb, ncells, HILBERT_GRID);
+    const perm = new Int32Array(ncells); for (let i = 0; i < ncells; i++) perm[posOf[i]] = i;   // physical row -> cell
+    csr = reorderCsrRows(M.cscToCsr(cscData, cscIndices, cscIndptr, ncells, ngenes), perm);
+    const order = new Float64Array(ncells); for (let i = 0; i < ncells; i++) order[i] = posOf[i];
+    fields["counts_cellmajor_order"] = { role: "measure", span: [cellAxis], encoding: "dense", state: "permutation", shape: [ncells], data: order, provenance: { ...prov, method: "viewer.reorder", curve: emb ? "hilbert" : "cluster" } };
+  } else {
+    csr = M.cscToCsr(cscData, cscIndices, cscIndptr, ncells, ngenes);   // no reorder, no _order field
+  }
   fields["counts_cellmajor"] = { role: "measure", span: [cellAxis, geneAxis], encoding: "csr", state: basisState, shape: [ncells, ngenes], data: csr.data, indices: csr.indices, indptr: csr.indptr, provenance: prov };
 
   await addToStore(store, { axes, fields, profiles: [VIEWER_PROFILE] });

@@ -31,6 +31,9 @@ export interface FieldMeta {
   subtype?: string;
   shape?: number[];
   nullable?: boolean;   // carries a `mask` array (1 == missing): nullable Int/boolean/string
+  provenance?: any;     // free-form origin metadata (written by Python/C++/R; surfaced for inspection)
+  coverage?: string;    // "full" | "partial" — partial fields carry an `index` array into `index_axis`
+  index_axis?: string;  // for partial coverage: the axis the `index` positions refer to
 }
 
 const TD = new TextDecoder();
@@ -155,7 +158,9 @@ export class LstarDataset {
       this.fields.set(name, { name, role: lm.role, span: lm.span ?? [], encoding: lm.encoding,
                               state: lm.state ?? undefined, subtype: lm.subtype ?? undefined,
                               shape: lm.shape, ordered: lm.ordered,
-                              nullable: lm.nullable ?? undefined } as any);
+                              nullable: lm.nullable ?? undefined,
+                              provenance: lm.provenance, coverage: lm.coverage,
+                              index_axis: lm.index_axis } as any);
     }
     return this;
   }
@@ -176,6 +181,13 @@ export class LstarDataset {
   async fieldDense(name: string): Promise<{ data: any; shape: number[] }> {
     const c = await this._get("fields/" + name + "/values");
     return { data: c.data, shape: c.shape as number[] };
+  }
+
+  /** A partial-coverage field's `index` array (0-based positions into `index_axis`), or undefined if the
+   * field has no `index` (full coverage). Same read path as fieldDense — surfaces coverage for a consumer. */
+  async fieldIndex(name: string): Promise<any | undefined> {
+    const c = await this._get("fields/" + name + "/index").catch(() => undefined);
+    return c?.data;
   }
 
   /** A utf8 (label) field's string values. */

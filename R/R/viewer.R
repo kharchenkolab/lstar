@@ -88,7 +88,8 @@
 #' @return `ds` with the navigator fields added and `viewer@0.1` in `ds$profiles`.
 #' @seealso [viewer_extend()], [lstar_write_viewer()]
 #' @export
-extend_for_viewer <- function(ds, grouping = NULL, also = character(0), counts = NULL, basis = NULL) {
+extend_for_viewer <- function(ds, grouping = NULL, also = character(0), counts = NULL, basis = NULL,
+                              order = "hybrid", markers = TRUE) {
   sel <- .viewer_counts_basis(ds, counts, basis)   # pick basis by state, not the literal name "counts"
   cf <- ds$fields[[sel$name]]; use_lognorm <- sel$log1p
   cnt <- methods::as(cf$values, "CsparseMatrix")                 # cells x genes (CSC)
@@ -122,34 +123,38 @@ extend_for_viewer <- function(ds, grouping = NULL, also = character(0), counts =
     S <- matrix(gs$sum, nrow = K, byrow = TRUE)
     SS <- matrix(gs$sumsq, nrow = K, byrow = TRUE)
     NE <- matrix(gs$n_expr, nrow = K, byrow = TRUE)
-    nper <- as.integer(table(factor(lab, levels = groups)))
-    mk <- lstar_cpp_markers_one_vs_rest(gs$sum, gs$n_expr, nper, K, ng, as.double(nc))
-    lfc  <- matrix(mk$lfc,  nrow = ng, ncol = K, byrow = TRUE)      # genes x K (gene-major)
-    padj <- matrix(mk$padj, nrow = ng, ncol = K, byrow = TRUE)
     gax <- paste0("groups_", gp)
     ds$axes[[gax]] <- list(labels = groups, origin = "derived", role = "feature")
     sg <- c(gax, gene_axis); mg <- c(gene_axis, gax)
     ds$fields[[paste0("stats_", gp, "_sum")]]   <- list(values = S,  role = "measure", span = sg, provenance = cache)
     ds$fields[[paste0("stats_", gp, "_sumsq")]] <- list(values = SS, role = "measure", span = sg, provenance = cache)
     ds$fields[[paste0("stats_", gp, "_nexpr")]] <- list(values = NE, role = "measure", span = sg, provenance = cache)
-    ds$fields[[paste0("markers_", gp, "_lfc")]]  <- list(values = lfc,  role = "measure", span = mg, provenance = cache)
-    ds$fields[[paste0("markers_", gp, "_padj")]] <- list(values = padj, role = "measure", span = mg, provenance = cache)
+    if (markers) {                                                 # optional 1-vs-rest marker tables (parity with Python markers=)
+      nper <- as.integer(table(factor(lab, levels = groups)))
+      mk <- lstar_cpp_markers_one_vs_rest(gs$sum, gs$n_expr, nper, K, ng, as.double(nc))
+      ds$fields[[paste0("markers_", gp, "_lfc")]]  <- list(values = matrix(mk$lfc,  nrow = ng, ncol = K, byrow = TRUE), role = "measure", span = mg, provenance = cache)
+      ds$fields[[paste0("markers_", gp, "_padj")]] <- list(values = matrix(mk$padj, nrow = ng, ncol = K, byrow = TRUE), role = "measure", span = mg, provenance = cache)
+    }
   }
   if (is.null(primary_code)) primary_code <- integer(nc)
 
   # cell-major counts, physically reordered via the SHARED core reorder (cluster code, then Hilbert of
   # the embedding when present) -- byte-identical to the Python/JS surfaces. counts_cellmajor_order =
   # pos_of (cell -> physical row), so the reader's `<field>_order` sibling coalesces a cluster/lasso read.
-  emb_nm <- .detect_embedding(ds, cell_axis)
-  emb <- if (!is.null(emb_nm)) as.matrix(ds$fields[[emb_nm]]$values)[, 1:2, drop = FALSE] else numeric(0)
-  pos_of <- lstar_cpp_viewer_cell_order(as.integer(primary_code), as.double(emb), nc, .VIEWER_HILBERT_GRID)  # 0-based row
-  perm <- integer(nc); perm[pos_of + 1L] <- seq_len(nc)          # inverse: perm[p] = cell at 1-based row p
+  if (identical(order, "hybrid")) {                              # locality reorder + the _order permutation
+    emb_nm <- .detect_embedding(ds, cell_axis)
+    emb <- if (!is.null(emb_nm)) as.matrix(ds$fields[[emb_nm]]$values)[, 1:2, drop = FALSE] else numeric(0)
+    pos_of <- lstar_cpp_viewer_cell_order(as.integer(primary_code), as.double(emb), nc, .VIEWER_HILBERT_GRID)  # 0-based
+    perm <- integer(nc); perm[pos_of + 1L] <- seq_len(nc)        # inverse: perm[p] = cell at 1-based row p
+    ds$fields[["counts_cellmajor_order"]] <- list(values = as.double(pos_of), role = "measure",
+                                                  span = cell_axis, state = "permutation", provenance = cache)
+  } else {
+    perm <- seq_len(nc)                                          # order="none": rows stay in cell order, no _order
+  }
   ds$fields[["counts_cellmajor"]] <- list(values = methods::as(cnt[perm, , drop = FALSE], "RsparseMatrix"),
                                           role = "measure", span = c(cell_axis, gene_axis),
                                           state = if (!is.null(cf$state)) cf$state else "raw",
                                           encoding = "csr", provenance = cache)
-  ds$fields[["counts_cellmajor_order"]] <- list(values = as.double(pos_of), role = "measure",
-                                                span = cell_axis, state = "permutation", provenance = cache)
 
   if (!("viewer@0.1" %in% ds$profiles)) ds$profiles <- c(ds$profiles, "viewer@0.1")
   if (!methods::is(ds, "lstar_dataset")) class(ds) <- "lstar_dataset"
