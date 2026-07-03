@@ -6,7 +6,7 @@ NULL
 
 #' Read an L* Zarr store into an R dataset.
 #'
-#' @param path path to a `*.lstar.zarr` store
+#' @param path path to a `*.lstar.zarr` store (a directory, or a single-file `*.lstar.zarr.zip`)
 #' @return an `lstar_dataset`: a list with `axes` and `fields`, each field's `values`
 #'   assembled as a base vector, matrix, or `Matrix` sparse matrix.
 #' @examples
@@ -105,7 +105,8 @@ lstar_read <- function(path) {
 #' Write an R dataset to an L* Zarr store.
 #'
 #' @param ds an `lstar_dataset` (as returned by [lstar_read()] or a profile reader)
-#' @param path output store path (a `*.lstar.zarr` directory)
+#' @param path output store path: a `*.lstar.zarr` directory, or a `*.lstar.zarr.zip` to write ONE
+#'   file (every entry STORED so its chunks stay byte-range-readable — see `docs/format.md`)
 #' @param chunk_elems if non-NULL, chunk each array along its first axis so each chunk holds about
 #'   this many elements (e.g. `1e6`). This is what lets a reader stream/block-read only the touched
 #'   chunks (e.g. [lstar_read_block()], `stream_col_stats()`); the default (NULL) writes each array as

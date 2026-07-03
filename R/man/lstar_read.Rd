@@ -7,7 +7,7 @@
 lstar_read(path)
 }
 \arguments{
-\item{path}{path to a \verb{*.lstar.zarr} store}
+\item{path}{path to a \verb{*.lstar.zarr} store (a directory, or a single-file \verb{*.lstar.zarr.zip})}
 }
 \value{
 an \code{lstar_dataset}: a list with \code{axes} and \code{fields}, each field's \code{values}

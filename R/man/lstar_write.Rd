@@ -15,7 +15,8 @@ lstar_write(
 \arguments{
 \item{ds}{an \code{lstar_dataset} (as returned by \code{\link[=lstar_read]{lstar_read()}} or a profile reader)}
 
-\item{path}{output store path (a \verb{*.lstar.zarr} directory)}
+\item{path}{output store path: a \verb{*.lstar.zarr} directory, or a \verb{*.lstar.zarr.zip} to write ONE
+file (every entry STORED so its chunks stay byte-range-readable — see \code{docs/format.md})}
 
 \item{chunk_elems}{if non-NULL, chunk each array along its first axis so each chunk holds about
 this many elements (e.g. \code{1e6}). This is what lets a reader stream/block-read only the touched

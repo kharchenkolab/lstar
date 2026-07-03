@@ -8,12 +8,15 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <map>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -527,9 +530,239 @@ inline std::string opt_str(const json& m, const char* k) {
     return (m.contains(k) && !m[k].is_null()) ? m[k].get<std::string>() : std::string();
 }
 
+// ------------------------------------------------------------ STORED zip ----
+//
+// A `.lstar.zarr.zip` is a normal store packed into ONE file with every entry STORED (no deflate):
+// zarr chunks are already codec-compressed, so re-deflating wastes CPU for ~no gain, and -- the
+// load-bearing reason -- only a STORED entry stays byte-range-readable inside the archive, which is
+// the point of a hosted single file. C++/R read a `.zip` by extracting its STORED entries to a temp
+// dir (a seek + copy, NO decompression -- the STORED win) and running the normal reader; they write
+// one by writing a normal store and packing it. (Reading a chunk's byte range *without* extracting --
+// the remote-hosted case -- is handled on the JS surface, where HTTP Range into the zip is the point.)
+
+namespace zipfmt {
+inline uint16_t rd16(const uint8_t* p) { return (uint16_t)(p[0] | (p[1] << 8)); }
+inline uint32_t rd32(const uint8_t* p) {
+    return (uint32_t)(p[0] | (p[1] << 8) | (p[2] << 16) | ((uint32_t)p[3] << 24));
+}
+inline uint64_t rd64(const uint8_t* p) { uint64_t v = 0; for (int i = 0; i < 8; i++) v |= (uint64_t)p[i] << (8 * i); return v; }
+inline void wr16(std::vector<uint8_t>& o, uint16_t v) { o.push_back(v & 0xff); o.push_back((v >> 8) & 0xff); }
+inline void wr32(std::vector<uint8_t>& o, uint32_t v) { for (int i = 0; i < 4; i++) o.push_back((v >> (8 * i)) & 0xff); }
+inline void wr64(std::vector<uint8_t>& o, uint64_t v) { for (int i = 0; i < 8; i++) o.push_back((v >> (8 * i)) & 0xff); }
+
+inline uint32_t crc32_bytes(const uint8_t* data, size_t n) {  // standard CRC-32 (poly 0xEDB88320), no zlib dep
+    static const std::array<uint32_t, 256> table = [] {
+        std::array<uint32_t, 256> a{};
+        for (uint32_t i = 0; i < 256; i++) {
+            uint32_t c = i;
+            for (int k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320u ^ (c >> 1)) : (c >> 1);
+            a[i] = c;
+        }
+        return a;
+    }();
+    uint32_t c = 0xFFFFFFFFu;
+    for (size_t i = 0; i < n; i++) c = table[(c ^ data[i]) & 0xff] ^ (c >> 8);
+    return c ^ 0xFFFFFFFFu;
+}
+
+inline std::vector<uint8_t> read_range(std::istream& f, uint64_t off, uint64_t n) {
+    f.seekg((std::streamoff)off);
+    std::vector<uint8_t> buf(n);
+    if (n && !f.read((char*)buf.data(), (std::streamsize)n)) throw std::runtime_error("zip: short read");
+    return buf;
+}
+}  // namespace zipfmt
+
+struct ZipIndexEntry { uint64_t data_off; uint64_t size; };
+
+// Parse a zip's central directory (ZIP64-aware) into name -> (data offset, size). STORED-only: a
+// DEFLATE-compressed entry throws a clear, actionable error (a hosted single-file store must be STORED
+// so its chunks stay byte-range-readable).
+inline std::map<std::string, ZipIndexEntry> zip_read_index(std::istream& f, uint64_t fsize,
+                                                           const std::string& forwhat) {
+    using namespace zipfmt;
+    const uint64_t taillen = std::min<uint64_t>(fsize, 65557);
+    std::vector<uint8_t> tail = read_range(f, fsize - taillen, taillen);
+    // locate the End Of Central Directory record (sig 0x06054b50), scanning backward
+    int64_t e = -1;
+    for (int64_t i = (int64_t)tail.size() - 22; i >= 0; --i)
+        if (rd32(&tail[i]) == 0x06054b50u) { e = i; break; }
+    if (e < 0) throw std::runtime_error(forwhat + ": not a zip (no end-of-central-directory record)");
+    uint64_t n_entries = rd16(&tail[e + 10]);
+    uint64_t cd_size = rd32(&tail[e + 12]);
+    uint64_t cd_off = rd32(&tail[e + 16]);
+    if (n_entries == 0xFFFFu || cd_size == 0xFFFFFFFFu || cd_off == 0xFFFFFFFFu) {  // ZIP64
+        int64_t loc = e - 20;
+        if (loc < 0 || rd32(&tail[loc]) != 0x07064b50u)
+            throw std::runtime_error(forwhat + ": ZIP64 end-of-central-directory locator missing");
+        uint64_t z64off = rd64(&tail[loc + 8]);
+        std::vector<uint8_t> z = read_range(f, z64off, 56);
+        if (rd32(&z[0]) != 0x06064b50u) throw std::runtime_error(forwhat + ": bad ZIP64 EOCD record");
+        n_entries = rd64(&z[32]);
+        cd_size = rd64(&z[40]);
+        cd_off = rd64(&z[48]);
+    }
+    std::vector<uint8_t> cd = read_range(f, cd_off, cd_size);
+    std::map<std::string, ZipIndexEntry> idx;
+    std::vector<std::string> deflated;
+    uint64_t p = 0;
+    for (uint64_t i = 0; i < n_entries; i++) {
+        if (p + 46 > cd.size() || rd32(&cd[p]) != 0x02014b50u)
+            throw std::runtime_error(forwhat + ": corrupt central directory");
+        uint16_t method = rd16(&cd[p + 10]);
+        uint64_t usize = rd32(&cd[p + 24]);
+        uint16_t nlen = rd16(&cd[p + 28]);
+        uint16_t elen = rd16(&cd[p + 30]);
+        uint16_t clen = rd16(&cd[p + 32]);
+        uint64_t lho = rd32(&cd[p + 42]);
+        std::string name((const char*)&cd[p + 46], nlen);
+        // ZIP64 extra: fill in whichever of usize/lho were 0xFFFFFFFF, in spec order
+        uint64_t ep = p + 46 + nlen, eend = ep + elen;
+        while (ep + 4 <= eend) {
+            uint16_t hid = rd16(&cd[ep]), hsz = rd16(&cd[ep + 2]);
+            uint64_t q = ep + 4;
+            if (hid == 0x0001) {
+                if (usize == 0xFFFFFFFFu && q + 8 <= eend) { usize = rd64(&cd[q]); q += 8; }
+                if (rd32(&cd[p + 20]) == 0xFFFFFFFFu && q + 8 <= eend) { q += 8; }  // compressed (==usize for STORED)
+                if (lho == 0xFFFFFFFFu && q + 8 <= eend) { lho = rd64(&cd[q]); q += 8; }
+            }
+            ep += 4 + hsz;
+        }
+        if (method != 0) deflated.push_back(name);
+        // data starts after the LOCAL header, whose name/extra lengths can differ from the central's
+        std::vector<uint8_t> lh = zipfmt::read_range(f, lho, 30);
+        uint64_t data_off = lho + 30 + rd16(&lh[26]) + rd16(&lh[28]);
+        idx[name] = ZipIndexEntry{data_off, usize};
+        p += 46 + nlen + elen + clen;
+    }
+    if (!deflated.empty())
+        throw std::runtime_error(
+            forwhat + ": this .lstar.zarr.zip is DEFLATE-compressed (" + std::to_string(deflated.size()) +
+            " entries, e.g. '" + deflated[0] + "') -- a hosted single-file store must be written STORED so "
+            "its chunks stay byte-range-readable. Repack it STORED (lstar convert, or `zip -0 -r`).");
+    return idx;
+}
+
+inline fs::path unique_temp_dir(const std::string& tag) {
+    fs::path base = fs::temp_directory_path();
+    static std::atomic<uint64_t> ctr{0};
+    for (int i = 0; i < 100000; i++) {
+        uint64_t salt = ((uintptr_t)&ctr) ^ (ctr.fetch_add(1) * 0x9E3779B97F4A7C15ull);
+        fs::path p = base / (tag + std::to_string(salt));
+        std::error_code ec;
+        if (fs::create_directory(p, ec)) return p;
+    }
+    throw std::runtime_error("cannot create a unique temp directory under " + base.string());
+}
+
+// Extract every STORED entry of `zippath` into `outdir` (a seek + copy per entry; no decompression).
+inline void zip_extract_to_dir(const fs::path& zippath, const fs::path& outdir) {
+    std::ifstream f(zippath, std::ios::binary | std::ios::ate);
+    if (!f) throw std::runtime_error("cannot open " + zippath.string());
+    uint64_t fsize = (uint64_t)f.tellg();
+    auto idx = zip_read_index(f, fsize, zippath.string());
+    for (auto& kv : idx) {
+        if (kv.first.empty() || kv.first.back() == '/') continue;   // skip directory entries
+        fs::path out = outdir / kv.first;
+        fs::create_directories(out.parent_path());
+        auto bytes = zipfmt::read_range(f, kv.second.data_off, kv.second.size);
+        write_bytes(out, bytes.data(), bytes.size());
+    }
+}
+
+// Pack a directory store into ONE file with every entry STORED (ZIP64-aware for >4GB / >65535 entries).
+inline void pack_stored_zip(const fs::path& srcdir, const fs::path& zippath) {
+    using namespace zipfmt;
+    std::vector<std::pair<std::string, fs::path>> files;
+    for (auto& en : fs::recursive_directory_iterator(srcdir)) {
+        if (!en.is_regular_file()) continue;
+        files.push_back({fs::relative(en.path(), srcdir).generic_string(), en.path()});
+    }
+    auto is_meta = [](const std::string& a) {                       // basename starts ".z" (.zarray/.zattrs/.z*)
+        size_t s = a.rfind('/'); return a.compare(s == std::string::npos ? 0 : s + 1, 2, ".z") == 0;
+    };
+    std::sort(files.begin(), files.end(), [&](const auto& a, const auto& b) {  // metadata first, then by name
+        bool am = is_meta(a.first), bm = is_meta(b.first);
+        return am != bm ? am : a.first < b.first;
+    });
+    std::ofstream out(zippath, std::ios::binary);
+    if (!out) throw std::runtime_error("cannot write " + zippath.string());
+    struct CD { std::string name; uint32_t crc; uint64_t size, off; };
+    std::vector<CD> cds;
+    uint64_t offset = 0;
+    for (auto& fp : files) {
+        std::vector<uint8_t> data = read_bytes(fp.second);
+        uint32_t crc = crc32_bytes(data.data(), data.size());
+        uint64_t sz = data.size();
+        bool z64 = sz >= 0xFFFFFFFFull;
+        std::vector<uint8_t> extra;
+        if (z64) { wr16(extra, 0x0001); wr16(extra, 16); wr64(extra, sz); wr64(extra, sz); }
+        std::vector<uint8_t> lh;
+        wr32(lh, 0x04034b50); wr16(lh, z64 ? 45 : 20); wr16(lh, 0); wr16(lh, 0);
+        wr16(lh, 0); wr16(lh, 0x21); wr32(lh, crc);
+        wr32(lh, z64 ? 0xFFFFFFFFu : (uint32_t)sz); wr32(lh, z64 ? 0xFFFFFFFFu : (uint32_t)sz);
+        wr16(lh, (uint16_t)fp.first.size()); wr16(lh, (uint16_t)extra.size());
+        lh.insert(lh.end(), fp.first.begin(), fp.first.end());
+        lh.insert(lh.end(), extra.begin(), extra.end());
+        out.write((char*)lh.data(), (std::streamsize)lh.size());
+        out.write((char*)data.data(), (std::streamsize)data.size());
+        cds.push_back({fp.first, crc, sz, offset});
+        offset += lh.size() + data.size();
+    }
+    uint64_t cd_start = offset;
+    std::vector<uint8_t> cd;
+    for (auto& c : cds) {
+        bool zsz = c.size >= 0xFFFFFFFFull, zoff = c.off >= 0xFFFFFFFFull, z64 = zsz || zoff;
+        std::vector<uint8_t> extra;
+        if (z64) {
+            std::vector<uint8_t> body;
+            if (zsz) { wr64(body, c.size); wr64(body, c.size); }
+            if (zoff) { wr64(body, c.off); }
+            wr16(extra, 0x0001); wr16(extra, (uint16_t)body.size());
+            extra.insert(extra.end(), body.begin(), body.end());
+        }
+        wr32(cd, 0x02014b50); wr16(cd, z64 ? 45 : 20); wr16(cd, z64 ? 45 : 20); wr16(cd, 0);
+        wr16(cd, 0); wr16(cd, 0); wr16(cd, 0x21); wr32(cd, c.crc);
+        wr32(cd, zsz ? 0xFFFFFFFFu : (uint32_t)c.size); wr32(cd, zsz ? 0xFFFFFFFFu : (uint32_t)c.size);
+        wr16(cd, (uint16_t)c.name.size()); wr16(cd, (uint16_t)extra.size());
+        wr16(cd, 0); wr16(cd, 0); wr16(cd, 0); wr32(cd, 0);
+        wr32(cd, zoff ? 0xFFFFFFFFu : (uint32_t)c.off);
+        cd.insert(cd.end(), c.name.begin(), c.name.end());
+        cd.insert(cd.end(), extra.begin(), extra.end());
+    }
+    out.write((char*)cd.data(), (std::streamsize)cd.size());
+    uint64_t cd_size = cd.size(), nrec = cds.size();
+    bool need_z64 = nrec >= 0xFFFFu || cd_start >= 0xFFFFFFFFull || cd_size >= 0xFFFFFFFFull;
+    if (need_z64) {
+        uint64_t z64eocd = cd_start + cd_size;
+        std::vector<uint8_t> z;
+        wr32(z, 0x06064b50); wr64(z, 44); wr16(z, 45); wr16(z, 45); wr32(z, 0); wr32(z, 0);
+        wr64(z, nrec); wr64(z, nrec); wr64(z, cd_size); wr64(z, cd_start);
+        wr32(z, 0x07064b50); wr32(z, 0); wr64(z, z64eocd); wr32(z, 1);
+        out.write((char*)z.data(), (std::streamsize)z.size());
+    }
+    std::vector<uint8_t> eo;
+    wr32(eo, 0x06054b50); wr16(eo, 0); wr16(eo, 0);
+    wr16(eo, nrec >= 0xFFFFu ? 0xFFFFu : (uint16_t)nrec);
+    wr16(eo, nrec >= 0xFFFFu ? 0xFFFFu : (uint16_t)nrec);
+    wr32(eo, cd_size >= 0xFFFFFFFFull ? 0xFFFFFFFFu : (uint32_t)cd_size);
+    wr32(eo, cd_start >= 0xFFFFFFFFull ? 0xFFFFFFFFu : (uint32_t)cd_start);
+    wr16(eo, 0);
+    out.write((char*)eo.data(), (std::streamsize)eo.size());
+}
+
 // ------------------------------------------------------------ dataset IO ----
 
 inline Dataset read(const fs::path& root) {
+    if (root.extension() == ".zip") {                 // single-file .lstar.zarr.zip: extract, read, clean up
+        fs::path tmp = unique_temp_dir("lstar_unzip_");
+        try {
+            zip_extract_to_dir(root, tmp);
+            Dataset ds = read(tmp);
+            fs::remove_all(tmp);
+            return ds;
+        } catch (...) { std::error_code ec; fs::remove_all(tmp, ec); throw; }
+    }
     json rmeta = read_json(root / ".zattrs")["lstar"];
     Dataset ds;
     ds.kind = rmeta.value("kind", std::string("sample"));
@@ -627,6 +860,15 @@ inline Dataset read(const fs::path& root) {
 
 inline void write(const Dataset& ds, const fs::path& root,
                   int64_t chunk_elems = 0, const json& compressor = json(nullptr)) {
+    if (root.extension() == ".zip") {                 // single-file .lstar.zarr.zip: write a dir, pack STORED
+        fs::path tmp = unique_temp_dir("lstar_zip_");
+        try {
+            write(ds, tmp, chunk_elems, compressor);  // recurse into the directory path (writes + consolidates)
+            pack_stored_zip(tmp, root);
+            fs::remove_all(tmp);
+            return;
+        } catch (...) { std::error_code ec; fs::remove_all(tmp, ec); throw; }
+    }
     if (fs::exists(root)) fs::remove_all(root);
 
     std::vector<std::string> axnames, fnames;

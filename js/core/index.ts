@@ -17,3 +17,9 @@ export type { CountsBasis } from "./basis.ts";
 // store implementing the optional `getRange`; NodeFSStore is in ./node-store.ts (imported separately
 // so the browser bundle never pulls in node:fs).
 export { HttpStore } from "./http-store.ts";
+// Single-file `.lstar.zarr.zip` (STORED): ZipStore reads a chunk by ONE range read into the archive
+// (HTTP Range or file pread), no extraction — the reason the archive must be STORED. httpZipSource wraps
+// a URL as the byte source; packStoredZip writes an in-memory store to a STORED zip. Node file/dir
+// helpers (nodeFileSource, openLstarZip, packStoredZipDir, writeStoreZip) live in ./zip-node.ts.
+export { ZipStore, httpZipSource, packStoredZip, crc32, readZipCentralDir } from "./zip.ts";
+export type { ByteSource } from "./zip.ts";

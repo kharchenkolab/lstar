@@ -1,5 +1,14 @@
 # lstar (development version)
 
+## Single-file `.lstar.zarr.zip` packaging
+
+* `lstar_read()` / `lstar_write()` now accept a single-file `*.lstar.zarr.zip` (a store packed into ONE
+  file with every entry **STORED**, so its already-compressed chunks stay byte-range-readable when
+  hosted — the point of a single file). Writing forces STORED (never DEFLATE) and is ZIP64-aware;
+  reading a DEFLATE-packed `.lstar.zarr.zip` is rejected with a clear message. R rides the C++ core's
+  `.zip` dispatch, so it reads/writes the same artifact as Python, C++, and the browser (JS reads a
+  *hosted* zip by HTTP range). See `docs/format.md` §Packaging; enforced by `conformance/zip_r.sh`.
+
 ## viewer@0.1 cross-language parity
 
 * `extend_for_viewer` now yields a store field-for-field identical to the Python and JS/WASM preps.

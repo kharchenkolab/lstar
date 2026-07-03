@@ -26,6 +26,13 @@ bounded memory, so multi-gigabyte datasets convert on a laptop.
 
 `conformance/` holds the shared round-trip / cross-format / cross-language test suite.
 
+## Scope vs pagoda3
+
+lstar owns the shared substrate — the model, the on-disk format, all four surfaces, and every reusable
+building block: Zarr IO, the fast kernels, and the JS/WASM **reader, store backends, and
+viewer-extension prep**. pagoda3 is a *downstream app/viewer* that consumes these; anything reusable by
+another consumer belongs in lstar (on whatever surfaces need it), not pagoda3.
+
 ## Core aim: cross-language consistency
 
 **We aim to implement consistent logic and feature sets across C++, Python, R, and JS/WASM — ideally

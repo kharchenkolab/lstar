@@ -239,9 +239,40 @@ without duplication; bundling and splitting are lossless. *(lstar today writes s
 collections are written as a single store with per-sample axes/fields — the `samples/<id>/` sub-store
 and `members` reference layouts are specified but not yet emitted.)*
 
+### Single-file `.lstar.zarr.zip` (STORED)
+
+A store can be packaged as **one file** — a `.lstar.zarr.zip`: the same directory store, zipped with
+every entry **STORED (no deflate)**. This is the artifact to host or hand around; the directory form
+stays the default *working* format (a zip is append-only, so it can't back an "open → add a field →
+resave" or stream-in-place workflow).
+
+**STORED is a requirement, not a preference — for two reasons:**
+
+1. **No double compression.** Zarr chunks are already codec-compressed (gzip/…), so re-deflating them
+   in the zip layer costs CPU for essentially no size gain.
+2. **Byte-range readability.** Only a STORED entry is readable by byte range *inside* the archive. A
+   hosted single file is read by issuing an HTTP `Range` into the zip for one chunk (lstar's JS
+   `ZipStore` / `httpZipSource`, or zarrita's `ZipFileStore`); a DEFLATE-compressed entry would force
+   fetching and inflating the whole entry, silently defeating range access. lstar therefore **forces
+   STORED on every `.zip` write** (regardless of a chunk `compressor=`) and **rejects a DEFLATE-packed
+   `.lstar.zarr.zip` on read** with an actionable message (repack it STORED). Large stores (>4 GB or
+   >65535 entries) use **ZIP64** transparently.
+
+**Produce one** (all forced STORED): `lstar convert dir.lstar.zarr out.lstar.zarr.zip` (repackage a
+directory store), `lstar convert … --viewer out.lstar.zarr.zip` (a single-file *viewer* store — the
+hosted-viewer artifact), or from a library — Python `lstar.write(ds, "x.lstar.zarr.zip")`, R
+`lstar_write(ds, "x.lstar.zarr.zip")`, JS `writeStoreZip("x.lstar.zarr.zip", ds)`.
+
+**Read one** on any surface: Python `lstar.read("x.lstar.zarr.zip")` (over zarr's `ZipStore`), R
+`lstar_read(...)` and C++ `lstar::read(...)` (extract the STORED entries locally, then read — a copy
+with no decompression), and JS `ZipStore.open(nodeFileSource(path))` for a local file or
+`ZipStore.open(httpZipSource(url))` for a **hosted** zip (the seek-into-zip path that makes a
+single URL a range-served store).
+
 ## Cross-implementation guarantee
 
 The same store reads byte-faithfully from **Python, R, C++, and the browser (WASM/zarrita)**. A store
 written by any one reads in the others with identical field values (counts sums, graph nnz,
-embeddings); chunked + gzip stores round-trip across all of them. This is enforced by the conformance
-suite ([`../conformance/`](../conformance)).
+embeddings); chunked + gzip stores round-trip across all of them, as does the single-file
+`.lstar.zarr.zip` packaging. This is enforced by the conformance suite
+([`../conformance/`](../conformance) — e.g. `zip.sh` / `zip_r.sh` / `zip_js.sh`).

@@ -11,7 +11,9 @@ back to the direct codec otherwise; when neither can handle something, lstar say
 
 Format detection (override with ``--from`` / ``--to``):
   ``.h5ad`` → anndata · ``.h5mu`` → mudata · ``.rds`` → rds (Seurat/SCE, sniffed R-side) ·
-  ``.lstar.zarr`` / ``.zarr`` / a Zarr directory → store
+  ``.lstar.zarr`` / ``.zarr`` / a Zarr directory → store · ``.lstar.zarr.zip`` / ``.zip`` → store
+  (a single STORED-zip file — see docs/format.md §Packaging; ``convert dir.lstar.zarr out.lstar.zarr.zip``
+  repackages a directory store as one file, ``--viewer out.lstar.zarr.zip`` emits a single-file viewer store)
 """
 from __future__ import annotations
 
@@ -75,13 +77,16 @@ def _direct_anndata_write(ds, dst):
 _DIRECT_PY_READ["anndata"] = _direct_anndata_read
 _DIRECT_PY_WRITE["anndata"] = _direct_anndata_write
 
-# Extension → format (longest/most-specific first).
+# Extension → format (longest/most-specific first). A `.zip` is a single-file STORED store
+# (`.lstar.zarr.zip`); lstar.read/write dispatch on the `.zip` suffix, so it routes as a plain "store".
 _EXT = [(".h5ad", "anndata"), (".h5mu", "mudata"), (".rds", "rds"),
+        (".lstar.zarr.zip", "store"), (".zarr.zip", "store"), (".zip", "store"),
         (".lstar.zarr", "store"), (".zarr", "store")]
 # --from/--to aliases.
 _ALIAS = {"h5ad": "anndata", "ad": "anndata", "adata": "anndata",
           "h5mu": "mudata", "md": "mudata",
           "zarr": "store", "lstar": "store", "lstar.zarr": "store",
+          "zip": "store", "lstar.zarr.zip": "store", "zarr.zip": "store",
           "rds": "rds", "seurat": "seurat", "sce": "sce",
           "singlecellexperiment": "sce"}
 

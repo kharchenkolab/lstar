@@ -54,6 +54,12 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_L
   target_link_libraries(test_viewer PRIVATE stdc++fs)
 endif()
 
+add_executable(test_zip test/test_zip.cpp)
+target_link_libraries(test_zip PRIVATE lstar)
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 11)
+  target_link_libraries(test_zip PRIVATE stdc++fs)
+endif()
+
 enable_testing()
 add_test(NAME crossimpl COMMAND test_crossimpl)
 add_test(NAME bench COMMAND bench_colstats)

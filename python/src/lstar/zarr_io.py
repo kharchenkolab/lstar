@@ -10,6 +10,7 @@ Cross-language notes (so the C++ core can read these stores):
   - targets Zarr v2 here (Python 3.8); written to be v3-ready.
 """
 import json
+import os
 
 import numpy as np
 import scipy.sparse as sp
@@ -47,6 +48,12 @@ def write(ds, path, compressor=None, chunk_elems=None, stream=False, viewer=Fals
         extend_for_viewer(ds)
     if stream and chunk_elems is None:
         chunk_elems = 1_000_000
+    is_zip = str(path).endswith(".zip")
+    _zip_target = None
+    if is_zip:                                         # single-file .lstar.zarr.zip: write a dir, pack STORED
+        import tempfile
+        _zip_target = str(path)
+        path = tempfile.mkdtemp(suffix=".lstar.zarr")
     root = zarr.open_group(path, mode="w")
     axg = root.create_group("axes")
     flg = root.create_group("fields")
@@ -97,18 +104,69 @@ def write(ds, path, compressor=None, chunk_elems=None, stream=False, viewer=Fals
                          "profiles": list(ds.profiles), "dropped": list(ds.dropped),
                          "axes": list(ds.axes), "fields": list(ds.fields), "passthrough": list(aux)}
     zarr.consolidate_metadata(path)
+    if is_zip:                                         # pack the finished store into ONE file, every entry STORED
+        import shutil
+        _pack_stored_zip(path, _zip_target)
+        shutil.rmtree(path, ignore_errors=True)
+        return _zip_target
     return path
+
+
+def _pack_stored_zip(src_dir, zippath):
+    """Pack a directory store into `zippath` as ONE file with every entry STORED (no deflate).
+
+    A `.lstar.zarr.zip` is always STORED: zarr chunks are already codec-compressed, so re-deflating
+    them wastes CPU for ~no gain, and — the load-bearing reason — only a STORED entry stays
+    byte-range-readable inside the archive, which is the whole point of a hosted single file (a
+    reader issues one HTTP Range into the zip for a chunk; a deflated entry would force fetching +
+    inflating the whole entry). Going via a directory (rather than zarr's ZipStore) keeps the write
+    path identical to a normal store — the streaming writer's array resizes can't leave duplicate
+    zip entries, and a `compressor=` argument only ever compresses the inner chunks, never the zip."""
+    import zipfile
+    src_dir = str(src_dir)
+    entries = []
+    for root, _dirs, files in os.walk(src_dir):
+        for fn in files:
+            fp = os.path.join(root, fn)
+            arc = os.path.relpath(fp, src_dir).replace(os.sep, "/")
+            entries.append((arc, fp))
+    # deterministic archive; metadata (.z*) first so a reader hits the manifest early
+    entries.sort(key=lambda e: (not os.path.basename(e[0]).startswith(".z"), e[0]))
+    with zipfile.ZipFile(zippath, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as zf:
+        for arc, fp in entries:
+            zf.write(fp, arcname=arc)
 
 
 def _open_root(path):
     """Open the store root, preferring consolidated metadata (one read, no listing)."""
-    import os
+    if str(path).endswith(".zip"):
+        return _open_zip_root(path)
     if os.path.exists(os.path.join(str(path), ".zmetadata")):
         try:
             return zarr.open_consolidated(path, mode="r")
         except Exception:
             pass
     return zarr.open_group(path, mode="r")
+
+
+def _open_zip_root(path):
+    """Open a single-file `.lstar.zarr.zip`. Reject a DEFLATE-packed archive with a clear message: a
+    hosted single-file store must be STORED so its chunks stay byte-range-readable (a deflated entry
+    silently defeats the range access that is the point of the single file). The open ZipStore is held
+    alive by the returned group's arrays, so lazy reads stream chunks straight from the zip."""
+    import zipfile
+    with zipfile.ZipFile(str(path)) as z:
+        bad = [i.filename for i in z.infolist() if i.compress_type != zipfile.ZIP_STORED]
+    if bad:
+        raise ValueError(
+            f"{path}: this .lstar.zarr.zip is DEFLATE-compressed ({len(bad)} of its entries, "
+            f"e.g. {bad[0]!r}) — a hosted single-file store must be written STORED so its chunks "
+            f"stay byte-range-readable. Repack it STORED (via `lstar convert`, or `zip -0 -r`).")
+    store = zarr.ZipStore(str(path), mode="r")
+    try:
+        return zarr.open_consolidated(store=store, mode="r")
+    except Exception:
+        return zarr.open_group(store=store, mode="r")
 
 
 def read(path, lazy=False):

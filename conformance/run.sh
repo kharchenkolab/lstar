@@ -129,6 +129,10 @@ echo "== chunked+gzip conformance (Python -> C++ -> Python) =="
 bash conformance/chunked.sh >/tmp/lstar_chunk.log 2>&1 \
   && pass "chunked+compressed cross-impl + transpose" || { echo "  FAIL chunked"; tail -15 /tmp/lstar_chunk.log; exit 1; }
 
+echo "== single-file .lstar.zarr.zip parity (Python + C++ + CLI + R + JS; STORED + ZIP64) =="
+bash conformance/zip.sh >/tmp/lstar_zip.log 2>&1 \
+  && pass "single-file .lstar.zarr.zip cross-surface parity" || { echo "  FAIL zip"; tail -25 /tmp/lstar_zip.log; exit 1; }
+
 echo "== blocked-reader conformance (R/C++ bounded col stats == full read) =="
 bash conformance/stream_reduce.sh >/tmp/lstar_sr.log 2>&1 \
   && pass "blocked col-stats reducer matches full read" || { echo "  FAIL stream_reduce"; tail -15 /tmp/lstar_sr.log; exit 1; }

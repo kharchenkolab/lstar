@@ -77,8 +77,20 @@ list (from the parity audit) so a real gap is never confused with an intentional
 - **Content-based `state` inference is AnnData-scoped.** The AnnData reader (native *and* direct, now in
   agreement) infers raw/lognorm/scaled from content; the R Seurat/SCE profiles infer `state` from the slot
   name (reliable for canonical `counts`/`data`/`logcounts`/`scale.data` slots).
+- **Single-file `.lstar.zarr.zip` is uniform (read + write) on all four surfaces** — not a tier. The
+  STORED constraint (see docs/format.md §Packaging) makes every reader a seek + copy with no zip-layer
+  codec, so the *implementations* differ by each surface's **role, not capability**: JS reads a *hosted*
+  zip by issuing an HTTP `Range` into the archive (`ZipStore` / `httpZipSource` — the reason STORED
+  matters); C++/R read a *local* zip by extracting its STORED entries to a temp dir (a copy, no
+  decompression) and running the normal reader; Python uses zarr's `ZipStore`. Writers all pack STORED
+  (ZIP64-aware) and reject a DEFLATE `.zip` on read. Enforced by `zip.sh` / `zip_r.sh` / `zip_js.sh`.
 
 **Scoped / follow-up (a real gap, intentionally deferred — do not silently widen):**
+- **Streaming reductions directly from a `.zip`** are not wired: the bounded-memory `stream_col_stats` /
+  block readers run over a *directory* store, and C++/R read a `.zip` by extracting it first (so a huge
+  single-file store is materialized to a temp dir before streaming). JS's `ZipStore` *is* range-capable
+  but isn't threaded into the streaming reducers yet. Fine for the current use (stream over a directory;
+  load/host a single file); revisit if bounded-memory streaming over a huge single-file store is needed.
 - **DE analysis API (`pseudobulk`, `collection_pseudobulk`, `de_bundle`, `de_factors`) is Python-only**, but
   its per-(group,gene) reduction now routes through the shared `col_sum_by_group` core kernel (was a numpy
   per-group loop that duplicated it). The interactive selection-DE in the pagoda3 viewer is a *separate* JS
