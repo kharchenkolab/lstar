@@ -26,11 +26,11 @@ fields that matter (the stats match exactly; the marker ``lfc``/``padj`` match t
 import numpy as np
 import scipy.sparse as sp
 
-from .kernels import col_sum_by_group, markers_one_vs_rest, overdispersion, cell_order
+from .kernels import col_sum_by_group, markers_one_vs_rest, overdispersion, cell_order, _N_GRID
 from .model import as_categorical, _is_categorical
 
 VIEWER_PROFILE = "viewer@0.1"
-N_GRID = 1024                                          # Hilbert grid resolution (must be a power of two)
+N_GRID = _N_GRID                                       # single grid source lives in kernels (was a 2nd copy)
 
 
 # ---------------------------------------------------------------------------------------------------
@@ -41,6 +41,9 @@ N_GRID = 1024                                          # Hilbert grid resolution
 # (policy.ts) must match; enforced against conformance/viewer_policy.json by conformance/policy_linter.py.
 _PREFERRED_GROUPINGS = ("leiden", "cluster", "clusters", "cell_type", "celltype", "cell_types",
                         "louvain", "seurat_clusters", "annotation", "cluster_label")
+_MIN_GROUPS, _MAX_GROUPS = 2, 60                       # single-sourced with viewer_policy.json (policy_linter)
+_LOGNORM_NAMES = ("X", "data", "logcounts")            # lognorm measure-name fallback (no state=="lognorm" match)
+_PREFERRED_EMBEDDINGS = ("umap",)
 
 
 def _label_codes(ds, name):
@@ -59,7 +62,7 @@ def _label_codes(ds, name):
     return np.asarray(groups, dtype=str), np.asarray(codes, dtype=np.int32)
 
 
-def _detect_groupings(ds, min_groups=2, max_groups=60):
+def _detect_groupings(ds, min_groups=_MIN_GROUPS, max_groups=_MAX_GROUPS):
     """Categorical cell labels usable as groupings: a ``label``-role field over the cell axis with
     2..~max_groups distinct values. Names that look like a clustering / cell-type annotation are
     preferred (and sorted to the front); near-unique id-like labels are skipped.
@@ -102,7 +105,8 @@ def _detect_embedding(ds):
             cands.append(name)
     if not cands:
         return None
-    cands.sort(key=lambda nm: (0 if "umap" in nm.lower() else 1, nm))
+    cands.sort(key=lambda nm: (next((i for i, p in enumerate(_PREFERRED_EMBEDDINGS) if p in nm.lower()),
+                                    len(_PREFERRED_EMBEDDINGS)), nm))
     return cands[0]
 
 
@@ -139,7 +143,7 @@ def _select_counts_basis(ds, counts=None, basis=None):
         return counts, (basis != "lognorm" and ds.field(counts).state != "lognorm")
     if basis == "lognorm":
         pick = next((n for n in twod if ds.field(n).state == "lognorm"), None) \
-            or next((n for n in twod if n in ("X", "data", "logcounts")), None)
+            or next((n for n in twod if n in _LOGNORM_NAMES), None)
         if pick is None:
             raise ValueError("extend_for_viewer: basis='lognorm' but no log-normalized measure "
                              "found (present: %s)" % present)

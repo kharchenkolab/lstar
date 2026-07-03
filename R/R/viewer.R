@@ -8,6 +8,19 @@
 # and js/core/policy.ts; enforced against conformance/viewer_policy.json by conformance/policy_linter.py).
 .VIEWER_PREFERRED_GROUPINGS <- c("leiden", "cluster", "clusters", "cell_type", "celltype", "cell_types",
                                  "louvain", "seurat_clusters", "annotation", "cluster_label")
+.VIEWER_MIN_GROUPS <- 2L; .VIEWER_MAX_GROUPS <- 60L    # single-sourced with viewer_policy.json (policy_linter)
+.VIEWER_LOGNORM_NAMES <- c("X", "data", "logcounts")   # lognorm measure-name fallback
+.VIEWER_PREFERRED_EMBEDDINGS <- c("umap")
+.VIEWER_HILBERT_GRID <- 1024L
+
+# Preference rank of an embedding name (mirrors .viewer_grouping_rank): first preferred term that is a
+# substring of the lowercased name; non-matches rank last.
+.viewer_embedding_rank <- function(nm) {
+  low <- tolower(nm)
+  for (i in seq_along(.VIEWER_PREFERRED_EMBEDDINGS))
+    if (grepl(.VIEWER_PREFERRED_EMBEDDINGS[i], low, fixed = TRUE)) return(i)
+  length(.VIEWER_PREFERRED_EMBEDDINGS) + 1L
+}
 
 # Preference rank of a label name: index of the first preferred term that is a substring of the lowercased
 # name (matches sort first, by list position); non-matches rank last. Mirrors Python `_rank`.
@@ -30,7 +43,7 @@
     v <- f$values
     if (!is.factor(v) && !is.character(v)) next           # string-like labels only (match Python: skip numeric/logical)
     lv <- if (is.factor(v)) levels(v) else unique(v[!is.na(v)])
-    if (length(lv) >= 2L && length(lv) <= 60L) cand <- c(cand, nm)
+    if (length(lv) >= .VIEWER_MIN_GROUPS && length(lv) <= .VIEWER_MAX_GROUPS) cand <- c(cand, nm)
   }
   if (!length(cand))
     stop("extend_for_viewer: no categorical grouping (2..60 levels) over '", cell_axis,
@@ -53,7 +66,7 @@
     cand <- c(cand, nm)
   }
   if (!length(cand)) return(NULL)
-  cand[order(!grepl("umap", tolower(cand)), cand)][1]
+  cand[order(vapply(cand, .viewer_embedding_rank, integer(1)), cand)][1]
 }
 
 #' Extend an L* dataset with the viewer@0.1 navigator fields (native R).
@@ -129,7 +142,7 @@ extend_for_viewer <- function(ds, grouping = NULL, also = character(0), counts =
   # pos_of (cell -> physical row), so the reader's `<field>_order` sibling coalesces a cluster/lasso read.
   emb_nm <- .detect_embedding(ds, cell_axis)
   emb <- if (!is.null(emb_nm)) as.matrix(ds$fields[[emb_nm]]$values)[, 1:2, drop = FALSE] else numeric(0)
-  pos_of <- lstar_cpp_viewer_cell_order(as.integer(primary_code), as.double(emb), nc, 1024L)  # 0-based row
+  pos_of <- lstar_cpp_viewer_cell_order(as.integer(primary_code), as.double(emb), nc, .VIEWER_HILBERT_GRID)  # 0-based row
   perm <- integer(nc); perm[pos_of + 1L] <- seq_len(nc)          # inverse: perm[p] = cell at 1-based row p
   ds$fields[["counts_cellmajor"]] <- list(values = methods::as(cnt[perm, , drop = FALSE], "RsparseMatrix"),
                                           role = "measure", span = c(cell_axis, gene_axis),
@@ -159,7 +172,7 @@ extend_for_viewer <- function(ds, grouping = NULL, also = character(0), counts =
   }
   if (identical(basis, "lognorm")) {
     pick <- twod[vapply(twod, function(nm) identical(st(nm), "lognorm"), logical(1))]
-    if (!length(pick)) pick <- intersect(c("X", "data", "logcounts"), twod)
+    if (!length(pick)) pick <- twod[twod %in% .VIEWER_LOGNORM_NAMES]  # FIELD order (match Py/JS), not name-list order
     if (!length(pick))
       stop(sprintf("extend_for_viewer: basis='lognorm' but no log-normalized measure found (present: %s)", present), call. = FALSE)
     return(list(name = pick[1], log1p = FALSE))

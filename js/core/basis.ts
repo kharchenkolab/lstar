@@ -7,6 +7,7 @@
 // Returns { field, log1p }: `log1p` is true for a RAW basis (the kernels log1p it) and false for a
 // LOGNORM basis (values used as-is → stats are var-of-lognorm, not var-of-log1p(counts)).
 import type { FieldMeta } from "./reader.ts";
+import { LOGNORM_NAMES } from "./policy.ts";
 
 export interface CountsBasis { field: string; log1p: boolean; }
 
@@ -30,7 +31,7 @@ export function selectCountsBasis(ds: DatasetLike, opts: { counts?: string; basi
   }
   // explicit lognorm basis — a log-normalized measure (by state, else the usual names), used as-is.
   if (basis === "lognorm") {
-    const pick = twod.find((n) => ds.field(n)!.state === "lognorm") ?? twod.find((n) => ["X", "data", "logcounts"].includes(n));
+    const pick = twod.find((n) => ds.field(n)!.state === "lognorm") ?? twod.find((n) => LOGNORM_NAMES.includes(n));
     if (!pick) throw new Error(`extendForViewer: basis="lognorm" but no log-normalized measure found (present: ${present})`);
     return { field: pick, log1p: false };
   }

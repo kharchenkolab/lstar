@@ -1,6 +1,9 @@
 {
-  "_comment": "Canonical viewer@0.1 grouping-detection policy -- the SINGLE source the Python, R, and JS surfaces must match. Each surface keeps its own copy for runtime independence; conformance/policy_linter.py asserts all three equal this file. Edit here first, then update every surface + re-run the linter.",
+  "_comment": "Canonical viewer@0.1 policy -- the SINGLE source the Python, R, and JS surfaces must match. Each surface keeps its own copy for runtime independence; conformance/policy_linter.py asserts all three equal this file. Edit here first, then update every surface + re-run the linter.",
   "preferred_groupings": ["leiden", "cluster", "clusters", "cell_type", "celltype", "cell_types", "louvain", "seurat_clusters", "annotation", "cluster_label"],
   "min_groups": 2,
-  "max_groups": 60
+  "max_groups": 60,
+  "lognorm_name_fallback": ["X", "data", "logcounts"],
+  "preferred_embeddings": ["umap"],
+  "hilbert_grid": 1024
 }

@@ -10,7 +10,7 @@
 import { openLstar, type LstarDataset } from "./reader.ts";
 import { addToStore, type FieldSpec, type AxisSpec, type LstarWritableStore } from "./writer.ts";
 import { selectCountsBasis } from "./basis.ts";
-import { MIN_GROUPS, MAX_GROUPS, groupingRank } from "./policy.ts";
+import { MIN_GROUPS, MAX_GROUPS, groupingRank, embeddingRank, HILBERT_GRID } from "./policy.ts";
 import createLstarKernels from "../dist/lstar_kernels.mjs";
 
 const VIEWER_PROFILE = "viewer@0.1";
@@ -74,7 +74,7 @@ function detectEmbedding(ds: LstarDataset, cellAxis: string): string | null {
     cands.push(name);
   }
   if (!cands.length) return null;
-  cands.sort((a, b) => (/umap/i.test(a) ? 0 : 1) - (/umap/i.test(b) ? 0 : 1) || (a < b ? -1 : a > b ? 1 : 0));
+  cands.sort((a, b) => embeddingRank(a) - embeddingRank(b) || (a < b ? -1 : a > b ? 1 : 0));
   return cands[0];
 }
 
@@ -159,7 +159,7 @@ export async function extendForViewer(store: LstarWritableStore, opts: ExtendOpt
   const primaryCodes = (await labelCodes(ds, groupings[0])).codes;
   const embName = detectEmbedding(ds, cellAxis);
   const emb = embName ? await readEmbedding2(ds, embName, ncells) : null;
-  const posOf: Int32Array = M.viewerCellOrder(primaryCodes, emb, ncells, 1024);
+  const posOf: Int32Array = M.viewerCellOrder(primaryCodes, emb, ncells, HILBERT_GRID);
   const perm = new Int32Array(ncells); for (let i = 0; i < ncells; i++) perm[posOf[i]] = i;
   const csr = reorderCsrRows(M.cscToCsr(cscData, cscIndices, cscIndptr, ncells, ngenes), perm);
   const order = new Float64Array(ncells); for (let i = 0; i < ncells; i++) order[i] = posOf[i];
