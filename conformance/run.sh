@@ -51,6 +51,10 @@ echo "== aux passthrough conformance (uns/@misc subtree round-trips verbatim acr
 bash conformance/passthrough.sh >/tmp/lstar_aux.log 2>&1 \
   && pass "lossless passthrough subtree round-trips Py<->C++<->R" || { echo "  FAIL aux"; tail -15 /tmp/lstar_aux.log; exit 1; }
 
+echo "== R-path fidelity (float32 dtype + graph directed/weighted survive Py->R->Py) =="
+bash conformance/r_fidelity.sh >/tmp/lstar_rfid.log 2>&1 \
+  && pass "value dtype + directed/weighted preserved through the R path" || { echo "  FAIL r_fidelity"; tail -12 /tmp/lstar_rfid.log; exit 1; }
+
 echo "== DE-bundle conformance (rank_genes_groups -> (factor,genes) bundle; lstar_markers in Py + R) =="
 bash conformance/de.sh >/tmp/lstar_de.log 2>&1 \
   && pass "DE bundle round-trips + tidy markers (Py + R)" || { echo "  FAIL de"; tail -15 /tmp/lstar_de.log; exit 1; }

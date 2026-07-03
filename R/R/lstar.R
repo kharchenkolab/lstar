@@ -175,6 +175,9 @@ lstar_write <- function(ds, path, chunk_elems = NULL, compression = c("none", "g
       else if (is.character(f$provenance) && nzchar(f$provenance[1]))    # or an opaque JSON string (back-compat)
         out$provenance <- f$provenance[1]
     }
+    if (!is.null(f$directed)) out$directed <- as.logical(f$directed)[1]  # graph relation flags round-trip (T1.4)
+    if (!is.null(f$weighted)) out$weighted <- as.logical(f$weighted)[1]
+    if (!is.null(f$data_dtype)) out$data_dtype <- as.character(f$data_dtype)[1]  # preserve value dtype (T2.2)
     out
   })
   names(fields) <- names(ds$fields)

@@ -97,6 +97,8 @@ jobs:
         run: bash conformance/passthrough.sh
       - name: provenance conformance (field provenance incl. normalization recipe survives the R path)
         run: bash conformance/provenance.sh
+      - name: R-path fidelity (float32 value dtype + graph directed/weighted survive Py->R->Py)
+        run: bash conformance/r_fidelity.sh
       - name: partial-coverage conformance (partial index over a derived union axis survives the R path)
         run: bash conformance/partial.sh
       - name: arity-3 conformance (3-axis CCC/eQTL tensor survives Py->R->Py, 3rd axis intact)

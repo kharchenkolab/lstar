@@ -309,7 +309,8 @@ list lstar_cpp_read(std::string path) {
       fl = writable::list({"role"_nm = f.role, "span"_nm = to_strings(f.span),
                            "encoding"_nm = f.encoding, "state"_nm = f.state, "subtype"_nm = f.subtype,
                            "data"_nm = nd_doubles(f.data), "indices"_nm = nd_integers(f.indices),
-                           "indptr"_nm = nd_integers(f.indptr), "shape"_nm = to_ints(f.shape)});
+                           "indptr"_nm = nd_integers(f.indptr), "shape"_nm = to_ints(f.shape),
+                           "data_dtype"_nm = f.data.dtype});   // preserve value dtype across the R boundary (T2.2)
     } else if (f.encoding == "utf8") {
       fl = writable::list({"role"_nm = f.role, "span"_nm = to_strings(f.span),
                            "encoding"_nm = f.encoding, "state"_nm = f.state, "subtype"_nm = f.subtype,
@@ -322,7 +323,8 @@ list lstar_cpp_read(std::string path) {
     } else {
       fl = writable::list({"role"_nm = f.role, "span"_nm = to_strings(f.span),
                            "encoding"_nm = f.encoding, "state"_nm = f.state, "subtype"_nm = f.subtype,
-                           "dense"_nm = nd_doubles(f.dense), "shape"_nm = to_ints(f.dense.shape)});
+                           "dense"_nm = nd_doubles(f.dense), "shape"_nm = to_ints(f.dense.shape),
+                           "data_dtype"_nm = f.dense.dtype});   // preserve value dtype across the R boundary (T2.2)
     }
     if (f.has_mask) fl.push_back("mask"_nm = nd_integers(f.mask));   // 1 == missing (nullable)
     if (f.has_index) {                                              // partial coverage over index_axis
@@ -330,6 +332,8 @@ list lstar_cpp_read(std::string path) {
       fl.push_back("index_axis"_nm = f.index_axis);
       fl.push_back("coverage"_nm = std::string("partial"));
     }
+    if (f.has_directed) fl.push_back("directed"_nm = f.directed);   // graph relation flags round-trip (T1.4)
+    if (f.has_weighted) fl.push_back("weighted"_nm = f.weighted);
     if (f.provenance.is_object() && !f.provenance.empty())          // provenance -> native R named list
       fl.push_back("provenance"_nm = json_to_r(f.provenance));      // (matches Python's dict; round-trips)
     fields[k] = fl;
@@ -427,11 +431,16 @@ void lstar_cpp_write(list ds, std::string path, int chunk_elems = 0,
         break;
       }
     }
+    // preserved value dtype recorded on read (T2.2): keeps f4/f8/i4/i8 stable across Py->R->Py instead of
+    // widening every non-raw measure to f8. Absent (a field built fresh in R) -> the prior raw/f8 default.
+    std::string rec_dtype;
+    { strings ns = f.names(); for (R_xlen_t j = 0; j < ns.size(); ++j) if (std::string(ns[j]) == "data_dtype") { rec_dtype = as_cpp<std::string>(f["data_dtype"]); break; } }
+    const bool rec_ok = (rec_dtype == "<f8" || rec_dtype == "<f4" || rec_dtype == "<i4" || rec_dtype == "<i8");
     if (fl.encoding == "csc" || fl.encoding == "csr") {
       integers shp = f["shape"];
       for (R_xlen_t j = 0; j < shp.size(); ++j) fl.shape.push_back((int64_t)shp[j]);
       doubles dat = f["data"], ind = f["indices"], ptr = f["indptr"];
-      const std::string ddt = (fl.state == "raw") ? pick_data_dtype(dat) : std::string("<f8");
+      const std::string ddt = rec_ok ? rec_dtype : ((fl.state == "raw") ? pick_data_dtype(dat) : std::string("<f8"));
       fl.data    = nd_from_doubles(dat, {(int64_t)dat.size()}, ddt);
       fl.indices = nd_from_doubles(ind, {(int64_t)ind.size()}, "<i4");
       fl.indptr  = nd_from_doubles(ptr, {(int64_t)ptr.size()}, "<i4");
@@ -451,7 +460,7 @@ void lstar_cpp_write(list ds, std::string path, int chunk_elems = 0,
       std::vector<int64_t> sh;
       for (R_xlen_t j = 0; j < shp.size(); ++j) sh.push_back((int64_t)shp[j]);
       doubles dn = f["dense"];
-      fl.dense = nd_from_doubles(dn, sh, "<f8");          // dense stays predictable f8 (round-trip-safe)
+      fl.dense = nd_from_doubles(dn, sh, rec_ok ? rec_dtype : std::string("<f8"));   // preserve dtype if recorded (T2.2)
     }
     {                                                     // optional validity mask (1 == missing)
       strings ns = f.names();
@@ -482,6 +491,14 @@ void lstar_cpp_write(list ds, std::string path, int chunk_elems = 0,
         fl.has_index = true;
         fl.coverage = "partial";
         if (has_iax) fl.index_axis = as_cpp<std::string>(f["index_axis"]);
+      }
+    }
+    {                                                     // graph relation flags: directed / weighted (T1.4)
+      strings ns = f.names();
+      for (R_xlen_t j = 0; j < ns.size(); ++j) {
+        std::string nm(ns[j]);
+        if (nm == "directed") { int v = Rf_asLogical(f["directed"]); if (v != NA_LOGICAL) { fl.directed = (v == 1); fl.has_directed = true; } }
+        else if (nm == "weighted") { int v = Rf_asLogical(f["weighted"]); if (v != NA_LOGICAL) { fl.weighted = (v == 1); fl.has_weighted = true; } }
       }
     }
     out.fields.push_back(std::move(fl));
