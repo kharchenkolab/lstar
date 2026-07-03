@@ -51,3 +51,4 @@ Periodically run a cross-surface **parity/duplication audit** (method + prior fi
 
 ## Docs
 On major udpates, especially those impacting compatibility, do examine relevant docs and update them. The docs are not meant to be a journal, so first analyze the scope and decide whether something within the overall aims and narrative of the document should be updated, and if so implement the update while maintaining the integrity of the document. Items such as minor bugfixes, etc. generally won't make it into these docs. However, an update like compatibility with a specific format/version, or cli/api change must make it.
+The same obligation extends beyond `docs/`: a format/version/CLI/API change must also update the R `NEWS.md` (regenerate `man/*.Rd` if roxygen changed) and any downstream **skills/recipes or handoff notes that document lstar's usage** (e.g. ABA recipes, the pagoda3 handoff) — these drift silently otherwise, and the audit won't catch a stale doc.
