@@ -53,6 +53,12 @@ PY
 "$NODE" --experimental-strip-types "$ROOT/js/test/store_backends.test.ts" "$DIR" "$PYZIP" \
   || { echo "  FAIL: store-backend value parity"; exit 1; }
 
+# 2c) throughput parity: the zip must read a first-screen of fields with the same concurrency and ~the
+# same round-trips as the directory store — no per-read local-header hop (which would ~double requests
+# and serialize the browser's cold open). Self-contained (builds its own multi-field fixture).
+"$NODE" --experimental-strip-types "$ROOT/js/test/zip_concurrency.test.ts" \
+  || { echo "  FAIL: zip throughput/concurrency parity"; exit 1; }
+
 # 3) Python cross-reads the JS-written zip: all-STORED + expected fields/values
 "$PY" - "$OUTZIP" <<'PY' || { echo "  FAIL: Python cross-read of JS zip"; exit 1; }
 import sys, numpy as np, test_zip as T

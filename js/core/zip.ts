@@ -122,28 +122,49 @@ export class ZipStore implements LstarStore {
     return new ZipStore(src, await readZipCentralDir(src, forwhat));
   }
 
-  /** Resolve an entry's data offset lazily (the LOCAL header's name/extra lengths can differ from the
-   * central record's), caching it — so open() costs only the central-directory reads, not one per entry. */
-  private async dataOffset(e: ZEntry): Promise<number> {
-    if (e.dataOff !== undefined) return e.dataOff;
-    const h = await this.src.range(e.lho, e.lho + 30);
-    e.dataOff = e.lho + 30 + u16(h, 26) + u16(h, 28);
-    return e.dataOff;
-  }
+  // zarrita forms chunk paths with a leading slash; central-directory names are slashless, like the
+  // FS/HTTP backends — so tolerate (strip) a leading slash before the index lookup.
+  private norm(key: string): string { return key[0] === "/" ? key.slice(1) : key; }
 
   async get(key: string): Promise<Uint8Array | undefined> {
-    const e = this.idx.get(key[0] === "/" ? key.slice(1) : key); // tolerate a leading-slash key (zarrita
-    if (!e) return undefined;                                    // forms chunk paths with one); central-dir
-    const off = await this.dataOffset(e);                        // names are slashless, like FS/HTTP stores
-    return this.src.range(off, off + e.size);
+    const name = this.norm(key);
+    const e = this.idx.get(name);
+    return e ? this.read(name, e, 0, e.size) : undefined;
   }
 
   async getRange(key: string, start: number, end: number): Promise<Uint8Array | undefined> {
-    const e = this.idx.get(key[0] === "/" ? key.slice(1) : key); // tolerate a leading-slash key (zarrita
-    if (!e) return undefined;                                    // forms chunk paths with one); central-dir
-    const off = await this.dataOffset(e);                        // names are slashless, like FS/HTTP stores
-    const s = off + Math.max(0, start), en = off + Math.min(e.size, Math.max(0, end));
-    return this.src.range(s, Math.max(s, en));
+    const name = this.norm(key);
+    const e = this.idx.get(name);
+    if (!e) return undefined;
+    const s = Math.max(0, start), en = Math.min(e.size, Math.max(0, end));
+    return this.read(name, e, s, Math.max(0, en - s));
+  }
+
+  /**
+   * Read `want` data bytes of entry `e` starting at data-offset `start`, in a SINGLE range request.
+   * The data offset depends on the LOCAL header's name/extra lengths (which can differ from the central
+   * directory's), so on first access we fetch the local header TOGETHER with the requested data — one
+   * round-trip, not two — parse the true offset, and cache it; every later read is then an exact single
+   * range. This keeps a zip read a single round-trip like the FS/HTTP backends, so concurrent reads
+   * parallelize (and cost half the requests) instead of paying an extra serial local-header hop each.
+   */
+  private async read(name: string, e: ZEntry, start: number, want: number): Promise<Uint8Array> {
+    if (e.dataOff !== undefined) {
+      const off = e.dataOff + start;
+      return this.src.range(off, off + want);
+    }
+    const EXTRA_CAP = 512;                                 // local extra fields are tiny in practice
+    const nameLen = encoder.encode(name).length;          // local filename length (== the central name)
+    const buf = await this.src.range(e.lho, e.lho + 30 + nameLen + EXTRA_CAP + start + want);
+    const dataStart = 30 + u16(buf, 26) + u16(buf, 28);   // LOCAL 26=name len, 28=extra len
+    if (dataStart + start + want <= buf.length) {
+      e.dataOff = e.lho + dataStart;                      // cache -> later reads are exact single ranges
+      // `.slice` (a copy, byteOffset 0), NOT `.subarray` (a view): a consumer decoding this as a typed
+      // array needs the buffer aligned, and `dataStart` is rarely a multiple of the item size.
+      return buf.slice(dataStart + start, dataStart + start + want);
+    }
+    e.dataOff = e.lho + dataStart;                        // unusually large header -> resolve + one clean read
+    return this.src.range(e.dataOff + start, e.dataOff + start + want);
   }
 }
 
