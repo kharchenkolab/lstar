@@ -30,6 +30,7 @@ echo "  [py ] generated test store + references"
 # 3) run the Node tests (kernels: dense+Python conformance; reader: manifest+fields; view: queries)
 echo "  -- kernels --"; "$NODE" "$ROOT/js/test/kernels.test.mjs"
 echo "  -- reader  --"; "$NODE" --experimental-strip-types "$ROOT/js/test/reader.test.ts" 2>/dev/null
+echo "  -- parallel--"; "$NODE" --experimental-strip-types "$ROOT/js/test/reader_parallel.test.ts" 2>/dev/null   # independent component arrays read concurrently
 echo "  -- view    --"; "$NODE" --experimental-strip-types "$ROOT/js/test/view.test.ts" 2>/dev/null
 echo "  -- extend  --"; "$NODE" --experimental-strip-types "$ROOT/js/test/extend_primary.test.ts" 2>/dev/null   # extend_for_viewer(primary=): hoist + compose + validation
 
