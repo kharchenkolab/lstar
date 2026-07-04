@@ -176,9 +176,12 @@ export class LstarDataset {
   axisLength(name: string): number { return this.axes.get(name)?.length ?? 0; }
 
   async axisLabels(name: string): Promise<string[]> {
-    const bytes = (await this._get("axes/" + name + "/labels")).data as Uint8Array;
-    const offs = (await this._get("axes/" + name + "/labels_offsets")).data as any;
-    return decodeStrings(bytes, offs);
+    // labels + labels_offsets are independent (both just read a chunk; the array metadata is already loaded) —
+    // read CONCURRENTLY so a labelled axis costs ONE round-trip, not two serial ones.
+    const [bytes, offs] = await Promise.all([
+      this._get("axes/" + name + "/labels"), this._get("axes/" + name + "/labels_offsets"),
+    ]);
+    return decodeStrings(bytes.data as Uint8Array, offs.data as any);
   }
 
   /** A dense field's values (flat, C-order) + shape. */
@@ -196,9 +199,13 @@ export class LstarDataset {
 
   /** A utf8 (label) field's string values. */
   async fieldStrings(name: string): Promise<string[]> {
-    const bytes = (await this._get("fields/" + name + "/values")).data as Uint8Array;
-    const offs = (await this._get("fields/" + name + "/values_offsets")).data as any;
-    return decodeStrings(bytes, offs);
+    // values + values_offsets are independent — read CONCURRENTLY so a label field costs ONE round-trip, not
+    // two serial ones. On a hosted store this is on the viewer's first-paint critical path (the cluster colour
+    // + every facet column); the serial reads made "clusters wait" for a second round-trip that had no dependency.
+    const [bytes, offs] = await Promise.all([
+      this._get("fields/" + name + "/values"), this._get("fields/" + name + "/values_offsets"),
+    ]);
+    return decodeStrings(bytes.data as Uint8Array, offs.data as any);
   }
 
   /**
@@ -213,9 +220,10 @@ export class LstarDataset {
     const byId: Record<string, any> = {};
     for (const a of (lm.arrays ?? []) as Array<{ id: string; kind: string }>) {
       if (a.kind === "utf8") {
-        const bytes = (await this._get("passthrough/" + ns + "/" + a.id)).data as Uint8Array;
-        const offs = (await this._get("passthrough/" + ns + "/" + a.id + "_offsets")).data as any;
-        byId[a.id] = decodeStrings(bytes, offs);
+        const [bytes, offs] = await Promise.all([
+          this._get("passthrough/" + ns + "/" + a.id), this._get("passthrough/" + ns + "/" + a.id + "_offsets"),
+        ]);
+        byId[a.id] = decodeStrings(bytes.data as Uint8Array, offs.data as any);
       } else {
         byId[a.id] = (await this._get("passthrough/" + ns + "/" + a.id)).data;
       }
@@ -242,10 +250,14 @@ export class LstarDataset {
 
   /** A categorical (factor) field: integer codes (-1 = missing) + the category labels + ordered. */
   async fieldCategorical(name: string): Promise<{ codes: Int32Array; categories: string[]; ordered: boolean }> {
-    const codes = Int32Array.from((await this._get("fields/" + name + "/codes")).data as any);
-    const bytes = (await this._get("fields/" + name + "/categories")).data as Uint8Array;
-    const offs = (await this._get("fields/" + name + "/categories_offsets")).data as any;
-    return { codes, categories: decodeStrings(bytes, offs), ordered: !!(this.fields.get(name) as any)?.ordered };
+    // codes + categories + categories_offsets are independent — read CONCURRENTLY (one round-trip, not three serial).
+    const [codesC, bytesC, offsC] = await Promise.all([
+      this._get("fields/" + name + "/codes"),
+      this._get("fields/" + name + "/categories"),
+      this._get("fields/" + name + "/categories_offsets"),
+    ]);
+    return { codes: Int32Array.from(codesC.data as any), categories: decodeStrings(bytesC.data as Uint8Array, offsC.data as any),
+             ordered: !!(this.fields.get(name) as any)?.ordered };
   }
 
   /** A sparse (csc/csr) field's raw arrays + shape. Reads the whole field. */

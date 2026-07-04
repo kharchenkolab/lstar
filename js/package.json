@@ -15,6 +15,7 @@
     "build": "bash build.sh",
     "test:kernels": "node test/kernels.test.mjs",
     "test:reader": "node --experimental-strip-types test/reader.test.ts",
+    "test:reader-parallel": "node --experimental-strip-types test/reader_parallel.test.ts",
     "test:view": "node --experimental-strip-types test/view.test.ts",
     "test:writer": "node --experimental-strip-types test/writer.test.ts",
     "test:extend": "node --experimental-strip-types test/extend_primary.test.ts",
