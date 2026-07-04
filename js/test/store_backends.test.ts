@@ -66,6 +66,11 @@ async function readValues(store: any) {
   const pca = await ds.fieldDense("pca");
   const sp = await ds.fieldSparse("data");
   const col0 = await ds.cscColumn("data", 0);
+  // batched multi-column read: a scattered subset in INPUT order with a DUPLICATE — each entry must equal
+  // the single-read cscColumn (asserted on the reference below), and be identical across backends.
+  const ncols = (sp.shape as number[])[1] ?? 1;
+  const pick = ncols >= 2 ? [0, 1, 0] : [0, 0];
+  const batch = await ds.cscColumns("data", pick);
   return {
     cells: await ds.axisLabels("cells"),
     leiden: await ds.fieldStrings("leiden"),
@@ -73,6 +78,9 @@ async function readValues(store: any) {
     spData: Array.from(sp.data as any), spIndices: Array.from(sp.indices as any),
     spIndptr: Array.from(sp.indptr as any), spShape: sp.shape,
     col0rows: Array.from(col0.rows as any), col0vals: Array.from(col0.vals as any),
+    batchPick: pick,
+    batchRows: batch.cols.map((c: any) => Array.from(c.rows as any)),
+    batchVals: batch.cols.map((c: any) => Array.from(c.vals as any)),
   };
 }
 
@@ -81,6 +89,17 @@ const ref = await readValues(new NodeFSStore(dir));
 assert(new Set(ref.leiden).size > 1, "reference leiden should have >1 distinct value (fixture too trivial?)");
 assert(ref.pca.some((x: number) => x !== 0), "reference pca should not be all-zeros");
 assert(ref.spData.some((x: number) => x !== 0), "reference sparse data should not be all-zeros");
+// cscColumns must equal N× cscColumn (same fixture, single-read path) — the batched read is only a
+// coalescing optimization, so every returned column is byte-identical to the per-column accessor.
+{
+  const ds = await openLstar(new NodeFSStore(dir));
+  for (let i = 0; i < ref.batchPick.length; i++) {
+    const one = await ds.cscColumn("data", ref.batchPick[i]);
+    assert.deepEqual(ref.batchRows[i], Array.from(one.rows as any), `cscColumns[${i}].rows != cscColumn(${ref.batchPick[i]})`);
+    assert.deepEqual(ref.batchVals[i], Array.from(one.vals as any), `cscColumns[${i}].vals != cscColumn(${ref.batchPick[i]})`);
+  }
+  console.log("  [js] cscColumns == N× cscColumn (batched read parity)");
+}
 
 const srv = await serve(dir, zip);
 try {

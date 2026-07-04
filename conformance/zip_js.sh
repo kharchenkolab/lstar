@@ -64,6 +64,12 @@ PY
 "$NODE" --experimental-strip-types "$ROOT/js/test/httpzip_nostore.test.ts" \
   || { echo "  FAIL: httpZipSource no-store cache"; exit 1; }
 
+# 2e) multi-chunk byte-range fast path + cscColumns batched read: a chunked (partial-last-chunk) CSC field
+# must range-read the right chunk/offset (the landmine) and cscColumns must equal N× cscColumn, across all
+# four backends. Self-contained (builds its own multi-chunk fixture via the JS writer).
+"$NODE" --experimental-strip-types "$ROOT/js/test/multichunk_range.test.ts" \
+  || { echo "  FAIL: multi-chunk range / cscColumns parity"; exit 1; }
+
 # 3) Python cross-reads the JS-written zip: all-STORED + expected fields/values
 "$PY" - "$OUTZIP" <<'PY' || { echo "  FAIL: Python cross-read of JS zip"; exit 1; }
 import sys, numpy as np, test_zip as T

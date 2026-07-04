@@ -287,23 +287,33 @@ export class LstarDataset {
 
   /**
    * Read elements [lo, hi) of a 1-D array as a typed array. Fast path: when the store supports byte
-   * ranges AND the array is a single uncompressed, unfiltered chunk (known from consolidated metadata),
-   * issue ONE `getRange` over the exact bytes [lo·itemsize, hi·itemsize) of chunk "0" — a gene/cell is
-   * a few KB instead of the whole chunk. Otherwise fall back to a zarrita slice (which decompresses /
-   * stitches chunks / works without consolidated metadata). Equivalent results either way.
+   * ranges AND the array is uncompressed + unfiltered (known from consolidated metadata) AND [lo, hi)
+   * lands WITHIN a single chunk, issue ONE `getRange` over the exact bytes of that chunk — a gene/cell
+   * is a few KB instead of the whole chunk. This now covers MULTI-chunk arrays (not just single-chunk):
+   * the chunk index is `floor(lo/chunkLen)` and the byte offset is relative to that chunk's start, so a
+   * chunked `counts` (e.g. `chunkElems`-split) keeps the byte-range fast path instead of falling back to
+   * whole-chunk reads. A span that CROSSES a chunk boundary (rare for one column) falls through to the
+   * zarrita slice, which stitches chunks correctly. Edge (partial last) chunks are stored full-size +
+   * fill-padded by the writer, so `off*isize .. (off+want)*isize` is always in-bounds within the chunk.
+   * Otherwise fall back to a zarrita slice (decompresses / stitches / works without consolidated meta).
+   * Equivalent results either way.
    */
   private async _readRange(arrPath: string, lo: number, hi: number): Promise<any> {
     const za: any = this.meta[arrPath + "/.zarray"];
     const dt = za ? DTYPE[za.dtype] : undefined;
-    const singleChunk = za && Array.isArray(za.chunks) && za.chunks.length === 1 &&
-      za.chunks[0] >= (za.shape?.[0] ?? 0);
-    if (typeof this.store.getRange === "function" && dt && singleChunk &&
-        za.compressor == null && (za.filters == null || (Array.isArray(za.filters) && za.filters.length === 0))) {
+    const oneD = za && Array.isArray(za.chunks) && za.chunks.length === 1 && za.chunks[0] > 0;
+    const uncompressed = za && za.compressor == null && (za.filters == null || (Array.isArray(za.filters) && za.filters.length === 0));
+    if (typeof this.store.getRange === "function" && dt && oneD && uncompressed && hi > lo) {
       const [ctor, isize] = dt;
-      const bytes = await this.store.getRange(arrPath + "/0", lo * isize, hi * isize);
-      if (bytes) return decodeTyped(bytes, ctor, isize);
+      const chunkLen = za.chunks[0] as number;
+      const ci = Math.floor(lo / chunkLen);
+      if (hi <= (ci + 1) * chunkLen) {                       // [lo,hi) within one chunk -> exact byte range of chunk `ci`
+        const off = lo - ci * chunkLen;                      // (single-chunk store: chunkLen >= shape, so ci==0, off==lo — unchanged)
+        const bytes = await this.store.getRange(arrPath + "/" + ci, off * isize, (off + (hi - lo)) * isize);
+        if (bytes) return decodeTyped(bytes, ctor, isize);
+      }
     }
-    return (await this._get(arrPath, [zarr.slice(lo, hi)])).data;
+    return (await this._get(arrPath, [zarr.slice(lo, hi)])).data;   // spans chunks / compressed / no getRange -> zarrita
   }
 
   /**
@@ -319,6 +329,55 @@ export class LstarDataset {
     const rows = await this._rangeOrSlice(base + "/indices", a, b);
     const vals = await this._rangeOrSlice(base + "/data", a, b);
     return { rows, vals };
+  }
+
+  /**
+   * Many CSC columns in ONE batched read — the column-major twin of {@link csrRows}, for a gene panel
+   * (a dotplot/heatmap's marker columns, or a subset recompute). The requested columns' byte spans are
+   * COALESCED into a few merged range requests (bounded by `_csrConcurrency`) instead of one request per
+   * column — so N gene columns cost a handful of parallel reads rather than N reads into the SAME chunk
+   * object, which a browser serializes on its per-URL cache lock. Each returned column is byte-identical
+   * to `cscColumn(name, col)`; results are in INPUT order (a repeated column re-slices the same block).
+   * `gap` bridges small inter-column gaps to amortize latency (extra bytes fetched, not assembled).
+   */
+  async cscColumns(name: string, cols: number[], gap = 4096): Promise<{ cols: { rows: any; vals: any }[] }> {
+    const base = "fields/" + name;
+    if (cols.length === 0) return { cols: [] };
+    const ncols = (this.fields.get(name)!.shape as number[])[1];
+    const indptr = await this._rangeOrSlice(base + "/indptr", 0, ncols + 1);   // small; read once per batch
+    const at = (c: number) => Number(indptr[c]);
+    // coalesce the sorted-unique columns into runs (contiguous column ranges) so nearby columns' data/indices
+    // are read in a few merged byte-range requests; a large gap between columns starts a new run.
+    const uniq = [...new Set(cols)].sort((x, y) => x - y);
+    const runs: { c0: number; c1: number }[] = [];
+    for (const c of uniq) {
+      const last = runs[runs.length - 1];
+      if (last && at(c) - at(last.c1 + 1) <= gap) last.c1 = c;
+      else runs.push({ c0: c, c1: c });
+    }
+    // one merged data/indices read per run, bounded concurrency (a scattered gene set doesn't coalesce, so
+    // `runs` can be large — cap in-flight reads instead of exhausting the connection pool, exactly like csrRows).
+    const blocks: { c0: number; c1: number; a: number; indices: any; data: any }[] = new Array(runs.length);
+    let next = 0;
+    const worker = async () => {
+      while (next < runs.length) {
+        const i = next++; const run = runs[i];
+        const a = at(run.c0), b = at(run.c1 + 1);
+        blocks[i] = { c0: run.c0, c1: run.c1, a,
+          indices: b > a ? await this._rangeOrSlice(base + "/indices", a, b) : new Int32Array(0),
+          data:    b > a ? await this._rangeOrSlice(base + "/data", a, b)    : new Float64Array(0) };
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(this._csrConcurrency, runs.length) }, worker));
+    const blockOf = (c: number) => blocks.find((bl) => c >= bl.c0 && c <= bl.c1)!;
+    // slice each requested column back out (INPUT order) — identical bytes to cscColumn(name, col).
+    const out = cols.map((c) => {
+      const a = at(c), b = at(c + 1);
+      if (b <= a) return { rows: new Int32Array(0), vals: new Float64Array(0) };
+      const bl = blockOf(c), off = a - bl.a, n = b - a;
+      return { rows: (bl.indices as any).slice(off, off + n), vals: (bl.data as any).slice(off, off + n) };
+    });
+    return { cols: out };
   }
 
   /**
