@@ -31,6 +31,7 @@ echo "  [py ] generated test store + references"
 echo "  -- kernels --"; "$NODE" "$ROOT/js/test/kernels.test.mjs"
 echo "  -- reader  --"; "$NODE" --experimental-strip-types "$ROOT/js/test/reader.test.ts" 2>/dev/null
 echo "  -- view    --"; "$NODE" --experimental-strip-types "$ROOT/js/test/view.test.ts" 2>/dev/null
+echo "  -- extend  --"; "$NODE" --experimental-strip-types "$ROOT/js/test/extend_primary.test.ts" 2>/dev/null   # extend_for_viewer(primary=): hoist + compose + validation
 
 # 4) the WRITE side: JS round-trip (writer.test.ts), then the cross-language gate -- JS writes a
 # chunked + gzip-compressed store with every encoding (CSC/dense/categorical/mask/partial/aux, using the

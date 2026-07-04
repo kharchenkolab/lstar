@@ -225,6 +225,11 @@ def extend_for_viewer(ds, groupings=None, order="hybrid", embedding=None, marker
     if primary is not None:
         if primary not in ds.fields:
             raise ValueError("extend_for_viewer: primary=%r is not a field in the dataset" % primary)
+        # must be a 1-D grouping over the CELL axis, else the reorder crashes cryptically (a gene-axis label
+        # gives ngenes codes; an embedding is 2-D). span==[cell_axis] is the check identical across Py/R/JS.
+        if list(ds.field(primary).span or []) != [cell_axis]:
+            raise ValueError("extend_for_viewer: primary=%r must be a grouping over the cell axis %r "
+                             "(a 1-D label spanning [%s]), not span=%r" % (primary, cell_axis, cell_axis, ds.field(primary).span))
         groupings = [primary] + [g for g in groupings if g != primary]
     if not groupings:
         raise ValueError("extend_for_viewer: no categorical grouping found (pass groupings=[...])")

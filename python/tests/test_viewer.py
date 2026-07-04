@@ -131,6 +131,13 @@ def test_primary_composes_with_explicit_groupings_and_validates():
         assert False, "expected ValueError for an unknown primary"
     except ValueError as e:
         assert "primary" in str(e)
+    # a field that isn't a cell grouping (umap: 2-D over cells) → a clear error, not a cryptic reorder crash
+    ds3, _ = _synthetic2()
+    try:
+        lstar.extend_for_viewer(ds3, primary="umap")
+        assert False, "expected ValueError for a non-grouping primary"
+    except ValueError as e:
+        assert "cell axis" in str(e)
 
 
 def test_order_none_skips_reorder():

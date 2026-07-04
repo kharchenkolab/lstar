@@ -79,6 +79,11 @@ bash conformance/viewer_corpus.sh >/tmp/lstar_viewer_corpus.log 2>&1 \
   && pass "viewer@0.1 corpus-driven cross-surface parity" \
   || { echo "  FAIL viewer corpus"; tail -25 /tmp/lstar_viewer_corpus.log; exit 1; }
 
+echo "== extend_for_viewer(primary=) cross-surface parity (Py==R[==JS] reorder keyed on a given primary) =="
+bash conformance/viewer_primary.sh >/tmp/lstar_viewer_primary.log 2>&1 \
+  && pass "extend_for_viewer(primary=) cross-surface parity" \
+  || { echo "  FAIL viewer primary"; tail -20 /tmp/lstar_viewer_primary.log; exit 1; }
+
 echo "== multimodal cross-format consistency (CITE-seq via Seurat == via MuData -> same feature axes) =="
 bash conformance/multimodal_xformat.sh >/tmp/lstar_xfmt.log 2>&1 \
   && pass "Seurat/MuData multimodal land on the same canonical axes" \

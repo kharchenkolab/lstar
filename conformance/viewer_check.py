@@ -61,13 +61,36 @@ def cmd_make_base(out, fmt="csc", multi=""):
     print(f"  OK: wrote base store {out} (counts={fmt}{', multi-grouping' if multi == 'multi' else ''})")
 
 
-def cmd_prep_lstar(base, out, basis=None):
+def cmd_prep_lstar(base, out, basis=None, primary=None):
     """lstar's own prep: read the base store, extend_for_viewer, write it out. `basis` ("lognorm" or
-    None=raw) forwards to extend_for_viewer so corpus data with no raw counts preps from a log measure."""
+    None=raw) forwards to extend_for_viewer so corpus data with no raw counts preps from a log measure.
+    `primary` (the grouping the viewer opens on) forwards too — the cross-surface primary= parity leg."""
     ds = lstar.read(base)
-    lstar.extend_for_viewer(ds, basis=basis)
+    lstar.extend_for_viewer(ds, basis=basis, primary=primary)
     lstar.write(ds, out)
-    print(f"  OK: lstar extend_for_viewer -> {out}" + (f" (basis={basis})" if basis else ""))
+    print(f"  OK: lstar extend_for_viewer -> {out}" +
+          (f" (basis={basis})" if basis else "") + (f" (primary={primary})" if primary else ""))
+
+
+def cmd_provgroup(store, expected):
+    """Assert counts_cellmajor_order's provenance.group (the reorder key) == `expected`. `equiv` treats
+    provenance as non-normative, so this is the check that a surface keyed its reorder on `primary`."""
+    ds = lstar.read(store)
+    f = ds.fields.get("counts_cellmajor_order")
+    if f is None:
+        _fail(f"provgroup: {store} has no counts_cellmajor_order (order='none'?)")
+    got = (f.provenance or {}).get("group")
+    if got != expected:
+        _fail(f"provgroup: {store} counts_cellmajor_order provenance.group={got!r}, expected {expected!r}")
+    print(f"  OK: {store} reorder keyed on {expected!r}")
+
+
+def cmd_reorder_key(store):
+    """Print counts_cellmajor_order's provenance.group (the reorder key) — for the driver's non-vacuous
+    check that a `primary=` differs from the default-detected key."""
+    ds = lstar.read(store)
+    f = ds.fields.get("counts_cellmajor_order")
+    print((f.provenance or {}).get("group", "") if f is not None else "")
 
 
 def cmd_canonical():
@@ -165,9 +188,16 @@ if __name__ == "__main__":
         cmd_make_base(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else "csc",
                       sys.argv[4] if len(sys.argv) > 4 else "")
     elif cmd == "prep-lstar":
-        cmd_prep_lstar(sys.argv[2], sys.argv[3], sys.argv[4] if len(sys.argv) > 4 else None)
+        # prep-lstar <base> <out> [basis] [primary]  (empty string = None, for shell convenience)
+        _basis = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] else None
+        _primary = sys.argv[5] if len(sys.argv) > 5 and sys.argv[5] else None
+        cmd_prep_lstar(sys.argv[2], sys.argv[3], _basis, _primary)
     elif cmd == "equiv":
         cmd_equiv(sys.argv[2], sys.argv[3])
+    elif cmd == "provgroup":
+        cmd_provgroup(sys.argv[2], sys.argv[3])
+    elif cmd == "reorder-key":
+        cmd_reorder_key(sys.argv[2])
     else:
         print(__doc__)
         sys.exit(2)

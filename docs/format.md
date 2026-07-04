@@ -204,8 +204,11 @@ prepped == live.)
 **Hybrid order (`counts_cellmajor_order`).** When present, `counts_cellmajor`'s rows are physically
 permuted by `lexsort(hilbert_index, primary_cluster_code)` (primary key = the first grouping's cluster
 code, secondary = a Hilbert index over a 1024×1024 grid of the min-max-scaled 2-D embedding). The
-field stores, for each cell, its physical row (`f8`, exact integers). A reader keys on the `_order`
-**sibling** of a field name so that a cluster/lasso selection coalesces into a few byte-range reads.
+field stores, for each cell, its physical row (`f8`, exact integers), and records the grouping it was
+keyed on in `provenance.group`. The reorder-key grouping is the first *detected* grouping by default;
+`extend_for_viewer(primary=…)` names it explicitly — set it to the grouping the viewer opens on so the
+locality reorder matches the first view. A reader keys on the `_order` **sibling** of a field name so
+that a cluster/lasso selection coalesces into a few byte-range reads.
 
 These quantities have a single C++-core implementation bound to every surface; pure-language
 fallbacks (Python without the accel extension, JS before WASM) must match the core within the

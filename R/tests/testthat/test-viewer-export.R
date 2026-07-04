@@ -23,6 +23,7 @@ test_that("extend_for_viewer primary= hoists the reorder-key grouping and compos
   d2 <- extend_for_viewer(mkds())
   expect_identical(d2$fields[["counts_cellmajor_order"]]$provenance$group, "leiden")
   expect_error(extend_for_viewer(mkds(), primary = "not_a_field"), "primary")
+  expect_error(extend_for_viewer(mkds(), primary = "umap"), "cell axis")   # a non-grouping field (2-D embedding)
 })
 
 # A non-viewer converter (write_seurat/write_sce) drops the viewer@0.1 `cache` navigators (regenerable;

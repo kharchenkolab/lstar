@@ -134,6 +134,11 @@ export async function extendForViewer(store: LstarWritableStore, opts: ExtendOpt
   // reorder + is summarized first. Composes with auto-detect — the other groupings are still prepped.
   if (opts.primary != null) {
     if (!ds.hasField(opts.primary)) throw new Error("extendForViewer: primary `" + opts.primary + "` is not a field");
+    // must be a 1-D grouping over the CELL axis (else a cryptic reorder crash); span==[cellAxis] is the check
+    // identical across Py/R/JS (their detection predicates differ, but this structural one does not).
+    const psp = ds.fields.get(opts.primary)?.span;
+    if (!psp || psp.length !== 1 || psp[0] !== cellAxis)
+      throw new Error("extendForViewer: primary `" + opts.primary + "` must be a grouping over the cell axis `" + cellAxis + "` (a 1-D label)");
     groupings = [opts.primary, ...groupings.filter((g) => g !== opts.primary)];
   }
   if (!groupings.length) throw new Error("extendForViewer: no categorical grouping found (pass {groupings:[...]})");

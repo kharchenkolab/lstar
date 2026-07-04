@@ -15,7 +15,7 @@ import { packStoredZipDir, extractZipToDir } from "../core/zip-node.ts";
 
 const input = process.argv[2];
 if (!input) {
-  console.error("usage: extend-viewer.ts <store> [--basis lognorm] [--out DST] [grouping ...]");
+  console.error("usage: extend-viewer.ts <store> [--basis lognorm] [--primary G] [--out DST] [grouping ...]");
   process.exit(2);
 }
 const rest = process.argv.slice(3);
@@ -25,14 +25,18 @@ if (bi >= 0) { basis = rest[bi + 1]; rest.splice(bi, 2); }
 let out: string | undefined;                            // write here instead of extending in place
 const oi = rest.indexOf("--out");
 if (oi >= 0) { out = rest[oi + 1]; rest.splice(oi, 2); }
+let primary: string | undefined;                        // the grouping the viewer opens on (hoisted to front)
+const pi = rest.indexOf("--primary");
+if (pi >= 0) { primary = rest[pi + 1]; rest.splice(pi, 2); }
 const groupings = rest;
 
-const opts: { groupings?: string[]; basis?: string } = {};
+const opts: { groupings?: string[]; basis?: string; primary?: string } = {};
 if (groupings.length) opts.groupings = groupings;
 if (basis) opts.basis = basis;
+if (primary) opts.primary = primary;
 
 const t = Date.now();
-const note = `${groupings.length ? " [" + groupings.join(", ") + "]" : ""}${basis ? " basis=" + basis : ""}`;
+const note = `${groupings.length ? " [" + groupings.join(", ") + "]" : ""}${basis ? " basis=" + basis : ""}${primary ? " primary=" + primary : ""}`;
 
 if (!out) {
   if (input.endsWith(".zip"))

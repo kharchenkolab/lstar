@@ -8,7 +8,10 @@
   with auto-detect** (`primary="cell_type"` with `grouping=NULL` preps *every* detected grouping but keys the
   reorder on `cell_type`) — which matters because the auto-detect policy prefers clusterings while the viewer
   may open on a cell-type annotation. `counts_cellmajor_order` now records `provenance$group` (the reorder
-  key), matching Python/JS. Same `primary=` option added to the Python and JS/WASM `extend_for_viewer`.
+  key), matching Python/JS. Same `primary=` option added to the Python and JS/WASM `extend_for_viewer`. A
+  `primary` that isn't a grouping over the cell axis is rejected with a clear error (was a cryptic reorder
+  crash). Cross-surface parity (Py==R==JS reorder for a given `primary`) is enforced by
+  `conformance/viewer_primary.sh`.
 
 ## Single-file `.lstar.zarr.zip` packaging
 

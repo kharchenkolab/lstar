@@ -64,11 +64,15 @@ async function main() {
       "default reorder keys on the first detected grouping (leiden)");
   }
 
-  // 3) an unknown primary is a clear error (not a silent no-op).
+  // 3) an unknown primary is a clear error (not a silent no-op); and a field that isn't a cell grouping
+  //    (umap: a 2-D embedding over cells) is rejected too — a clear error, not a cryptic reorder crash.
   {
     const store = await freshStore(path.join(base, "bad"));
     await assert.rejects(() => extendForViewer(store, { primary: "not_a_field" }), /primary/,
       "unknown primary rejects");
+    const store2 = await freshStore(path.join(base, "bad2"));
+    await assert.rejects(() => extendForViewer(store2, { primary: "umap" }), /cell axis/,
+      "a non-grouping primary (2-D embedding) rejects");
   }
 
   fs.rmSync(base, { recursive: true, force: true });

@@ -114,6 +114,11 @@ extend_for_viewer <- function(ds, grouping = NULL, also = character(0), counts =
   if (!is.null(primary)) {
     if (is.null(ds$fields[[primary]]))
       stop(sprintf("extend_for_viewer: primary='%s' is not a field in the dataset", primary), call. = FALSE)
+    # must be a 1-D grouping over the CELL axis (else a cryptic reorder crash); span==cell_axis is the check
+    # identical across Py/R/JS (their detection predicates differ, but this structural one does not).
+    if (!identical(as.character(ds$fields[[primary]]$span), as.character(cell_axis)))
+      stop(sprintf("extend_for_viewer: primary='%s' must be a grouping over the cell axis '%s' (a 1-D label)",
+                   primary, cell_axis), call. = FALSE)
     groupings <- unique(c(primary, groupings[groupings != primary]))
   }
   if (!length(groupings))

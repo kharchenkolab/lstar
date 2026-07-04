@@ -147,6 +147,8 @@ jobs:
         run: bash conformance/viewer.sh
       - name: viewer@0.1 corpus-driven parity (convert corpus -> prep -> Py==R on all fields; synthetic-faithful in CI)
         run: bash conformance/viewer_corpus.sh
+      - name: extend_for_viewer(primary=) cross-surface parity (Py==R reorder keyed on a given primary)
+        run: bash conformance/viewer_primary.sh
 
   js-wasm:
     runs-on: ubuntu-latest
@@ -174,5 +176,7 @@ jobs:
         run: bash conformance/viewer_js.sh
       - name: viewer@0.1 corpus-driven JS parity (convert corpus -> JS extend == Python; real categoricals + lognorm + embeddings)
         run: bash conformance/viewer_corpus.sh
+      - name: extend_for_viewer(primary=) cross-surface parity (Py==JS reorder keyed on a given primary)
+        run: bash conformance/viewer_primary.sh
       - name: single-file .lstar.zarr.zip parity (JS ZipStore seek-into-zip + writer <-> Python)
         run: bash conformance/zip_js.sh
