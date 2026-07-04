@@ -1,5 +1,15 @@
 # lstar (development version)
 
+## `extend_for_viewer(primary=)` — align the prep with the viewer's default open
+
+* `extend_for_viewer()` gains a `primary` argument: the grouping the viewer opens on. It is hoisted to the
+  front of the prepared groupings, so it keys the `counts_cellmajor` locality reorder AND is summarized
+  first — the eager-prepare a fast launch waits on. Unlike ordering groupings by hand, `primary` **composes
+  with auto-detect** (`primary="cell_type"` with `grouping=NULL` preps *every* detected grouping but keys the
+  reorder on `cell_type`) — which matters because the auto-detect policy prefers clusterings while the viewer
+  may open on a cell-type annotation. `counts_cellmajor_order` now records `provenance$group` (the reorder
+  key), matching Python/JS. Same `primary=` option added to the Python and JS/WASM `extend_for_viewer`.
+
 ## Single-file `.lstar.zarr.zip` packaging
 
 * `lstar_read()` / `lstar_write()` now accept a single-file `*.lstar.zarr.zip` (a store packed into ONE

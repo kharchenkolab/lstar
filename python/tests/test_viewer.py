@@ -93,6 +93,46 @@ def test_synthetic_roundtrip(tmp_path):
         assert np.array_equal(got, want), f"cell {cell} row mismatch under the hybrid order"
 
 
+def _synthetic2(nc=200, ng=50, seed=1):
+    """A synthetic ds with TWO groupings (leiden + cell_type) so ``primary=`` can be exercised."""
+    ds, X = _synthetic(nc=nc, ng=ng, seed=seed)
+    rng = np.random.default_rng(seed + 7)
+    ds.add_field("cell_type", np.array(["Tcell", "Bcell", "NK"])[rng.integers(0, 3, size=nc)],
+                 role="label", span=["cells"])
+    return ds, X
+
+
+def test_primary_hoists_grouping_and_keys_the_reorder():
+    # `primary=` names the grouping the viewer opens on. It (a) is prepared, (b) keys the counts_cellmajor
+    # locality reorder, and (c) COMPOSES with auto-detect (the OTHER groupings are still prepped) — which a
+    # plain `groupings=[...]` can't express (it can't say "and detect the rest too").
+    ds, _ = _synthetic2()
+    lstar.extend_for_viewer(ds, primary="cell_type")
+    for g in ("cell_type", "leiden"):                          # both prepped: primary + the auto-detected rest
+        assert f"stats_{g}_sum" in ds.fields and f"markers_{g}_lfc" in ds.fields
+    assert ds.field("counts_cellmajor_order").provenance.get("group") == "cell_type"
+
+    # default (no primary): the reorder keys on the auto-detected first grouping — leiden is preferred over
+    # cell_type by the detection policy, so the default primary is leiden. This is exactly the case `primary=`
+    # lets the viewer override when it opens on the cell-type annotation instead.
+    ds2, _ = _synthetic2()
+    lstar.extend_for_viewer(ds2)
+    assert ds2.field("counts_cellmajor_order").provenance.get("group") == "leiden"
+
+
+def test_primary_composes_with_explicit_groupings_and_validates():
+    ds, _ = _synthetic2()
+    lstar.extend_for_viewer(ds, primary="cell_type", groupings=["leiden"])   # primary first, then the list
+    assert ds.field("counts_cellmajor_order").provenance.get("group") == "cell_type"
+    assert "stats_leiden_sum" in ds.fields and "stats_cell_type_sum" in ds.fields
+    ds2, _ = _synthetic2()
+    try:
+        lstar.extend_for_viewer(ds2, primary="not_a_field")
+        assert False, "expected ValueError for an unknown primary"
+    except ValueError as e:
+        assert "primary" in str(e)
+
+
 def test_order_none_skips_reorder():
     ds, X = _synthetic()
     lstar.extend_for_viewer(ds, order="none")

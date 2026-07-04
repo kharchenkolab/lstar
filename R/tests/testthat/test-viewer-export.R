@@ -1,3 +1,30 @@
+# `primary=` (the grouping the viewer opens on) hoists that grouping to the front: it keys the
+# counts_cellmajor locality reorder + is summarized first, and COMPOSES with auto-detect (the other
+# groupings are still prepped). Mirrors python/tests/test_viewer.py::test_primary_* and js/test/extend_primary.
+test_that("extend_for_viewer primary= hoists the reorder-key grouping and composes with auto-detect", {
+  skip_if_not_installed("Matrix")
+  set.seed(1); nc <- 30L; ng <- 8L
+  cnt <- as(Matrix::rsparsematrix(nc, ng, density = 0.4, rand.x = function(n) rpois(n, 3) + 1), "CsparseMatrix")
+  rownames(cnt) <- paste0("c", 0:(nc - 1)); colnames(cnt) <- paste0("g", 0:(ng - 1))
+  mkds <- function() structure(list(kind = "sample", spec_version = "0.1", profiles = character(0), dropped = character(0),
+    axes = list(cells = list(labels = rownames(cnt), origin = "observed", role = "observation"),
+                genes = list(labels = colnames(cnt), origin = "observed", role = "feature"),
+                umap = list(labels = c("u1", "u2"), origin = "derived", role = "coordinate")),
+    fields = list(counts = list(values = cnt, role = "measure", span = c("cells", "genes"), state = "raw", encoding = "csc"),
+                  umap = list(values = matrix(rnorm(nc * 2), nc, 2), role = "embedding", span = c("cells", "umap")),
+                  leiden = list(values = factor(paste0("k", (0:(nc - 1)) %% 3)), role = "label", span = "cells", encoding = "categorical"),
+                  cell_type = list(values = factor(c("T", "B", "NK")[(0:(nc - 1)) %% 3 + 1]), role = "label", span = "cells", encoding = "categorical"))),
+    class = "lstar_dataset")
+  # primary hoists cell_type but still preps the auto-detected leiden; the reorder is keyed on cell_type.
+  d1 <- extend_for_viewer(mkds(), primary = "cell_type")
+  expect_true(all(c("stats_cell_type_sum", "stats_leiden_sum", "markers_cell_type_lfc") %in% names(d1$fields)))
+  expect_identical(d1$fields[["counts_cellmajor_order"]]$provenance$group, "cell_type")
+  # default: detection prefers leiden over cell_type, so the default reorder key is leiden.
+  d2 <- extend_for_viewer(mkds())
+  expect_identical(d2$fields[["counts_cellmajor_order"]]$provenance$group, "leiden")
+  expect_error(extend_for_viewer(mkds(), primary = "not_a_field"), "primary")
+})
+
 # A non-viewer converter (write_seurat/write_sce) drops the viewer@0.1 `cache` navigators (regenerable;
 # records them in `dropped`) rather than carrying a redundant/mis-aligned copy. Primaries are kept.
 test_that("write_seurat / .lstar_drop_cache drop viewer@0.1 cache navigators, keep primaries", {

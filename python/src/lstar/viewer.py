@@ -163,7 +163,7 @@ def _select_counts_basis(ds, counts=None, basis=None):
 # ---------------------------------------------------------------------------------------------------
 
 def extend_for_viewer(ds, groupings=None, order="hybrid", embedding=None, markers=True,
-                      counts=None, basis=None):
+                      counts=None, basis=None, primary=None):
     """Add the viewer's precomputed fields to ``ds`` in place (and return it).
 
     Parameters
@@ -174,6 +174,15 @@ def extend_for_viewer(ds, groupings=None, order="hybrid", embedding=None, marker
     groupings : list[str] | None
         Categorical label field names to build stats/markers for. ``None`` auto-detects (labels with
         2..~60 distinct values, clustering/cell-type names preferred).
+    primary : str | None
+        The grouping the *viewer opens on* (its default grouping). Hoisted to the front of the prepared
+        groupings, so it is the ``counts_cellmajor`` locality-reorder key AND its stats/markers are
+        computed first — the eager-prepare a fast launch waits on. Unlike ordering ``groupings`` by
+        hand, ``primary`` COMPOSES with auto-detect: ``primary="cell_type"`` with ``groupings=None``
+        preps *every* detected grouping but keys the reorder on ``cell_type``. This is the hook the
+        viewer's ``view()`` launcher uses to align the prep with what the first workspace shows (the
+        auto-detect policy prefers clusterings, but the viewer may open on a cell-type annotation).
+        ``None`` (default) keeps the current behavior: the first detected grouping is primary.
     order : "hybrid" | "none"
         ``"hybrid"`` (default) physically reorders ``counts_cellmajor`` rows by (first grouping's
         cluster code, then a Hilbert index over the embedding) and records each cell's physical row in
@@ -211,6 +220,12 @@ def extend_for_viewer(ds, groupings=None, order="hybrid", embedding=None, marker
     if groupings is None:
         groupings = _detect_groupings(ds)
     groupings = [g for g in groupings if g in ds.fields]
+    # Hoist the viewer's primary grouping to the front (guaranteed present): it becomes the reorder key
+    # + is summarized first. Composes with auto-detect above — the rest of the groupings are still prepped.
+    if primary is not None:
+        if primary not in ds.fields:
+            raise ValueError("extend_for_viewer: primary=%r is not a field in the dataset" % primary)
+        groupings = [primary] + [g for g in groupings if g != primary]
     if not groupings:
         raise ValueError("extend_for_viewer: no categorical grouping found (pass groupings=[...])")
 

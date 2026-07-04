@@ -11,7 +11,8 @@ extend_for_viewer(
   counts = NULL,
   basis = NULL,
   order = "hybrid",
-  markers = TRUE
+  markers = TRUE,
+  primary = NULL
 )
 }
 \arguments{
@@ -33,6 +34,12 @@ Hilbert curve over the embedding) and adds \code{counts_cellmajor_order}; \code{
 order and omits the permutation.}
 
 \item{markers}{if \code{TRUE} (default), also compute the 1-vs-rest \verb{markers_<g>_\{lfc,padj\}} tables.}
+
+\item{primary}{the grouping the \emph{viewer opens on}. Hoisted to the front of the prepared groupings, so it
+keys the \code{counts_cellmajor} locality reorder AND is summarized first -- the eager-prepare a fast launch
+waits on. Unlike ordering the groupings by hand, \code{primary} composes with auto-detect: \code{primary="cell_type"}
+with \code{grouping=NULL} preps \emph{every} detected grouping but keys the reorder on \code{cell_type} (the auto-detect
+policy prefers clusterings, but the viewer may open on a cell-type annotation). \code{NULL} = current behavior.}
 }
 \value{
 \code{ds} with the navigator fields added and \verb{viewer@0.1} in \code{ds$profiles}.

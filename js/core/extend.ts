@@ -17,6 +17,9 @@ const VIEWER_PROFILE = "viewer@0.1";
 
 export interface ExtendOptions {
   groupings?: string[];   // categorical label fields to build stats/markers for; default = auto-detect
+  primary?: string;       // the grouping the VIEWER OPENS ON: hoisted to the front (the counts_cellmajor reorder
+                          // key + summarized first), and COMPOSES with auto-detect (the rest are still prepped) —
+                          // which `groupings` alone can't express. Default: the first detected grouping is primary.
   markers?: boolean;      // also compute 1-vs-rest marker tables (default true)
   counts?: string;        // force the count measure (else auto: a raw-state measure, name "counts" as fallback)
   basis?: string;         // "lognorm" to prep (approximately) from an already log-normalized measure
@@ -127,6 +130,12 @@ export async function extendForViewer(store: LstarWritableStore, opts: ExtendOpt
   }
 
   let groupings = (opts.groupings ?? await detectGroupings(ds, cellAxis)).filter((g) => ds.hasField(g));
+  // Hoist the viewer's primary grouping to the front (guaranteed present): it keys the counts_cellmajor
+  // reorder + is summarized first. Composes with auto-detect — the other groupings are still prepped.
+  if (opts.primary != null) {
+    if (!ds.hasField(opts.primary)) throw new Error("extendForViewer: primary `" + opts.primary + "` is not a field");
+    groupings = [opts.primary, ...groupings.filter((g) => g !== opts.primary)];
+  }
   if (!groupings.length) throw new Error("extendForViewer: no categorical grouping found (pass {groupings:[...]})");
   const markers = opts.markers ?? true;
   const axes: Record<string, AxisSpec> = {}, fields: Record<string, FieldSpec> = {};
@@ -166,7 +175,7 @@ export async function extendForViewer(store: LstarWritableStore, opts: ExtendOpt
     const perm = new Int32Array(ncells); for (let i = 0; i < ncells; i++) perm[posOf[i]] = i;   // physical row -> cell
     csr = reorderCsrRows(M.cscToCsr(cscData, cscIndices, cscIndptr, ncells, ngenes), perm);
     const order = new Float64Array(ncells); for (let i = 0; i < ncells; i++) order[i] = posOf[i];
-    fields["counts_cellmajor_order"] = { role: "measure", span: [cellAxis], encoding: "dense", state: "permutation", shape: [ncells], data: order, provenance: { ...prov, method: "viewer.reorder", curve: emb ? "hilbert" : "cluster" } };
+    fields["counts_cellmajor_order"] = { role: "measure", span: [cellAxis], encoding: "dense", state: "permutation", shape: [ncells], data: order, provenance: { ...prov, method: "viewer.reorder", curve: emb ? "hilbert" : "cluster", group: groupings[0] } };
   } else {
     csr = M.cscToCsr(cscData, cscIndices, cscIndptr, ncells, ngenes);   // no reorder, no _order field
   }

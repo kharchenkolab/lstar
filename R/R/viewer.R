@@ -80,6 +80,11 @@
 #' @param ds an `lstar_dataset` (a raw-counts measure + at least one categorical cell label).
 #' @param grouping primary grouping label (default: auto-detect; clustering/cell-type names preferred).
 #' @param also additional grouping labels to also summarize (e.g. `"cell_type"`).
+#' @param primary the grouping the *viewer opens on*. Hoisted to the front of the prepared groupings, so it
+#'   keys the `counts_cellmajor` locality reorder AND is summarized first -- the eager-prepare a fast launch
+#'   waits on. Unlike ordering the groupings by hand, `primary` composes with auto-detect: `primary="cell_type"`
+#'   with `grouping=NULL` preps *every* detected grouping but keys the reorder on `cell_type` (the auto-detect
+#'   policy prefers clusterings, but the viewer may open on a cell-type annotation). `NULL` = current behavior.
 #' @param counts name of the count measure to use. Default `NULL` = auto-detect by state: a measure
 #'   named `counts`, else any measure with `state == "raw"`. An error (listing the present measures)
 #'   is raised if none is found.
@@ -93,7 +98,7 @@
 #' @seealso [viewer_extend()], [lstar_write_viewer()]
 #' @export
 extend_for_viewer <- function(ds, grouping = NULL, also = character(0), counts = NULL, basis = NULL,
-                              order = "hybrid", markers = TRUE) {
+                              order = "hybrid", markers = TRUE, primary = NULL) {
   sel <- .viewer_counts_basis(ds, counts, basis)   # pick basis by state, not the literal name "counts"
   cf <- ds$fields[[sel$name]]; use_lognorm <- sel$log1p
   cnt <- methods::as(cf$values, "CsparseMatrix")                 # cells x genes (CSC)
@@ -104,9 +109,16 @@ extend_for_viewer <- function(ds, grouping = NULL, also = character(0), counts =
   if (is.null(grouping)) groupings <- .detect_groupings(ds, cell_axis)   # ALL detected (parity with Python)
   else groupings <- unique(c(grouping, also))
   groupings <- groupings[vapply(groupings, function(g) !is.null(ds$fields[[g]]), logical(1))]
+  # Hoist the viewer's primary grouping to the front (guaranteed present): it keys the reorder + is summarized
+  # first. Composes with auto-detect above -- the rest of the groupings are still prepped. (Parity: Python/JS.)
+  if (!is.null(primary)) {
+    if (is.null(ds$fields[[primary]]))
+      stop(sprintf("extend_for_viewer: primary='%s' is not a field in the dataset", primary), call. = FALSE)
+    groupings <- unique(c(primary, groupings[groupings != primary]))
+  }
   if (!length(groupings))
     stop("extend_for_viewer: no categorical grouping found (pass grouping=)", call. = FALSE)
-  primary <- groupings[1]                                                # reorder keys on the first grouping
+  primary_grouping <- groupings[1]                                       # reorder keys on the first grouping
 
   # All fields below are viewer@0.1 caches (regenerable from counts; non-viewer converters drop+record).
   cache <- list(cache = "viewer@0.1")
@@ -122,7 +134,7 @@ extend_for_viewer <- function(ds, grouping = NULL, also = character(0), counts =
     lab <- as.character(ds$fields[[gp]]$values)
     groups <- sort(unique(lab[!is.na(lab)])); K <- length(groups)
     code <- as.integer(factor(lab, levels = groups)) - 1L
-    if (identical(gp, primary)) primary_code <- code
+    if (identical(gp, primary_grouping)) primary_code <- code
     gs <- lstar_cpp_col_sum_by_group(as.double(cnt@x), cnt@p, cnt@i, nc, ng, code, K, use_lognorm)
     S <- matrix(gs$sum, nrow = K, byrow = TRUE)
     SS <- matrix(gs$sumsq, nrow = K, byrow = TRUE)
@@ -151,7 +163,8 @@ extend_for_viewer <- function(ds, grouping = NULL, also = character(0), counts =
     pos_of <- lstar_cpp_viewer_cell_order(as.integer(primary_code), as.double(emb), nc, .VIEWER_HILBERT_GRID)  # 0-based
     perm <- integer(nc); perm[pos_of + 1L] <- seq_len(nc)        # inverse: perm[p] = cell at 1-based row p
     ds$fields[["counts_cellmajor_order"]] <- list(values = as.double(pos_of), role = "measure",
-                                                  span = cell_axis, state = "permutation", provenance = cache)
+                                                  span = cell_axis, state = "permutation",
+                                                  provenance = c(cache, list(group = primary_grouping)))
   } else {
     perm <- seq_len(nc)                                          # order="none": rows stay in cell order, no _order
   }
