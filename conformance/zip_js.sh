@@ -59,6 +59,11 @@ PY
 "$NODE" --experimental-strip-types "$ROOT/js/test/zip_concurrency.test.ts" \
   || { echo "  FAIL: zip throughput/concurrency parity"; exit 1; }
 
+# 2d) httpZipSource must opt out of the browser same-URL cache lock (cache:"no-store"), or a hosted zip's
+# concurrent reads serialize behind one cache entry. Browser-only effect; guard the intent via mock fetch.
+"$NODE" --experimental-strip-types "$ROOT/js/test/httpzip_nostore.test.ts" \
+  || { echo "  FAIL: httpZipSource no-store cache"; exit 1; }
+
 # 3) Python cross-reads the JS-written zip: all-STORED + expected fields/values
 "$PY" - "$OUTZIP" <<'PY' || { echo "  FAIL: Python cross-read of JS zip"; exit 1; }
 import sys, numpy as np, test_zip as T

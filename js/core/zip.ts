@@ -170,23 +170,31 @@ export class ZipStore implements LstarStore {
 
 /** A `ByteSource` over an HTTP(S) URL: `Range` for sub-ranges (falls back to slicing a 200 body), and
  * `content-length` (or a `content-range` probe) for the size. This is what makes a hosted single-file
- * `.lstar.zarr.zip` range-readable — the reason the archive must be STORED. */
+ * `.lstar.zarr.zip` range-readable — the reason the archive must be STORED.
+ *
+ * Every fetch passes `cache: "no-store"`. All reads target the ONE archive URL, and the browser serializes
+ * concurrent `fetch`es to the same URL under the default cache mode (a per-cache-entry lock), which would
+ * make a hosted zip's cold open strictly serial — the directory store parallelizes only because it hits
+ * distinct chunk URLs. `no-store` opts out of that shared entry, so same-URL Range reads run concurrently.
+ * No downside: a single-URL Range reader gets ~nothing from the HTTP cache anyway (206s cache unreliably),
+ * so the lock is pure cost. (Node's fetch has no HTTP cache, so this is invisible to the node conformance.) */
 export function httpZipSource(url: string, fetchImpl?: typeof fetch): ByteSource {
   const doFetch = fetchImpl ?? globalThis.fetch.bind(globalThis);
+  const NO_CACHE = "no-store" as const;
   let cachedSize: number | undefined;
   return {
     async size() {
       if (cachedSize !== undefined) return cachedSize;
-      const head = await doFetch(url, { method: "HEAD" });
+      const head = await doFetch(url, { method: "HEAD", cache: NO_CACHE });
       const len = head.headers.get("content-length");
       if (head.ok && len) return (cachedSize = parseInt(len, 10));
-      const probe = await doFetch(url, { headers: { Range: "bytes=0-0" } });
+      const probe = await doFetch(url, { headers: { Range: "bytes=0-0" }, cache: NO_CACHE });
       const cr = probe.headers.get("content-range"); // "bytes 0-0/12345"
       if (cr && cr.includes("/")) return (cachedSize = parseInt(cr.split("/")[1], 10));
       throw new Error("httpZipSource: cannot determine size of " + url);
     },
     async range(start, end) {
-      const res = await doFetch(url, { headers: { Range: `bytes=${start}-${end - 1}` } });
+      const res = await doFetch(url, { headers: { Range: `bytes=${start}-${end - 1}` }, cache: NO_CACHE });
       if (!res.ok && res.status !== 206) throw new Error("httpZipSource: range fetch failed " + res.status);
       const buf = new Uint8Array(await res.arrayBuffer());
       return res.status === 200 ? buf.subarray(start, end) : buf; // 200 = server ignored Range
