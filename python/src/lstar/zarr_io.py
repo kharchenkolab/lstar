@@ -146,7 +146,10 @@ def _open_root(path):
             return zarr.open_consolidated(path, mode="r")
         except Exception:
             pass
-    return zarr.open_group(path, mode="r")
+    # use_consolidated=False so a nonconformant .zmetadata (e.g. one whose keys aren't in the
+    # parent-before-child order zarr-python 3's consolidated parser assumes) degrades to reading the
+    # individual .zgroup/.zarray files rather than re-failing on the same bad consolidated metadata.
+    return zarr.open_group(path, mode="r", use_consolidated=False)
 
 
 def _open_zip_root(path):
@@ -166,7 +169,7 @@ def _open_zip_root(path):
     try:
         return zarr.open_consolidated(store=store, mode="r")
     except Exception:
-        return zarr.open_group(store=store, mode="r")
+        return zarr.open_group(store=store, mode="r", use_consolidated=False)
 
 
 def read(path, lazy=False):

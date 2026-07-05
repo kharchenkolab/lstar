@@ -56,6 +56,18 @@ export interface WriteOptions { chunkElems?: number; compressor?: Compressor | n
 const ENC = new TextEncoder();
 const j = (o: unknown) => ENC.encode(JSON.stringify(o));
 
+/** Order consolidated-metadata keys parent-before-child (by path depth, then lexicographically) so a
+ * strict consolidated reader can nest them. zarr-python 3's parser walks the flat map top-down and
+ * assumes every parent group appears before its children (and that siblings group consecutively); an
+ * `addToStore` that simply appended new keys broke that. zarr v2 readers are order-insensitive, so
+ * this is purely additive robustness that keeps the one-request consolidated open working everywhere. */
+function sortedMeta(meta: Record<string, unknown>): Record<string, unknown> {
+  const depth = (k: string) => (k.match(/\//g) || []).length;
+  const out: Record<string, unknown> = {};
+  for (const k of Object.keys(meta).sort((a, b) => depth(a) - depth(b) || (a < b ? -1 : a > b ? 1 : 0))) out[k] = meta[k];
+  return out;
+}
+
 function dtypeOf(a: ArrayLike<number>): [string, number, Uint8Array] {
   if (a instanceof Float64Array) return ["<f8", 8, new Uint8Array(a.buffer, a.byteOffset, a.byteLength)];
   if (a instanceof Float32Array) return ["<f4", 4, new Uint8Array(a.buffer, a.byteOffset, a.byteLength)];
@@ -202,7 +214,7 @@ export async function writeStore(store: LstarWritableStore, ds: DatasetSpec, opt
   for (const [name, ax] of Object.entries(ds.axes)) await writeAxis(rec, name, ax, opts);
   for (const [name, f] of Object.entries(ds.fields)) await writeField(rec, name, f, opts);
   for (const [ns, a] of Object.entries(ds.aux ?? {})) await writeAux(rec, ns, a, opts);
-  await store.set(".zmetadata", j({ zarr_consolidated_format: 1, metadata: meta }));
+  await store.set(".zmetadata", j({ zarr_consolidated_format: 1, metadata: sortedMeta(meta) }));
 }
 
 /** Append derived axes/fields to an existing store and update the root manifest (+ profiles). */
@@ -240,7 +252,7 @@ export async function addToStore(store: LstarWritableStore, add: { axes?: Record
   const existing = await store.get(".zmetadata");
   if (existing) {
     const cm = JSON.parse(new TextDecoder().decode(existing));
-    cm.metadata = { ...(cm.metadata ?? {}), ...newMeta };
+    cm.metadata = sortedMeta({ ...(cm.metadata ?? {}), ...newMeta });
     await store.set(".zmetadata", j(cm));
   }
 }
