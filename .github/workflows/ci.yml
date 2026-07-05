@@ -8,18 +8,19 @@ jobs:
     # CI runs the synthetic-but-faithful corpus (synth.py) -- no real datasets are downloaded or
     # committed (they're large/slow); the real corpus + sweep run locally. See python/tests/corpus.py.
     # Version matrix: `latest` runs the full suite on the newest deps; `pinned-old` runs the
-    # corpus-free core tests on **old anndata** (0.8) -- it guards lstar's anndata-version handling
-    # without coupling to scanpy/mudata (whose synthetic fixtures need newer anndata), so it stays a
-    # clean, coherent old-deps check.
+    # corpus-free core tests on the **support floor** -- oldest zarr lstar runs on (3.1.0, the first
+    # release where Group.create_array accepts data=) AND old anndata (0.8) -- guarding both the
+    # zarr-version floor and lstar's anndata-version handling without coupling to scanpy/mudata
+    # (whose synthetic fixtures need newer anndata), so it stays a clean, coherent old-deps check.
     strategy:
       fail-fast: false
       matrix:
         include:
           - tag: latest
-            pip: 'numpy scipy "zarr<3" anndata scanpy mudata'
+            pip: 'numpy scipy "zarr>=3.1" anndata scanpy mudata'
             tests: 'test_roundtrip test_anndata_profile test_crossimpl test_validate test_versions test_lazy test_stream_write test_categorical test_induce test_nullable test_aux test_de test_tier1_promote test_real_atlas test_mudata test_partial test_spatial test_fuzz test_legacy_format test_determinism test_collection_reduce test_arity3'
           - tag: pinned-old
-            pip: '"numpy<2" scipy "zarr<3" "anndata==0.8.0"'   # anndata 0.8 predates numpy 2.0 (removed np.float_ etc.)
+            pip: '"numpy<2" scipy "zarr==3.1.0" "anndata==0.8.0"'   # support floor: oldest zarr (3.1.0) + old anndata (0.8, predates numpy 2.0)
             # core lstar tests only; exclude ones that drive anndata's *h5ad writer* for newer dtypes
             # (test_stream_write writes a pandas StringArray, which anndata 0.8's writer can't serialize).
             tests: 'test_roundtrip test_crossimpl test_validate test_versions test_lazy test_categorical test_aux test_partial test_fuzz test_legacy_format test_determinism test_collection_reduce test_arity3'
@@ -30,8 +31,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      # NOTE: the Python reference impl currently targets the Zarr v2 API; the v3
-      # port is pending (the C++ core targets v3). Pin zarr<3 until then.
+      # The Python reference impl uses the zarr-python 3 library (zarr>=3.1) but still writes the
+      # v2 on-disk FORMAT (zarr_format=2), so the C++/R/JS readers are unchanged. Library != format.
       - run: pip install ${{ matrix.pip }}
       - name: build libstar (C++ core)
         run: cmake -S core -B core/build -DCMAKE_BUILD_TYPE=Release && cmake --build core/build -j2
@@ -62,7 +63,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install numpy scipy "zarr<3" anndata scanpy mudata
+      - run: pip install numpy scipy "zarr>=3.1" anndata scanpy mudata
       - uses: r-lib/actions/setup-r@v2
         with:
           # Public Posit Package Manager: precompiled Linux binaries (with all system/transitive
@@ -169,7 +170,7 @@ jobs:
           python-version: "3.11"
       # make_store.py drives the Python L* writer (PYTHONPATH=python/src) to emit the test store;
       # anndata/scanpy/mudata let viewer_corpus.sh build the synthetic corpus for the JS==Python leg.
-      - run: pip install numpy scipy "zarr<3" anndata scanpy mudata
+      - run: pip install numpy scipy "zarr>=3.1" anndata scanpy mudata
       - uses: mymindstorm/setup-emsdk@v14
         with:
           version: 6.0.0          # bundles node 22.16 -> supports `node --experimental-strip-types`

@@ -7,7 +7,7 @@ name = "lstar-sc"                         # PyPI distribution name ("lstar" is t
 version = "0.1.5"
 description = "L* model and Zarr interchange for single-cell/spatial omics, with a fast C++ core"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.11"           # zarr>=3 requires Python >=3.11
 license = { text = "MIT" }
 authors = [{ name = "Peter Kharchenko", email = "pk.restricted@gmail.com" }]
 keywords = ["single-cell", "omics", "zarr", "anndata", "interchange", "bioinformatics"]
@@ -19,7 +19,7 @@ classifiers = [
     "Programming Language :: C++",
     "Topic :: Scientific/Engineering :: Bio-Informatics",
 ]
-dependencies = ["numpy", "scipy", "zarr<3"]
+dependencies = ["numpy", "scipy", "zarr>=3.1"]   # zarr-python 3 library; still writes v2 on-disk format
 
 [project.optional-dependencies]
 anndata = ["anndata"]
