@@ -7,6 +7,7 @@
 //   • markers_<g>_{lfc,padj}         — 1-vs-rest marker tables
 // using the SAME libstar WASM kernels the live viewer runs (so prepped == live), then `addToStore`s them under the
 // `viewer@0.1` profile. Pure Node — no Python / numpy. Kernels: ../wasm/lstar_wasm.cpp.
+import * as compute from "./compute.ts";
 import { openLstar, type LstarDataset } from "./reader.ts";
 import { addToStore, type FieldSpec, type AxisSpec, type LstarWritableStore } from "./writer.ts";
 import { selectCountsBasis } from "./basis.ts";
@@ -144,22 +145,26 @@ export async function extendForViewer(store: LstarWritableStore, opts: ExtendOpt
   const axes: Record<string, AxisSpec> = {}, fields: Record<string, FieldSpec> = {};
   const prov = { cache: VIEWER_PROFILE };
 
+  // The stat reductions (od / group sufficient stats / 1-vs-rest markers) are the shared viewer-compute
+  // recipe -- the SAME primitives lstar's live LstarView and pagoda3's browser view call, single-sourced
+  // in compute.ts so a fix lands once. M is passed through to reuse the already-loaded kernels.
+  const measure = { data: cscData, indptr: cscIndptr, indices: cscIndices, ncells, ngenes };
+
   // 1) global od_score — per-gene mean/var of log1p over all cells -> pagoda2 overdispersion residual.
-  const cmv = M.colMeanVar(cscData, cscIndptr, ncells, 1, log1p);                 // {mean, var, nnz} per gene
-  fields["od_score"] = { role: "measure", span: [geneAxis], encoding: "dense", shape: [ngenes], data: M.overdispersion(cmv.mean, cmv.var, cmv.nnz), provenance: { ...prov, method: "viewer.od", basis: log1p ? "log1p" : "lognorm-input" } };
+  fields["od_score"] = { role: "measure", span: [geneAxis], encoding: "dense", shape: [ngenes], data: await compute.overdispersionScore(measure, { lognorm: log1p }, M), provenance: { ...prov, method: "viewer.od", basis: log1p ? "log1p" : "lognorm-input" } };
 
   // 2) per grouping — sufficient stats (group-major K x ngenes) + 1-vs-rest markers (gene-major ngenes x K).
   for (const g of groupings) {
     const { codes, categories } = await labelCodes(ds, g);
     const K = categories.length, gaxis = "groups_" + g;
     axes[gaxis] = { labels: categories, origin: "derived", role: "feature" };
-    const s = M.colSumByGroup(cscData, cscIndptr, cscIndices, ncells, ngenes, codes, K, log1p);
+    const s = await compute.groupSufficientStats(measure, codes, K, { lognorm: log1p }, M);
     fields["stats_" + g + "_sum"]   = { role: "measure", span: [gaxis, geneAxis], encoding: "dense", shape: [K, ngenes], data: s.sum,    provenance: prov };
     fields["stats_" + g + "_sumsq"] = { role: "measure", span: [gaxis, geneAxis], encoding: "dense", shape: [K, ngenes], data: s.sumsq,  provenance: prov };
     fields["stats_" + g + "_nexpr"] = { role: "measure", span: [gaxis, geneAxis], encoding: "dense", shape: [K, ngenes], data: s.n_expr, provenance: prov };
     if (markers) {
-      const nper = new Int32Array(K); for (let i = 0; i < ncells; i++) { const c = codes[i]; if (c >= 0) nper[c]++; }
-      const mk = M.markersOneVsRest(s.sum, s.n_expr, nper, K, ngenes, ncells);
+      const nper = compute.groupSizes(codes, K);
+      const mk = await compute.markers(s.sum, s.n_expr, nper, K, ngenes, ncells, M);
       const mp = { ...prov, method: "viewer.markers", test: "1-vs-rest" };
       fields["markers_" + g + "_lfc"]  = { role: "measure", span: [geneAxis, gaxis], encoding: "dense", shape: [ngenes, K], data: mk.lfc,  provenance: mp };
       fields["markers_" + g + "_padj"] = { role: "measure", span: [geneAxis, gaxis], encoding: "dense", shape: [ngenes, K], data: mk.padj, provenance: mp };

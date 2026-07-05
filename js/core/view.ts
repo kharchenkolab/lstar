@@ -7,6 +7,7 @@
 // will make groupStats/DE instant; here they read the measure, which is fine at moderate scale.
 import createLstarKernels from "../dist/lstar_kernels.mjs";
 
+import * as compute from "./compute.ts";
 import type { LstarDataset } from "./reader.ts";
 
 export interface ColStats { mean: Float64Array; var: Float64Array; nnz: Int32Array; }
@@ -14,10 +15,8 @@ export type Metadata =
   | { kind: "categorical"; codes: Int32Array; categories: string[]; mask?: Uint8Array }
   | { kind: "numeric"; values: Float32Array; mask?: Uint8Array };
 
-// `Number` as the map fn makes these safe for BigInt64Array/BigUint64Array (int64 zarr arrays decode
+// `Number` as the map fn makes this safe for BigInt64Array/BigUint64Array (int64 zarr arrays decode
 // to BigInt typed arrays, which can't be implicitly converted) as well as ordinary numeric arrays.
-function toF64(a: any): Float64Array { return a instanceof Float64Array ? a : Float64Array.from(a, Number); }
-function toI32(a: any): Int32Array { return a instanceof Int32Array ? a : Int32Array.from(a, Number); }
 function toF32(a: any): Float32Array { return a instanceof Float32Array ? a : Float32Array.from(a, Number); }
 
 export class LstarView {
@@ -86,48 +85,29 @@ export class LstarView {
     return { values: out, max, col };
   }
 
-  /** Per-gene zero-aware mean/variance (HVG ranking) over the whole measure, via the WASM kernel. */
+  /** Per-gene zero-aware mean/variance (HVG ranking) over the whole measure. Reads the measure as CSC
+   * (any on-disk encoding) and hands it to the shared `compute.colStats` recipe. */
   async colStats(opts: { lognorm?: boolean; field?: string } = {}): Promise<ColStats> {
-    const lognorm = opts.lognorm ?? true;
     const sp = await this.ds.fieldAsCsc(opts.field ?? "counts");    // dense/csr/csc -> csc (single-sourced)
-    const M = await this.M();
-    return M.colMeanVar(toF64(sp.data), toI32(sp.indptr), sp.shape[0], 1, lognorm);
+    return compute.colStats({ data: sp.data, indptr: sp.indptr, ncells: sp.shape[0] },
+                            { lognorm: opts.lognorm ?? true }, await this.M());
   }
 
   /**
-   * Rank genes distinguishing cell set A from B. Generic-store implementation: a single pass over the
-   * measure accumulating per-group sums (subsample each group to bound cost). Returns genes sorted by
-   * |log fold change| with per-group means. (A viewer profile's cell-major DE panel makes this a few
-   * row reads — a later phase.)
+   * Rank genes distinguishing cell set A from B, via the shared `compute.deAvsB` recipe. Generic-store
+   * path: read the whole measure and reduce. The sampling cap (bound cost per group) is orchestration and
+   * stays here; the reduction is shared. (A viewer profile's cell-major DE panel makes this a few row
+   * reads via `csrRows` — the caller feeds those rows to the same `deAvsB`.)
    */
   async subsampleDE(cellsA: number[], cellsB: number[],
                     opts: { lognorm?: boolean; field?: string; maxPerGroup?: number } = {}):
       Promise<Array<{ gene: number; meanA: number; meanB: number; lfc: number }>> {
-    const lognorm = opts.lognorm ?? true;
     const cap = opts.maxPerGroup ?? Infinity;
     const A = cap === Infinity ? cellsA : cellsA.slice(0, cap);
     const B = cap === Infinity ? cellsB : cellsB.slice(0, cap);
     const sp = await this.ds.fieldAsCsc(opts.field ?? "counts");    // dense/csr/csc -> csc (single-sourced)
-    const [nrows, ncols] = sp.shape;
-    const inA = new Uint8Array(nrows), inB = new Uint8Array(nrows);
-    for (const c of A) inA[c] = 1;
-    for (const c of B) inB[c] = 1;
-    const { data, indices, indptr } = sp;
-    const sumA = new Float64Array(ncols), sumB = new Float64Array(ncols);
-    for (let j = 0; j < ncols; j++) {
-      for (let k = Number(indptr[j]); k < Number(indptr[j + 1]); k++) {
-        const r = indices[k];
-        const v = lognorm ? Math.log1p(data[k]) : data[k];
-        if (inA[r]) sumA[j] += v; else if (inB[r]) sumB[j] += v;
-      }
-    }
-    const out = [];
-    for (let j = 0; j < ncols; j++) {
-      const meanA = sumA[j] / A.length, meanB = sumB[j] / B.length;
-      out.push({ gene: j, meanA, meanB, lfc: meanA - meanB });
-    }
-    out.sort((x, y) => Math.abs(y.lfc) - Math.abs(x.lfc));
-    return out;
+    return compute.deAvsB({ data: sp.data, indices: sp.indices, indptr: sp.indptr, ncells: sp.shape[0], ngenes: sp.shape[1] },
+                          A, B, { lognorm: opts.lognorm ?? true });
   }
 }
 

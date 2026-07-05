@@ -1,8 +1,10 @@
-// Encoding-invariance for the LIVE-viewer measure compute: the SAME matrix, written as dense / csc / csr,
-// must give identical colStats (HVG ranking) and subsampleDE (interactive DE). This is the coverage that
-// was missing when JS read the measure via a sparse-hardcoded path — a dense primary measure (SCE
-// logcounts / scaled AnnData X) threw NotFoundError and viewer compute silently broke. Metamorphic: no
-// Python reference needed — encoding must not change the answer, and a direct dense reference pins correctness.
+// Encoding-invariance for the shared viewer-compute recipe (js/core/compute.ts): the SAME matrix, written
+// as dense / csc / csr, must give identical results from every primitive — colStats (HVG mean/var/nnz),
+// groupSufficientStats + markers (1-vs-rest), overdispersionScore, and A-vs-B DE. Covers both the LstarView
+// path and the primitives pagoda3 calls directly. This is the coverage that was missing when JS read the
+// measure via a sparse-hardcoded path — a dense primary measure (SCE logcounts / scaled AnnData X) threw
+// NotFoundError and viewer compute silently broke. Metamorphic: encoding must not change the answer, and
+// direct dense references pin correctness.
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -11,6 +13,7 @@ import { openLstar } from "../core/reader.ts";
 import { NodeFSStore } from "../core/node-store.ts";
 import { writeStore } from "../core/writer.ts";
 import { LstarView } from "../core/view.ts";
+import * as compute from "../core/compute.ts";
 
 let fail = 0;
 const check = (name: string, ok: boolean) => { console.log(`  ${ok ? "OK" : "FAIL"}  ${name}`); if (!ok) fail++; };
@@ -64,42 +67,66 @@ async function build(enc: string): Promise<LstarView> {
     },
     fields: { X: fieldFor[enc] },
   });
-  return new LstarView(await openLstar(new NodeFSStore(out)));
+  const ds = await openLstar(new NodeFSStore(out));
+  return { view: new LstarView(ds), ds };
 }
 
 const A = Array.from({ length: NR / 2 }, (_, i) => i * 2);        // even cells
 const B = Array.from({ length: NR / 2 }, (_, i) => i * 2 + 1);    // odd cells
-type Res = { mean: Float64Array; var: Float64Array; nnz: Float64Array; meanA: Float64Array; meanB: Float64Array };
-async function run(v: LstarView): Promise<Res> {
-  const cs = await v.colStats({ field: "X", lognorm: true });
-  const de = await v.subsampleDE(A, B, { field: "X", lognorm: true });
+const K = 3;
+const codes = Int32Array.from({ length: NR }, (_, i) => i % K);   // a 3-way grouping over cells
+type Res = {
+  mean: Float64Array; var: Float64Array; nnz: Float64Array; meanA: Float64Array; meanB: Float64Array;
+  sum: Float64Array; sumsq: Float64Array; nexpr: Float64Array; lfc: Float64Array; od: Float64Array;
+};
+async function run({ view, ds }: { view: LstarView; ds: any }): Promise<Res> {
+  // via LstarView (colStats/subsampleDE)
+  const cs = await view.colStats({ field: "X", lognorm: true });
+  const de = await view.subsampleDE(A, B, { field: "X", lognorm: true });
   const meanA = new Float64Array(NC), meanB = new Float64Array(NC);
   for (const r of de) { meanA[r.gene] = r.meanA; meanB[r.gene] = r.meanB; }
-  return { mean: cs.mean as any, var: cs.var as any, nnz: cs.nnz as any, meanA, meanB };
+  // the compute primitives directly (the surface pagoda3 calls — not routed through LstarView)
+  const csc = await ds.fieldAsCsc("X");
+  const M = await compute.kernels();
+  const m = { data: csc.data, indptr: csc.indptr, indices: csc.indices, ncells: csc.shape[0], ngenes: csc.shape[1] };
+  const s = await compute.groupSufficientStats(m, codes, K, { lognorm: true }, M);
+  const mk = await compute.markers(s.sum, s.n_expr, compute.groupSizes(codes, K), K, NC, NR, M);
+  const od = await compute.overdispersionScore(m, { lognorm: true }, M);
+  return { mean: cs.mean as any, var: cs.var as any, nnz: cs.nnz as any, meanA, meanB,
+           sum: s.sum, sumsq: s.sumsq, nexpr: s.n_expr, lfc: mk.lfc, od };
 }
 
 const R: Record<string, Res> = {};
 for (const enc of ["dense", "csc", "csr"]) R[enc] = await run(await build(enc));
 
-// (1) encoding-invariance: dense == csc == csr on every statistic (the guard #101 was missing)
+// (1) encoding-invariance: dense == csc == csr on every statistic of the whole recipe (the guard #101 was missing)
 for (const enc of ["csc", "csr"]) {
-  check(`colStats mean  ${enc}==dense`, approx(R[enc].mean, R.dense.mean));
-  check(`colStats var   ${enc}==dense`, approx(R[enc].var, R.dense.var));
-  check(`colStats nnz   ${enc}==dense`, approx(R[enc].nnz, R.dense.nnz));
-  check(`subsampleDE meanA ${enc}==dense`, approx(R[enc].meanA, R.dense.meanA));
-  check(`subsampleDE meanB ${enc}==dense`, approx(R[enc].meanB, R.dense.meanB));
+  check(`colStats mean   ${enc}==dense`, approx(R[enc].mean, R.dense.mean));
+  check(`colStats var    ${enc}==dense`, approx(R[enc].var, R.dense.var));
+  check(`colStats nnz    ${enc}==dense`, approx(R[enc].nnz, R.dense.nnz));
+  check(`subsampleDE mnA ${enc}==dense`, approx(R[enc].meanA, R.dense.meanA));
+  check(`subsampleDE mnB ${enc}==dense`, approx(R[enc].meanB, R.dense.meanB));
+  check(`groupStats sum  ${enc}==dense`, approx(R[enc].sum, R.dense.sum));
+  check(`groupStats sqr  ${enc}==dense`, approx(R[enc].sumsq, R.dense.sumsq));
+  check(`groupStats nexp ${enc}==dense`, approx(R[enc].nexpr, R.dense.nexpr));
+  check(`markers lfc     ${enc}==dense`, approx(R[enc].lfc, R.dense.lfc));
+  check(`overdispersion  ${enc}==dense`, approx(R[enc].od, R.dense.od));
 }
 
-// (2) direct correctness reference (guards against all-three-consistently-wrong): per-gene zero-aware
-// log1p mean + nnz computed straight from the dense matrix must match colStats.
-const refMean = new Float64Array(NC), refNnz = new Float64Array(NC);
+// (2) direct correctness references (guard against all-three-consistently-wrong): per-gene log1p mean/nnz
+// and per-(group,gene) log1p sum computed straight from the dense matrix must match the kernels.
+const refMean = new Float64Array(NC), refNnz = new Float64Array(NC), refSum = new Float64Array(K * NC);
 for (let j = 0; j < NC; j++) { let s = 0, n = 0; for (let i = 0; i < NR; i++) { const v = dense[i * NC + j]; s += Math.log1p(v); if (v !== 0) n++; } refMean[j] = s / NR; refNnz[j] = n; }
-check("colStats mean == direct dense reference", approx(R.csc.mean, refMean, 1e-9, 1e-9));
-check("colStats nnz  == direct dense reference", approx(R.csc.nnz, refNnz));
+for (let i = 0; i < NR; i++) { const g = i % K; for (let j = 0; j < NC; j++) refSum[g * NC + j] += Math.log1p(dense[i * NC + j]); }
+check("colStats mean   == direct dense reference", approx(R.csc.mean, refMean, 1e-9, 1e-9));
+check("colStats nnz    == direct dense reference", approx(R.csc.nnz, refNnz));
+check("groupStats sum  == direct dense reference", approx(R.csc.sum, refSum, 1e-9, 1e-9));
 
 // (3) positive assertions: the compute actually produced non-trivial results (not silently empty)
 check("nnz has nonzeros (compute ran)", Array.from(R.dense.nnz).some((x) => x > 0));
 check("subsampleDE produced per-gene means", Array.from(R.dense.meanA).some((x) => x > 0));
+check("groupStats sum has nonzeros", Array.from(R.dense.sum).some((x) => x > 0));
+check("overdispersion produced scores", Array.from(R.dense.od).some((x) => x !== 0));
 
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(fail === 0 ? "\nencoding-invariance OK" : `\nencoding-invariance FAIL: ${fail}`);
