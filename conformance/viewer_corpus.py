@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.join(HERE, "..", "python", "tests"))
 import lstar                                            # noqa: E402
 from lstar.profiles.anndata import read_anndata         # noqa: E402
 
-DATASETS = ["pbmc68k", "pbmc3k"]                         # curated: multiple categoricals + an embedding
+DATASETS = ["pbmc68k", "pbmc3k", "dense_primary"]        # curated corpora + a synthetic DENSE-primary case
 
 
 def _load(name):
@@ -25,7 +25,34 @@ def _load(name):
     return {"pbmc68k": corpus.pbmc68k_reduced, "pbmc3k": corpus.pbmc3k_processed}[name]()
 
 
+def _build_dense_primary(out):
+    """A store whose PRIMARY measure is DENSE (encoding="dense", on-disk /fields/X/values) — the shape an
+    SCE logcounts assay or a scaled/dense AnnData X takes. The corpora above all carry a SPARSE (csc) counts
+    basis, so without this case the DENSE measure-read path is exercised on NO surface through the viewer
+    parity — which is exactly how a JS extendForViewer that hardcoded the sparse /data path shipped: dense
+    primary -> NotFoundError -> viewer-opt silently skipped. Always available (no corpus/scanpy dependency)."""
+    import numpy as np
+    rng = np.random.default_rng(0)
+    n, g, npc = 120, 30, 5
+    ds = lstar.Dataset(kind="sample")
+    ds.add_axis("cells", ["c%d" % i for i in range(n)])
+    ds.add_axis("genes", ["g%d" % i for i in range(g)])
+    ds.add_axis("pca", ["PC%d" % i for i in range(npc)], origin="derived")
+    X = (rng.poisson(0.4, size=(n, g)) * rng.random((n, g))).astype("float32")   # dense, many exact zeros
+    ds.add_field("logcounts", X, role="measure", span=["cells", "genes"], state="lognorm")   # DENSE primary
+    ds.add_field("cluster", np.array(["k%d" % (i % 4) for i in range(n)]), role="label", span=["cells"])
+    ds.add_field("phase", np.array(["G1", "S", "G2M"])[np.arange(n) % 3], role="label", span=["cells"])
+    ds.add_field("pca", rng.standard_normal((n, npc)).astype("float32"), role="embedding", span=["cells", "pca"])
+    lstar.write(ds, out)
+    print("  [synthetic] dense_primary -> L* base: DENSE primary measure `logcounts` (encoding=dense), "
+          "groupings=[cluster, phase], embedding=[pca]")
+    print("BASIS=lognorm")                                # dense measure is log-normalized -> prep from it as lognorm
+
+
 def cmd_base(name, out):
+    if name == "dense_primary":
+        _build_dense_primary(out)
+        return
     try:
         a = _load(name)
     except Exception as e:                               # a broken/missing optional dep -> clean skip
