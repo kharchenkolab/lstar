@@ -44,3 +44,7 @@ R/lstar_*.tar.gz
 
 # internal design notes / plans -- not for the public repo or releases
 misc/
+
+# local scanpy+zarr<3 test env for the AnnData corpus (Peter: "set up a separate .env for yourself")
+.corpus-env/
+.zarr3-env/

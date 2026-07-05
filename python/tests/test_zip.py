@@ -55,7 +55,7 @@ def _make_ds(n_cells=40, n_genes=18, n_pc=5):
 def _sparse_eq(a, b):
     A = a.toarray() if sp.issparse(a) else np.asarray(a)
     B = b.toarray() if sp.issparse(b) else np.asarray(b)
-    return A.shape == B.shape and np.allclose(A, B)
+    return A.shape == B.shape and np.allclose(A, B, equal_nan=True)
 
 
 def _field_eq(fa, fb):
@@ -65,7 +65,7 @@ def _field_eq(fa, fb):
     aa, ab = np.asarray(va), np.asarray(vb)
     if aa.dtype.kind in ("U", "S", "O") or ab.dtype.kind in ("U", "S", "O"):
         return list(map(str, aa.tolist())) == list(map(str, ab.tolist()))
-    return aa.shape == ab.shape and np.allclose(aa, ab)
+    return aa.shape == ab.shape and np.allclose(aa, ab, equal_nan=True)
 
 
 def _assert_ds_equal(a, b, ctx="", check_encoding=True):

@@ -54,7 +54,7 @@ def write(ds, path, compressor=None, chunk_elems=None, stream=False, viewer=Fals
         import tempfile
         _zip_target = str(path)
         path = tempfile.mkdtemp(suffix=".lstar.zarr")
-    root = zarr.open_group(path, mode="w")
+    root = zarr.open_group(path, mode="w", zarr_format=2)   # zarr-python 3 library, v2 on-disk format
     axg = root.create_group("axes")
     flg = root.create_group("fields")
     root.create_group("models")
@@ -162,7 +162,7 @@ def _open_zip_root(path):
             f"{path}: this .lstar.zarr.zip is DEFLATE-compressed ({len(bad)} of its entries, "
             f"e.g. {bad[0]!r}) — a hosted single-file store must be written STORED so its chunks "
             f"stay byte-range-readable. Repack it STORED (via `lstar convert`, or `zip -0 -r`).")
-    store = zarr.ZipStore(str(path), mode="r")
+    store = zarr.storage.ZipStore(str(path), mode="r")
     try:
         return zarr.open_consolidated(store=store, mode="r")
     except Exception:
@@ -222,22 +222,26 @@ def read(path, lazy=False):
 def _chunks_for(shape, chunk_elems):
     """A chunk shape splitting the first axis so each chunk holds ~chunk_elems elements.
 
-    Returns None (single chunk) when chunk_elems is None or the array already fits.
+    Returns the whole shape (a SINGLE chunk — the portable default) when chunk_elems is None or the
+    array already fits. (zarr v2's create_dataset accepted chunks=None for this and used chunks==shape;
+    the zarr-python-3 library's create_array requires an explicit chunk shape, so we return it.)
     """
+    shape = tuple(int(s) for s in shape)
+    single = tuple(max(1, s) for s in shape)              # whole array = one chunk (== zarr v2's chunks=None)
     if chunk_elems is None or len(shape) == 0 or shape[0] == 0:
-        return None
+        return single
     inner = 1
     for s in shape[1:]:
-        inner *= int(s)
+        inner *= s
     rows = max(1, chunk_elems // max(1, inner))
     if rows >= shape[0]:
-        return None
-    return (rows,) + tuple(int(s) for s in shape[1:])
+        return single
+    return (rows,) + shape[1:]
 
 
 def _ds(g, name, arr, compressor, chunk_elems):
     arr = np.asarray(arr)
-    g.create_dataset(name, data=arr, compressor=compressor,
+    g.create_array(name, data=arr, compressor=compressor,
                      chunks=_chunks_for(arr.shape, chunk_elems))
 
 
@@ -254,8 +258,8 @@ def _write_sparse_streaming(g, source, meta, compressor, chunk_elems):
     idx_dtype = np.dtype(getattr(source, "idtype", np.int32))
     indptr_dtype = np.int32 if 0 <= nnz < 2 ** 31 else np.int64
     ce = int(chunk_elems) if chunk_elems else 1_000_000
-    data_arr = g.create_dataset("data", shape=(0,), chunks=(ce,), dtype=data_dtype, compressor=compressor)
-    indices_arr = g.create_dataset("indices", shape=(0,), chunks=(ce,), dtype=idx_dtype, compressor=compressor)
+    data_arr = g.create_array("data", shape=(0,), chunks=(ce,), dtype=data_dtype, compressor=compressor)
+    indices_arr = g.create_array("indices", shape=(0,), chunks=(ce,), dtype=idx_dtype, compressor=compressor)
     out_indptr = np.empty(n_outer + 1, dtype=indptr_dtype)
     out_indptr[0] = 0
     pos = 0
@@ -265,7 +269,7 @@ def _write_sparse_streaming(g, source, meta, compressor, chunk_elems):
         indices_arr.append(np.asarray(sub.indices, dtype=idx_dtype))
         out_indptr[a + 1:b + 1] = pos + sub.indptr[1:]
         pos += int(sub.nnz)
-    g.create_dataset("indptr", data=out_indptr, compressor=compressor,
+    g.create_array("indptr", data=out_indptr, compressor=compressor,
                      chunks=_chunks_for(out_indptr.shape, chunk_elems))
     meta["encoding"] = fmt
     meta["shape"] = [int(x) for x in source.shape]
