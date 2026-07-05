@@ -55,7 +55,9 @@ async function detectGroupings(ds: LstarDataset, cellAxis: string): Promise<stri
     // Must be a label over the CELL axis: `span[0] === cellAxis`, not merely 1-D. Without this, a 1-D
     // label over the GENE axis (e.g. a `highly_variable` gene flag with 2..60 levels) was picked as a
     // grouping in JS but rejected by Py/R -> ngenes codes fed to a cells kernel -> out-of-bounds/garbage.
-    if (!f || (f.encoding !== "categorical" && f.encoding !== "utf8") || (f.span?.length ?? 0) !== 1 || f.span![0] !== cellAxis) continue;
+    // skip Seurat's active-idents mirror (subtype "active_ident" — a UI-state copy of the current identity,
+    // usually == a clustering already present); it's not a separate grouping (matches Python/R).
+    if (!f || f.subtype === "active_ident" || (f.encoding !== "categorical" && f.encoding !== "utf8") || (f.span?.length ?? 0) !== 1 || f.span![0] !== cellAxis) continue;
     try { const { categories } = await labelCodes(ds, name); if (categories.length >= MIN_GROUPS && categories.length <= MAX_GROUPS) out.push(name); } catch { /* not a clean label */ }
   }
   // preferred names (clustering / cell-type) first by list position, then alphabetical -- identical to

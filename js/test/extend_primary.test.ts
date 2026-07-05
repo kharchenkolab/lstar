@@ -75,6 +75,33 @@ async function main() {
       "a non-grouping primary (2-D embedding) rejects");
   }
 
+  // 4) Seurat's active-idents mirror (subtype "active_ident") is NOT a viewer grouping — even though it's a
+  //    valid 1-D cell label duplicating the clustering (read_seurat's `ident` field). Matches Python/R.
+  {
+    const dir = path.join(base, "ident");
+    fs.rmSync(dir, { recursive: true, force: true });
+    const store = new NodeFSStore(dir);
+    await writeStore(store, {
+      kind: "sample", profiles: ["test@0.1"],
+      axes: {
+        cells: { labels: ["c0", "c1", "c2", "c3", "c4", "c5"], role: "observation" },
+        genes: { labels: ["g0", "g1", "g2", "g3"], role: "feature" },
+        umap: { labels: ["umap0", "umap1"], origin: "derived", role: "coordinate" },
+      },
+      fields: {
+        counts: { role: "measure", span: ["cells", "genes"], encoding: "csc", state: "raw", shape: [6, 4],
+                  data: new Int32Array([1, 2, 3, 4, 5, 6, 7, 8]), indices: new Int32Array([0, 1, 2, 3, 4, 5, 0, 5]), indptr: new Int32Array([0, 2, 4, 6, 8]) },
+        umap: { role: "embedding", span: ["cells", "umap"], encoding: "dense", shape: [6, 2], data: new Float32Array([0, 0, 1, 0, 0, 1, 1, 1, 2, 2, 2, 0]) },
+        leiden: { role: "label", span: ["cells"], encoding: "utf8", values: ["a", "a", "b", "b", "c", "c"] },
+        ident: { role: "label", span: ["cells"], encoding: "utf8", subtype: "active_ident", values: ["a", "a", "b", "b", "c", "c"] },
+      },
+    });
+    await extendForViewer(store, {});
+    const ds = await openLstar(store);
+    assert.ok(ds.fieldNames().includes("stats_leiden_sum"), "leiden is a grouping");
+    assert.ok(!ds.fieldNames().includes("stats_ident_sum"), "the active_ident mirror is NOT a viewer grouping (matches Py/R)");
+  }
+
   fs.rmSync(base, { recursive: true, force: true });
   console.log("extend_primary.test: OK");
 }

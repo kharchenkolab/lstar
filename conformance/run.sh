@@ -84,6 +84,11 @@ bash conformance/viewer_primary.sh >/tmp/lstar_viewer_primary.log 2>&1 \
   && pass "extend_for_viewer(primary=) cross-surface parity" \
   || { echo "  FAIL viewer primary"; tail -20 /tmp/lstar_viewer_primary.log; exit 1; }
 
+echo "== Seurat -> extend_for_viewer conformance (boolean QC excluded; active-idents not duplicated; real + synthetic) =="
+bash conformance/viewer_seurat.sh >/tmp/lstar_viewer_seurat.log 2>&1 \
+  && pass "Seurat -> viewer prep (real SeuratData + synthetic)" \
+  || { echo "  FAIL viewer seurat"; tail -20 /tmp/lstar_viewer_seurat.log; exit 1; }
+
 echo "== multimodal cross-format consistency (CITE-seq via Seurat == via MuData -> same feature axes) =="
 bash conformance/multimodal_xformat.sh >/tmp/lstar_xfmt.log 2>&1 \
   && pass "Seurat/MuData multimodal land on the same canonical axes" \

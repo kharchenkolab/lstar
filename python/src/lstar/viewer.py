@@ -72,6 +72,8 @@ def _detect_groupings(ds, min_groups=_MIN_GROUPS, max_groups=_MAX_GROUPS):
     for name, fl in ds.fields.items():
         if fl.role != "label" or not fl.span or list(fl.span) != [cell_axis]:
             continue
+        if fl.subtype == "active_ident":                   # Seurat's active-idents mirror (a UI-state copy of
+            continue                                       # the current identity, usually == a clustering) — not a grouping
         if not _is_categorical(fl.values):                 # a string label is fine; numeric/sparse is not
             arr = np.asarray(fl.values)
             if arr.ndim != 1 or arr.dtype.kind not in ("U", "S", "O"):

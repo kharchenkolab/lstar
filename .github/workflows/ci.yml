@@ -155,6 +155,8 @@ jobs:
         run: bash conformance/viewer_corpus.sh
       - name: extend_for_viewer(primary=) cross-surface parity (Py==R reorder keyed on a given primary)
         run: bash conformance/viewer_primary.sh
+      - name: Seurat -> extend_for_viewer (boolean QC not a grouping; active-idents not duplicated; opens on a clustering)
+        run: bash conformance/viewer_seurat.sh
 
   js-wasm:
     runs-on: ubuntu-latest

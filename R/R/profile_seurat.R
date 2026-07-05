@@ -379,6 +379,7 @@ write_seurat <- function(ds) {
       v <- md[[col]][ord]
       if (is.numeric(v)) add(col, as.numeric(v), "measure", "cells")
       else if (is.factor(v)) add_factor(col, v, "cells")
+      else if (is.logical(v)) add(col, v, "label", "cells")   # keep BOOLEAN -> excluded from viewer groupings
       else add(col, as.character(v), "label", "cells")
     }
   }
@@ -526,6 +527,7 @@ write_seurat <- function(ds) {
       v <- md[[col]][ord]
       if (is.numeric(v)) add(col, as.numeric(v), "measure", "cells")
       else if (is.factor(v)) add_factor(col, v, "cells")
+      else if (is.logical(v)) add(col, v, "label", "cells")   # keep BOOLEAN -> excluded from viewer groupings
       else add(col, as.character(v), "label", "cells")
     }
   }
@@ -785,7 +787,8 @@ read_seurat <- function(so, assay = SeuratObject::DefaultAssay(so)) {
     v <- md[[col]]
     if (is.numeric(v)) add(col, as.numeric(v), "measure", "cells")
     else if (is.factor(v)) add_factor(col, v, "cells")    # preserve levels/order + induce a factor axis
-    else add(col, as.character(v), "label", "cells")
+    else if (is.logical(v)) add(col, v, "label", "cells") # keep BOOLEAN (a QC flag) -> the viewer's grouping
+    else add(col, as.character(v), "label", "cells")      #   detection excludes it (not a "TRUE"/"FALSE" grouping)
   }
 
   # If the assay was split, record the collection structure: a samples axis + a per-cell

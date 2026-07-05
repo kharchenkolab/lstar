@@ -40,6 +40,7 @@
     f <- ds$fields[[nm]]
     if (is.null(f$role) || f$role != "label") next
     if (is.null(f$span) || length(f$span) != 1L || f$span[1] != cell_axis) next
+    if (identical(f$subtype, "active_ident")) next         # Seurat active-idents mirror (== a clustering) -> not a grouping
     v <- f$values
     if (!is.factor(v) && !is.character(v)) next           # string-like labels only (match Python: skip numeric/logical)
     lv <- if (is.factor(v)) levels(v) else unique(v[!is.na(v)])

@@ -1,5 +1,16 @@
 # lstar (development version)
 
+## Seurat → viewer prep (the previously-untested seam)
+
+* A Seurat object converted with `read_seurat()` then run through `extend_for_viewer()` now yields a
+  clean viewer store: a **logical** `meta.data` column (a QC flag like `qc_kept`) stays boolean and is
+  **not** detected as a viewer grouping (was coerced to a `"TRUE"/"FALSE"` string and became a noise
+  grouping), and the **active identity** (`Idents()`, captured as the `ident` field) no longer duplicates
+  the clustering it mirrors — the viewer's grouping detection skips the `active_ident` mirror on all
+  surfaces (Python/R/JS). The active ident is still preserved for the Seurat round-trip. New
+  `conformance/viewer_seurat.sh` covers the seam (synthetic Seurat in CI; a real `SeuratData` object
+  locally): boolean QC excluded, opens on a real clustering, viewer@0.1-clean.
+
 ## `extend_for_viewer(primary=)` — align the prep with the viewer's default open
 
 * `extend_for_viewer()` gains a `primary` argument: the grouping the viewer opens on. It is hoisted to the
