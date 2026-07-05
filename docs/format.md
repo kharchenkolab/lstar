@@ -197,9 +197,8 @@ all cells and `nobs` = number of expressing cells. Fit `log(var) ~ log(mean)` wi
 (span 0.3, 200 anchors, linear interpolation, constant edge extrapolation), giving residual
 `r = log(var) − trend`. The score is `−log P(F > exp(r); df1 = df2 = nobs)` — the upper-tail variance-
 ratio F-test from pagoda2's `adjustVariance`, so a sparsely-expressed gene (small `nobs`) can't reach a
-high score. Genes with `nobs < 3`, `mean ≤ 0`, or `var ≤ 0` get `0`. (The earlier draft used the raw
-residual `r`; the F-test score is canonical because it is what the viewer computes **live**, so
-prepped == live.)
+high score. Genes with `nobs < 3`, `mean ≤ 0`, or `var ≤ 0` get `0`. The F-test score (rather than the
+raw residual `r`) is canonical because it is what the viewer computes **live**, so prepped == live.
 
 **Hybrid order (`counts_cellmajor_order`).** When present, `counts_cellmajor`'s rows are physically
 permuted by `lexsort(hilbert_index, primary_cluster_code)` (primary key = the first grouping's cluster

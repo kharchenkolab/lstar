@@ -28,7 +28,7 @@ without ever loading the whole matrix, so work that needs a big machine today ru
 [Large data: lazy reads and streaming](#large-data-lazy-reads-and-streaming)). You can also open a
 million-cell dataset over the network and read just the parts you need.
 
-> **Status:** early development, not yet released. Working today: read/write the same store from
+> **Status:** early-development alpha; the Python package ships on PyPI as `lstar-sc`. Working today: read/write the same store from
 > Python, C++, and R; profiles for AnnData, Seurat (legacy v2 → v5), SingleCellExperiment, and Conos; the
 > collection model; lazy/streaming reads; a browser/WebAssembly data layer.
 

@@ -293,7 +293,7 @@ layout — so conversions don't break when a collaborator is on a different rele
   features only is kept as **partial coverage**. **Spatial coordinates** (Visium/FOV/Slide-seq) live in
   `so@images`, *not* in `Reductions` — they are captured as a `spatial` observed coordinate axis
   (mirroring the AnnData `obsm['spatial']` path; multi-section subsets use partial coverage), with the
-  pixel images recorded in `dropped`. This was previously a silent loss.
+  pixel images recorded in `dropped`.
 - **SingleCellExperiment**: full SCE vs. a plain `SummarizedExperiment` (SCE-only accessors are
   guarded); S4 `Rle` columns are unpacked; cells keyed by a `Barcode` colData column (NULL dimnames)
   get synthesized labels.

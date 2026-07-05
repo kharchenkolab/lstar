@@ -108,13 +108,16 @@ list (from the parity audit) so a real gap is never confused with an intentional
   load/host a single file); revisit if bounded-memory streaming over a huge single-file store is needed.
 - **DE analysis API (`pseudobulk`, `collection_pseudobulk`, `de_bundle`, `de_factors`) is Python-only**, but
   its per-(group,gene) reduction now routes through the shared `col_sum_by_group` core kernel (was a numpy
-  per-group loop that duplicated it). The interactive selection-DE in the pagoda3 viewer is a *separate* JS
-  implementation that should likewise call the WASM `subsampleDeRank`/`colSumByGroup` kernels rather than
-  reimplement the reduction. Port the DE *API* to R if it must be cross-surface; the *kernel* is now shared.
+  per-group loop that duplicated it). On the JS side, the viewer's group-sufficient-stats, 1-vs-rest
+  markers, and overdispersion reductions are single-sourced in `js/core/compute.ts` over the WASM kernels
+  (shared by lstar's `extend.ts` prep and live `LstarView`). The
+  one interactive reduction not yet on a kernel is the A-vs-B selection-DE (`compute.deAvsB`), still a JS
+  reduction that should call the WASM `subsampleDeRank` kernel. Port the DE *API* to R if it must be
+  cross-surface; the *kernels* are now shared.
 - **Depth-normalized streaming reducers (`stream_col_stats` depth/population args, streamed pseudobulk)**
   are R/C++-only (R is the pagoda2 host); Python's `stream_col_stats` is lognorm-only.
-- **`subsample_de_rank`** kernel is bound on Python/R/WASM but the live selection-DE is the JS viewer's own
-  (`LstarView.subsampleDE`); the kernel is available for callers who want cross-surface-identical ranking.
+- **`subsample_de_rank`** kernel is bound on Python/R/WASM but the live selection-DE (`LstarView.subsampleDE`)
+  reduces in JS (`compute.deAvsB`); the kernel is available for callers who want cross-surface-identical ranking.
 - **`uncertainty`** round-trips through Python and the C++ core, but is not threaded through the R bridge
   (rare, AnnData-specific).
 - **Compression codec.** gzip is the portable codec (all surfaces read it); C++/R also read zlib; JS reads
