@@ -42,16 +42,29 @@ export async function colStats(
   return M.colMeanVar(toF64(m.data), toI32(m.indptr), m.ncells, 1, opts.lognorm ?? true);
 }
 
-/** Per-gene pagoda2 overdispersion score (adjustVariance: LOWESS residual of log(var)~log(mean) + F-test),
- * from the measure's per-gene mean/var/nnz. Global over the whole measure, or over a subset if the caller
- * read only a subset's rows — identical math either way. */
+/** Per-gene pagoda2 overdispersion (adjustVariance: LOWESS residual of log(var)~log(mean) + F-test) from
+ * PRE-REDUCED per-gene stats — the downstream-math half, layout-independent. A caller that reduced the
+ * measure itself (e.g. per-gene mean/var/n_expr over a cell-major subset, so it never formed a gene-major
+ * CSC) calls this directly; the reduction stays theirs, the algorithm stays here. `nnz` is per-gene n_expr
+ * (the F-test's degrees of freedom). Thin over the WASM kernel, which coerces the arrays. */
+export async function overdispersionFromStats(
+  mean: ArrayLike<number>, variance: ArrayLike<number>, nnz: ArrayLike<number>, M?: any,
+): Promise<Float64Array> {
+  M ??= await kernels();
+  return M.overdispersion(mean, variance, nnz);
+}
+
+/** Per-gene pagoda2 overdispersion over a CSC measure — the reduce (colMeanVar) + downstream
+ * ({@link overdispersionFromStats}) together. Global over the whole measure, or over a subset if the caller
+ * read only a subset's rows. Callers who reduce cell-major should reduce themselves and call
+ * {@link overdispersionFromStats} instead of transposing to gene-major CSC. */
 export async function overdispersionScore(
   m: { data: ArrayLike<number>; indptr: ArrayLike<number>; ncells: number },
   opts: { lognorm?: boolean } = {}, M?: any,
 ): Promise<Float64Array> {
   M ??= await kernels();
   const cmv = await colStats(m, opts, M);
-  return M.overdispersion(cmv.mean, cmv.var, cmv.nnz);
+  return overdispersionFromStats(cmv.mean, cmv.var, cmv.nnz, M);
 }
 
 /** Per-(group, gene) sufficient stats (group-major K × ngenes): `{sum, sumsq, n_expr}` over `log1p(x)`

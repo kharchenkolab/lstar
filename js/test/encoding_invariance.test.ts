@@ -78,6 +78,7 @@ const codes = Int32Array.from({ length: NR }, (_, i) => i % K);   // a 3-way gro
 type Res = {
   mean: Float64Array; var: Float64Array; nnz: Float64Array; meanA: Float64Array; meanB: Float64Array;
   sum: Float64Array; sumsq: Float64Array; nexpr: Float64Array; lfc: Float64Array; od: Float64Array;
+  odFromStats: Float64Array;
 };
 async function run({ view, ds }: { view: LstarView; ds: any }): Promise<Res> {
   // via LstarView (colStats/subsampleDE)
@@ -92,8 +93,10 @@ async function run({ view, ds }: { view: LstarView; ds: any }): Promise<Res> {
   const s = await compute.groupSufficientStats(m, codes, K, { lognorm: true }, M);
   const mk = await compute.markers(s.sum, s.n_expr, compute.groupSizes(codes, K), K, NC, NR, M);
   const od = await compute.overdispersionScore(m, { lognorm: true }, M);
+  // stats-level entry (what pagoda3's cell-major subset path calls): reduce yourself -> mean/var/nnz -> this
+  const odFromStats = await compute.overdispersionFromStats(cs.mean, cs.var, cs.nnz, M);
   return { mean: cs.mean as any, var: cs.var as any, nnz: cs.nnz as any, meanA, meanB,
-           sum: s.sum, sumsq: s.sumsq, nexpr: s.n_expr, lfc: mk.lfc, od };
+           sum: s.sum, sumsq: s.sumsq, nexpr: s.n_expr, lfc: mk.lfc, od, odFromStats };
 }
 
 const R: Record<string, Res> = {};
@@ -121,6 +124,10 @@ for (let i = 0; i < NR; i++) { const g = i % K; for (let j = 0; j < NC; j++) ref
 check("colStats mean   == direct dense reference", approx(R.csc.mean, refMean, 1e-9, 1e-9));
 check("colStats nnz    == direct dense reference", approx(R.csc.nnz, refNnz));
 check("groupStats sum  == direct dense reference", approx(R.csc.sum, refSum, 1e-9, 1e-9));
+
+// (2b) the stats-level overdispersion entry (pagoda3's subset path) must equal the measure-level one
+// exactly — same kernel, same per-gene mean/var/nnz.
+for (const enc of ["dense", "csc", "csr"]) check(`overdispersionFromStats == overdispersionScore (${enc})`, approx(R[enc].odFromStats, R[enc].od, 0, 0));
 
 // (3) positive assertions: the compute actually produced non-trivial results (not silently empty)
 check("nnz has nonzeros (compute ran)", Array.from(R.dense.nnz).some((x) => x > 0));

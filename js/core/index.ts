@@ -5,7 +5,7 @@ export { LstarView, Crossfilter, scalarToRGBA } from "./view.ts";
 export type { ColStats, Metadata } from "./view.ts";
 // viewer-compute recipe (single-sourced): pure reductions over CSC measure + codes + cell-sets, shared by
 // extend (prep), LstarView (live), and pagoda3. Callers read the measure (fieldAsCsc / csrRows) and reduce.
-export { colStats, overdispersionScore, groupSufficientStats, groupSizes, markers, deAvsB, kernels } from "./compute.ts";
+export { colStats, overdispersionScore, overdispersionFromStats, groupSufficientStats, groupSizes, markers, deAvsB, kernels } from "./compute.ts";
 export type { CscMeasure } from "./compute.ts";
 export { writeStore, addToStore } from "./writer.ts";
 export type { LstarWritableStore, AxisSpec, FieldSpec, DatasetSpec,
