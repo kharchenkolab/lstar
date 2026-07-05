@@ -41,10 +41,24 @@ that truncated a float measure on one surface only.
    - `viewer_corpus.sh` — convert curated corpus datasets (real local / synthetic-faithful in CI) and
      cross-check every surface. This is where realistic structure (non-alphabetical categoricals,
      several competing groupings, real embeddings, native CSR) exercises what synthetic fixtures miss.
+     Includes a synthetic `dense_primary` dataset so the dense measure-read path is covered on every
+     surface (the corpus is otherwise all-sparse).
+   - `encoding_invariance.test.ts` — the live-viewer compute (`LstarView.colStats`/`subsampleDE`) gives
+     identical results for a measure written `{dense, csc, csr}`. Metamorphic: encoding must not change
+     the answer, so no reference is needed.
    - `policy_linter.py` — the single-sourced policy constants match across surfaces.
-4. **Cover the input-space axes**, not just the happy path: counts encoding `{csc, csr}`; label encoding
-   `{categorical, utf8}` incl. non-alphabetical order; groupings `{single, several competing}`; embedding
-   `{present, absent}`; basis `{raw, lognorm}`.
+
+   **Assert the artifacts, not just "no error".** Where a failure degrades silently — a caught exception
+   that falls back rather than raising — assert the outputs *exist* (`od_score`/`stats_*`/`markers_*`/
+   `counts_cellmajor*`), or a skipped step reads as a pass.
+4. **Cover the input-space axes**, not just the happy path. **Encoding is a first-class axis:** any path
+   that reads a field must be exercised across every encoding it can receive, on every surface that
+   implements it — never only the encoding the corpus happens to carry. The measure encoding is
+   `{csc, csr, dense}`: a dense measure (e.g. an SCE `logcounts` assay or a scaled/dense AnnData `X`) is
+   stored at `/values`, a sparse one at `/data`+`/indices`+`/indptr`, so a measure-read path must accept
+   all three on every surface. Also: label encoding `{categorical, utf8}` incl. non-alphabetical order;
+   groupings `{single, several competing}`; embedding `{present, absent}`; basis `{raw, lognorm}`;
+   coverage `{full, partial}`; nullable `{mask, none}`.
 5. **Wire the leg into CI** — `.github/workflows/ci.yml` (r-cross-format for Py+R, js-wasm for Py+JS) and
    `conformance/run.sh` (the full local run, incl. the real corpus). A cross-surface check that isn't in
    CI, or that skips silently, does not count as coverage.
@@ -53,12 +67,13 @@ that truncated a float measure on one surface only.
 
 ## Why the harness is shaped this way
 
-Divergences hid for two structural reasons, both now closed: the fixtures didn't cover the input space
-(a CSC-only synthetic never exercised CSR; single-grouping never exercised detection), and the
-cross-surface equality check ignored the fields that diverged (`counts_cellmajor` / `_order`). So the
-contract is: **the fixture must span the input space, and the equality check must compare every field.**
-When a new divergence class appears, the fix is not just the code — it's the fixture axis + the field
-comparison that would have caught it.
+Divergences hide for two structural reasons: the fixtures don't cover the input space (a CSC-only
+synthetic never exercises CSR; an all-sparse corpus never exercises a dense measure; single-grouping never
+exercises detection), and the cross-surface check ignores what actually diverges (the fields
+`counts_cellmajor` / `_order`, or — for a path that fails silently — whether the output exists at all). So
+the contract is: **the fixture must span the input space (field encoding included), and the check must
+compare every field and assert it exists.** When a new divergence class appears, the fix is not just the
+code — it's the fixture axis + the assertion that would have caught it.
 
 ## Cross-surface scope & known asymmetries
 

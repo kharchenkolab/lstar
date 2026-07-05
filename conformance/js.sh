@@ -32,6 +32,7 @@ echo "  -- kernels --"; "$NODE" "$ROOT/js/test/kernels.test.mjs"
 echo "  -- reader  --"; "$NODE" --experimental-strip-types "$ROOT/js/test/reader.test.ts" 2>/dev/null
 echo "  -- parallel--"; "$NODE" --experimental-strip-types "$ROOT/js/test/reader_parallel.test.ts" 2>/dev/null   # independent component arrays read concurrently
 echo "  -- view    --"; "$NODE" --experimental-strip-types "$ROOT/js/test/view.test.ts" 2>/dev/null
+echo "  -- enc-inv --"; "$NODE" --experimental-strip-types "$ROOT/js/test/encoding_invariance.test.ts" 2>/dev/null   # live-viewer compute is encoding-invariant (dense/csc/csr) — guards the sparse-hardcoded measure-read regression
 echo "  -- extend  --"; "$NODE" --experimental-strip-types "$ROOT/js/test/extend_primary.test.ts" 2>/dev/null   # extend_for_viewer(primary=): hoist + compose + validation
 
 # 4) the WRITE side: JS round-trip (writer.test.ts), then the cross-language gate -- JS writes a
