@@ -89,8 +89,7 @@ export class LstarView {
   /** Per-gene zero-aware mean/variance (HVG ranking) over the whole measure, via the WASM kernel. */
   async colStats(opts: { lognorm?: boolean; field?: string } = {}): Promise<ColStats> {
     const lognorm = opts.lognorm ?? true;
-    const sp = await this.ds.fieldSparse(opts.field ?? "counts");
-    if (sp.fmt !== "csc") throw new Error("colStats needs a csc measure, got " + sp.fmt);
+    const sp = await this.ds.fieldAsCsc(opts.field ?? "counts");    // dense/csr/csc -> csc (single-sourced)
     const M = await this.M();
     return M.colMeanVar(toF64(sp.data), toI32(sp.indptr), sp.shape[0], 1, lognorm);
   }
@@ -108,7 +107,7 @@ export class LstarView {
     const cap = opts.maxPerGroup ?? Infinity;
     const A = cap === Infinity ? cellsA : cellsA.slice(0, cap);
     const B = cap === Infinity ? cellsB : cellsB.slice(0, cap);
-    const sp = await this.ds.fieldSparse(opts.field ?? "counts");
+    const sp = await this.ds.fieldAsCsc(opts.field ?? "counts");    // dense/csr/csc -> csc (single-sourced)
     const [nrows, ncols] = sp.shape;
     const inA = new Uint8Array(nrows), inB = new Uint8Array(nrows);
     for (const c of A) inA[c] = 1;

@@ -107,24 +107,6 @@ function reorderCsrRows(csr: { data: any; indices: any; indptr: any }, perm: Int
   return { data: newData, indices: newIndices, indptr: newIndptr };
 }
 
-/** Dense (flat, C-order, cells x genes) -> CSC arrays, dropping zeros — matches scipy's `csc_matrix(dense)`
- * so the viewer kernels (which expect CSC and treat absent entries as zero) yield identical stats for a
- * dense primary measure as for a native-sparse one. Column-major: one CSC column per gene. */
-function denseToCsc(dense: ArrayLike<number>, ncells: number, ngenes: number): { data: Float64Array; indices: Int32Array; indptr: Int32Array } {
-  const indptr = new Int32Array(ngenes + 1);
-  for (let g = 0; g < ngenes; g++) {
-    let c = 0;
-    for (let i = 0; i < ncells; i++) if (dense[i * ngenes + g] !== 0) c++;
-    indptr[g + 1] = indptr[g] + c;
-  }
-  const nnz = indptr[ngenes];
-  const data = new Float64Array(nnz), indices = new Int32Array(nnz);
-  let w = 0;
-  for (let g = 0; g < ngenes; g++)
-    for (let i = 0; i < ncells; i++) { const v = dense[i * ngenes + g]; if (v !== 0) { data[w] = v; indices[w] = i; w++; } }
-  return { data, indices, indptr };
-}
-
 /** Add the `viewer@0.1` navigator fields to an existing store, in place. `store` must be read+write (e.g. NodeFSStore). */
 export async function extendForViewer(store: LstarWritableStore, opts: ExtendOptions = {}): Promise<void> {
   const ds = await openLstar(store as any);
@@ -137,28 +119,13 @@ export async function extendForViewer(store: LstarWritableStore, opts: ExtendOpt
 
   const M: any = await createLstarKernels();
 
-  // Normalize counts to CSC -- the layout every kernel expects. A converted store can carry AnnData's
-  // native CSR; Python/R normalize via scipy/Matrix, the browser via the shared csrToCsc kernel, so
-  // extendForViewer accepts either encoding on every surface (was: JS threw on CSR -- the reported bug).
   // Read the counts basis as CSC regardless of its on-disk encoding — dense (`/values`), CSR, or CSC —
-  // mirroring Python (`X.tocsc() if issparse else csc_matrix(X)`) and R (C++ core densify->CSC). A DENSE
-  // primary measure (an SCE logcounts assay, or a scaled/dense AnnData X) lives at `/values`, not the sparse
-  // `/data`; reading it via fieldSparse threw NotFoundError and silently skipped viewer-opt (the reported bug).
-  let cscData: any, cscIndices: any, cscIndptr: any;
-  if (ds.field(counts)!.encoding === "dense") {
-    const dv = await ds.fieldDense(counts);                          // flat C-order (cells x genes)
-    const csc = denseToCsc(dv.data, ncells, ngenes);                 // column-major, zeros dropped (== scipy csc)
-    cscData = csc.data; cscIndices = csc.indices; cscIndptr = csc.indptr;
-  } else {
-    const raw = await ds.fieldSparse(counts);
-    cscData = raw.data; cscIndices = raw.indices; cscIndptr = raw.indptr;
-    if (raw.fmt === "csr") {
-      const c = M.csrToCsc(raw.data, raw.indices, raw.indptr, ncells, ngenes);
-      cscData = c.data; cscIndices = c.indices; cscIndptr = c.indptr;
-    } else if (raw.fmt !== "csc") {
-      throw new Error("extendForViewer: `" + counts + "` must be dense, CSC, or CSR (cells x genes), got " + raw.fmt);
-    }
-  }
+  // via the reader's single measure-as-CSC accessor (mirrors Python `X.tocsc() if issparse else
+  // csc_matrix(X)` and R's Matrix coercion). A DENSE primary measure (an SCE logcounts assay, or a
+  // scaled/dense AnnData X) lives at `/values`, not the sparse `/data`; reading it as sparse threw
+  // NotFoundError and silently skipped viewer-opt (the reported bug). fieldAsCsc is shared with view.ts.
+  const csc = await ds.fieldAsCsc(counts);
+  const cscData = csc.data, cscIndices = csc.indices, cscIndptr = csc.indptr;
 
   let groupings = (opts.groupings ?? await detectGroupings(ds, cellAxis)).filter((g) => ds.hasField(g));
   // Hoist the viewer's primary grouping to the front (guaranteed present): it keys the counts_cellmajor

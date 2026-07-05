@@ -39,6 +39,37 @@ export interface FieldMeta {
 const TD = new TextDecoder();
 const TE = new TextEncoder();
 
+/** CSR arrays (nrows x ncols) -> CSC arrays. A one-time layout normalization on read (the heavy compute
+ * kernels stay in WASM); lets every measure consumer work in CSC regardless of on-disk orientation. */
+function csrToCscArrays(data: ArrayLike<number>, indices: ArrayLike<number>, indptr: ArrayLike<number>,
+                        nrows: number, ncols: number): { data: Float64Array; indices: Int32Array; indptr: Int32Array } {
+  const nnz = indptr[nrows] as number;
+  const colptr = new Int32Array(ncols + 1);
+  for (let k = 0; k < nnz; k++) colptr[(indices[k] as number) + 1]++;
+  for (let c = 0; c < ncols; c++) colptr[c + 1] += colptr[c];
+  const outData = new Float64Array(nnz), outIdx = new Int32Array(nnz);
+  const next = Int32Array.from(colptr.subarray(0, ncols));            // running write cursor per column
+  for (let r = 0; r < nrows; r++)
+    for (let k = indptr[r] as number; k < (indptr[r + 1] as number); k++) {
+      const col = indices[k] as number, dst = next[col]++;
+      outData[dst] = data[k] as number; outIdx[dst] = r;
+    }
+  return { data: outData, indices: outIdx, indptr: colptr };
+}
+
+/** Dense (flat, C-order, nrows x ncols) -> CSC arrays, dropping zeros — matches scipy's `csc_matrix(dense)`,
+ * so a dense primary measure yields identical stats to a native-sparse one. Column-major: one CSC column per gene. */
+function denseToCscArrays(dense: ArrayLike<number>, nrows: number, ncols: number): { data: Float64Array; indices: Int32Array; indptr: Int32Array } {
+  const indptr = new Int32Array(ncols + 1);
+  for (let c = 0; c < ncols; c++) { let cnt = 0; for (let r = 0; r < nrows; r++) if (dense[r * ncols + c] !== 0) cnt++; indptr[c + 1] = indptr[c] + cnt; }
+  const nnz = indptr[ncols];
+  const data = new Float64Array(nnz), indices = new Int32Array(nnz);
+  let w = 0;
+  for (let c = 0; c < ncols; c++)
+    for (let r = 0; r < nrows; r++) { const v = dense[r * ncols + c]; if (v !== 0) { data[w] = v; indices[w] = r; w++; } }
+  return { data, indices, indptr };
+}
+
 // Keys whose bytes are Zarr metadata (served from consolidated metadata when available). Everything
 // else (chunk keys ".../0", label/value byte arrays) is data and goes to the underlying store.
 const META_RE = /(?:\.zgroup|\.zattrs|\.zarray|zarr\.json)$/;
@@ -267,6 +298,26 @@ export class LstarDataset {
     const indices = (await this._get("fields/" + name + "/indices")).data;
     const indptr = (await this._get("fields/" + name + "/indptr")).data;
     return { data, indices, indptr, shape: meta.shape as number[], fmt: meta.encoding };
+  }
+
+  /** A 2-D measure as CSC arrays, whatever its on-disk encoding — dense (`/values`), CSR, or CSC. The
+   * SINGLE point where a measure is read for compute, so no consumer (extendForViewer, view.colStats,
+   * view.subsampleDE) special-cases encoding and can diverge — a DENSE primary measure (SCE logcounts /
+   * scaled AnnData X) lives at `/values`, not the sparse `/data`, and reading it as sparse threw
+   * NotFoundError. Mirrors Python `X.tocsc() if issparse else csc_matrix(X)` and R's Matrix coercion. */
+  async fieldAsCsc(name: string): Promise<{ data: any; indices: any; indptr: any; shape: number[] }> {
+    if (this.fields.get(name)?.encoding === "dense") {
+      const dv = await this.fieldDense(name);
+      const [nr, nc] = dv.shape as number[];
+      return { ...denseToCscArrays(dv.data, nr, nc), shape: dv.shape };
+    }
+    const sp = await this.fieldSparse(name);
+    if (sp.fmt === "csc") return { data: sp.data, indices: sp.indices, indptr: sp.indptr, shape: sp.shape };
+    if (sp.fmt === "csr") {
+      const [nr, nc] = sp.shape;
+      return { ...csrToCscArrays(sp.data, sp.indices, sp.indptr, nr, nc), shape: sp.shape };
+    }
+    throw new Error("fieldAsCsc: `" + name + "` must be dense, CSC, or CSR (2-D cells x genes), got " + sp.fmt);
   }
 
   // Bounded LRU read cache. Re-running compute over the SAME cells re-issues the SAME byte-range reads, so cache the
