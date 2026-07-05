@@ -3,9 +3,9 @@ pagoda3 viewer's store prep) build on lstar's fast path instead of reimplementin
 uses the compiled C++ accelerator when present and an identical numpy fallback otherwise (results
 match; see tests/test_accel.py)."""
 import numpy as np
-import scipy.sparse as sp
 
 from ._engine import resolve_engine, _accel
+from ._sparse import as_csc
 
 
 def col_sum_by_group(X, code, ngroups, lognorm=True, engine="auto"):
@@ -15,7 +15,7 @@ def col_sum_by_group(X, code, ngroups, lognorm=True, engine="auto"):
     X is a (cells, genes) matrix (densified/copied to CSC if needed); ``code`` is a length-ncells
     int array mapping each cell to a group in [0, ngroups). This is the reduction cluster stats and
     marker tables are built from."""
-    X = sp.csc_matrix(X) if not sp.issparse(X) else X.tocsc()
+    X = as_csc(X)
     ncells, ngenes = X.shape
     code = np.asarray(code)
     if resolve_engine(engine) == "c++" and hasattr(_accel, "col_sum_by_group"):

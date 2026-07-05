@@ -81,8 +81,7 @@ def collection_pseudobulk(ds, factor, field="counts", lognorm=False, add=True, u
     Genes are aligned by label across samples (a gene absent from a sample contributes 0 there); the
     result is `pb.<factor>.{mean,frac}` measures over `(factor, genes)`. Returns the `{stat: array}` dict.
     """
-    import scipy.sparse as sp
-
+    from ._sparse import as_csr
     from .model import as_categorical
 
     cat = as_categorical(ds.field(factor).values)
@@ -107,7 +106,7 @@ def collection_pseudobulk(ds, factor, field="counts", lognorm=False, add=True, u
     nz = np.zeros((K, ng), dtype=np.float64)
     cnt = np.zeros(K, dtype=np.int64)
     for _nm, f in persamp:                                           # bounded memory: one sample at a time
-        M = f.values; M = M.tocsr() if sp.issparse(M) else sp.csr_matrix(M)
+        M = as_csr(f.values)
         if lognorm:
             M = M.copy(); M.data = np.log1p(M.data)
         gcols = np.array([gene_index[g] for g in np.asarray(ds.axis(f.span[1]).labels, dtype=str)])

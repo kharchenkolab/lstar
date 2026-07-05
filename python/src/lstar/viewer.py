@@ -26,6 +26,7 @@ fields that matter (the stats match exactly; the marker ``lfc``/``padj`` match t
 import numpy as np
 import scipy.sparse as sp
 
+from ._sparse import as_csc
 from .kernels import col_sum_by_group, markers_one_vs_rest, overdispersion, cell_order, _N_GRID
 from .model import as_categorical, _is_categorical
 
@@ -215,8 +216,7 @@ def extend_for_viewer(ds, groupings=None, order="hybrid", embedding=None, marker
     cf_span = ds.field(counts_field).span
     cell_axis, gene_axis = cf_span[0], cf_span[1]
 
-    X = ds.field(counts_field).values
-    X = X.tocsc() if sp.issparse(X) else sp.csc_matrix(X)
+    X = as_csc(ds.field(counts_field).values)
     ncells, ngenes = X.shape
 
     if groupings is None:
