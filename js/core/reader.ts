@@ -1,11 +1,12 @@
-// @lstar/core — a lazy reader for L* Zarr stores, over zarrita.js.
+// @lstar/core — a lazy reader for L* Zarr stores, over the libzarr WASM core (see wasm-source.ts).
 //
-// Opens a store (HTTP/local/zip), reads the consolidated L* metadata, and exposes axes/fields with
-// values fetched only when asked — including a single CSC gene-column (the viewer's hot path). The
-// heavy numeric work belongs in the WASM kernels (see view.ts); this module is I/O + assembly.
-import * as zarr from "zarrita";
+// Opens a store (HTTP/local/zip), reads the consolidated L* metadata through the SAME libzarr core that
+// backs R/Python (so v2 and v3 are read by one recipe, not a JS reimplementation), and exposes axes/
+// fields with values fetched only when asked — including a single CSC gene-column (the viewer's hot
+// path, a byte-range read straight off the store). The heavy numeric work belongs in the WASM kernels
+// (see view.ts); this module is I/O + assembly.
 
-/** Minimal store contract (zarrita-compatible): fetch one object by key, or undefined if absent.
+/** Minimal store contract: fetch one object by key, or undefined if absent.
  * `getRange` is optional: a store that can serve a byte sub-range of an object (HTTP `Range`, a file
  * `pread`) enables the reader's sub-chunk fast path (one gene/cell = a few KB instead of the whole
  * uncompressed chunk). Stores without it still work — the reader falls back to whole-chunk reads. */
@@ -37,7 +38,6 @@ export interface FieldMeta {
 }
 
 const TD = new TextDecoder();
-const TE = new TextEncoder();
 
 /** CSR arrays (nrows x ncols) -> CSC arrays. A one-time layout normalization on read (the heavy compute
  * kernels stay in WASM); lets every measure consumer work in CSC regardless of on-disk orientation. */
@@ -70,36 +70,6 @@ function denseToCscArrays(dense: ArrayLike<number>, nrows: number, ncols: number
   return { data, indices, indptr };
 }
 
-// Keys whose bytes are Zarr metadata (served from consolidated metadata when available). Everything
-// else (chunk keys ".../0", label/value byte arrays) is data and goes to the underlying store.
-const META_RE = /(?:\.zgroup|\.zattrs|\.zarray|zarr\.json)$/;
-
-/**
- * Wraps a store so every metadata read is served from a parsed consolidated `.zmetadata` map instead
- * of the network: a present key returns its bytes, an ABSENT metadata key returns undefined *without*
- * a request (this is what suppresses zarrita's per-node v3 `zarr.json` probes — the difference between
- * one open request and ~80). Data chunk reads (and byte-range reads) pass straight through.
- */
-class ConsolidatedStore {
-  inner: LstarStore;
-  meta: Record<string, unknown>;
-  constructor(inner: LstarStore, meta: Record<string, unknown>) { this.inner = inner; this.meta = meta; }
-  async get(key: string, _opts?: unknown): Promise<Uint8Array | undefined> {
-    const norm = key[0] === "/" ? key.slice(1) : key;
-    if (META_RE.test(norm)) {
-      const v = this.meta[norm];
-      return v === undefined ? undefined : TE.encode(JSON.stringify(v));
-    }
-    // pass the NORMALIZED (slash-stripped) key to the inner store — zarrita forms chunk paths with a
-    // leading slash, and a store must not depend on independently stripping it (the ZipStore data-collapse
-    // bug: exact key match against slashless central-directory names returned undefined for every chunk).
-    return this.inner.get(norm);
-  }
-  async getRange(key: string, start: number, end: number): Promise<Uint8Array | undefined> {
-    const norm = key[0] === "/" ? key.slice(1) : key;
-    return this.inner.getRange?.(norm, start, end);
-  }
-}
 
 // Zarr v2 little-endian dtype -> [typed-array constructor, itemsize]. The writer only emits these LE
 // dtypes; the byte-range fast path decodes raw bytes through this table (we assume LE — true on every
@@ -129,9 +99,8 @@ function decodeStrings(bytes: Uint8Array, offsets: ArrayLike<number | bigint>): 
 
 export class LstarDataset {
   rawStore: any;                          // the underlying store (data chunks, byte-range reads)
-  store: any;                             // == rawStore, or a ConsolidatedStore wrapping it
-  root: any;
-  meta: Record<string, any> = {};         // parsed `.zmetadata` map (empty if the store has none)
+  store: any;                             // == rawStore (kept for the byte-range fast path's getRange)
+  meta: Record<string, any> = {};         // per-array metadata (from the source's consolidated md; byte-range fast path)
   kind = "sample";
   specVersion = "0.1";
   profiles: string[] = [];
@@ -139,61 +108,34 @@ export class LstarDataset {
   auxNames: string[] = [];   // namespaces of the lossless passthrough subtree (uns/@misc)
   axes = new Map<string, AxisMeta>();
   fields = new Map<string, FieldMeta>();
-  src: any;   // optional libzarr/WASM read source; when set, whole-array + group-metadata reads route through it (retires zarrita)
+  src: any;   // the libzarr/WASM read source — whole-array + group-metadata reads go through it (the one reader)
 
-  constructor(store: any, src?: any) {
+  constructor(store: any, src: any) {
     this.rawStore = store;
-    this.store = store;
-    this.root = zarr.root(store);
+    this.store = store;          // == the underlying store; the byte-range fast path reads chunks off it
     this.src = src;
   }
 
-  private _open(p: string) {
-    return zarr.open(this.root.resolve(p), { kind: "array" });
+  private async _get(p: string): Promise<any> {   // a whole array via libzarr -> { data, shape }
+    return this.src.array(p);
   }
-  private async _get(p: string, sel?: any) {
-    if (this.src) return this.src.array(p);   // WASM whole-array read (only _readRange passes a `sel`, and it handles src itself)
-    return zarr.get(await this._open(p), sel);
-  }
-  // A group's L* attributes ("" = root), format-agnostically through the source or zarrita.
+  // A group's L* attributes ("" = root); libzarr reads both v2 (.zattrs) and v3 (zarr.json).
   private async _groupLstar(path: string): Promise<any> {
-    if (this.src) return this.src.groupLstar(path);
-    const g = await zarr.open(path ? this.root.resolve(path) : this.root, { kind: "group" });
-    return (g.attrs as any).lstar;
+    return this.src.groupLstar(path);
   }
-  // A 1-D array's length without (necessarily) decoding its data — used for axis lengths from labels_offsets.
+  // A 1-D array's length — used for axis lengths from labels_offsets. Metadata only (no chunk read).
   private async _arrayShape(p: string): Promise<number[]> {
-    if (this.src) return (await this.src.array(p)).shape as number[];
-    return (await this._open(p)).shape as number[];
+    return this.src.arrayShape(p);
   }
 
   async init(): Promise<this> {
-    // Consolidated open: one `.zmetadata` read up front serves every group/array metadata object, so
-    // opening the manifest + axes + fields is a single request instead of ~80 (and gives cscColumn the
-    // per-array dtype/chunks/compressor it needs for the byte-range fast path). Absent or malformed ->
-    // per-object reads (still correct), e.g. an older store or one extended without refreshing it.
-    if (this.src) {
-      // The libzarr source loads + expands consolidated metadata itself (into `src.meta` for the byte-range
-      // fast path) and reads group attrs through the WASM core -- reads both v2 and v3.
-      await this.src.init();
-      this.meta = this.src.meta ?? {};
-    } else {
-      const zmeta = await this.rawStore.get(".zmetadata");
-      if (zmeta) {
-        try {
-          const parsed = JSON.parse(TD.decode(zmeta));
-          this.meta = parsed?.metadata ?? {};
-          if (Object.keys(this.meta).length) {
-            this.store = new ConsolidatedStore(this.rawStore, this.meta);
-            this.root = zarr.root(this.store);
-          }
-        } catch { /* malformed consolidated metadata -> fall back to per-object reads */ }
-      }
-      try { await zarr.open(this.root, { kind: "group" }); }
-      catch { throw new Error("No L* store at this location — no .zmetadata / .zgroup / zarr.json found. Check the store URL (the ?store= path)."); }   // one clear error instead of zarrita's "v3 array or group" cascade
-    }
+    // The libzarr source loads + expands the store's consolidated metadata once (into `src.meta`, which
+    // the byte-range fast path reads for per-array dtype/chunks), then serves every group/array metadata
+    // read through the WASM core — one read up front instead of ~80, and reads both v2 and v3.
+    await this.src.init();
+    this.meta = this.src.meta ?? {};
     const m = await this._groupLstar("");
-    if (!m) throw new Error("not an L* store (no 'lstar' root attribute)");
+    if (!m) throw new Error("not an L* store at this location — no L* manifest ('lstar' root attribute; check the store URL / ?store= path).");
     this.kind = m.kind ?? "sample";
     this.specVersion = m.spec_version ?? "0.1";
     this.profiles = m.profiles ?? [];
@@ -372,11 +314,10 @@ export class LstarDataset {
    * is a few KB instead of the whole chunk. This now covers MULTI-chunk arrays (not just single-chunk):
    * the chunk index is `floor(lo/chunkLen)` and the byte offset is relative to that chunk's start, so a
    * chunked `counts` (e.g. `chunkElems`-split) keeps the byte-range fast path instead of falling back to
-   * whole-chunk reads. A span that CROSSES a chunk boundary (rare for one column) falls through to the
-   * zarrita slice, which stitches chunks correctly. Edge (partial last) chunks are stored full-size +
-   * fill-padded by the writer, so `off*isize .. (off+want)*isize` is always in-bounds within the chunk.
-   * Otherwise fall back to a zarrita slice (decompresses / stitches / works without consolidated meta).
-   * Equivalent results either way.
+   * whole-chunk reads. A span that CROSSES a chunk boundary (rare for one column) falls through to a
+   * whole-array read + slice via libzarr, which decompresses / stitches correctly. Edge (partial last)
+   * chunks are stored full-size + fill-padded by the writer, so `off*isize .. (off+want)*isize` is always
+   * in-bounds within the chunk. Equivalent results either way.
    */
   private async _readRange(arrPath: string, lo: number, hi: number): Promise<any> {
     const za: any = this.meta[arrPath + "/.zarray"];
@@ -393,8 +334,8 @@ export class LstarDataset {
         if (bytes) return decodeTyped(bytes, ctor, isize);
       }
     }
-    if (this.src) { const whole = (await this.src.array(arrPath)).data; return (whole as any).slice(lo, hi); }  // WASM: whole-array + slice
-    return (await this._get(arrPath, [zarr.slice(lo, hi)])).data;   // spans chunks / compressed / no getRange -> zarrita
+    const whole = (await this.src.array(arrPath)).data;   // spans chunks / compressed / no getRange -> libzarr whole-array + slice
+    return (whole as any).slice(lo, hi);
   }
 
   /**
@@ -574,18 +515,17 @@ export class LstarDataset {
   }
 }
 
-/** Open an L* store and read its manifest. `store` is any zarrita-compatible store. */
-export async function openLstar(store: any): Promise<LstarDataset> {
-  return new LstarDataset(store).init();
-}
-
 /**
- * Open an L* store through the libzarr WASM core instead of zarrita — one reader shared with R/Python,
- * and it reads v3 stores (which zarrita reads poorly). Whole-array + metadata reads go through libzarr;
- * the byte-range streaming hot path stays on the raw store (needs `getRange`). `store` is the same
- * async get/getRange contract as {@link openLstar}.
+ * Open an L* store and read its manifest, through the libzarr WASM core — the SAME reader R and Python
+ * use, so v2 and v3 stores are read by one recipe (no JS zarr reimplementation). `store` is any object
+ * with the async `get(key)` / optional `getRange(key,start,end)` contract (see {@link LstarStore},
+ * {@link NodeFSStore}, {@link HttpStore}). Whole-array + metadata reads go through libzarr; the byte-range
+ * streaming hot path (cscColumn/csrRow) reads chunk sub-ranges straight off the store's `getRange`.
  */
-export async function openLstarWasm(store: any): Promise<LstarDataset> {
+export async function openLstar(store: any): Promise<LstarDataset> {
   const { WasmSource } = await import("./wasm-source.ts");
   return new LstarDataset(store, new WasmSource(store)).init();
 }
+
+/** @deprecated libzarr is now the default reader — use {@link openLstar}. Kept as an alias. */
+export const openLstarWasm = openLstar;

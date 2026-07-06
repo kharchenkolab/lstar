@@ -86,6 +86,14 @@ class Reader {
     }
     std::string rootAttrs() { return groupAttrs(""); }
 
+    // an array's shape from its metadata only (no chunk reads) -> number[]. Used for axis lengths.
+    val shape(const std::string& path) {
+        zarr::Array a = zarr::Array::open(store_, path);
+        val out = val::array();
+        for (size_t i = 0; i < a.meta().shape.size(); ++i) out.set(i, (double)a.meta().shape[i]);
+        return out;
+    }
+
     // a whole array -> {dtype: "<f4"|..., shape: number[], bytes: Uint8Array (C-order, native)}.
     val array(const std::string& path) {
         zarr::Array a = zarr::Array::open(store_, path);
@@ -126,6 +134,7 @@ EMSCRIPTEN_BINDINGS(lstar_io) {
         .constructor<val>()
         .function("rootAttrs", &Reader::rootAttrs)
         .function("groupAttrs", &Reader::groupAttrs)
+        .function("shape", &Reader::shape)
         .function("array", &Reader::array)
         .function("keysFor", &Reader::keysFor)
         .function("version", &Reader::version);

@@ -17,9 +17,8 @@ export type { ExtendOptions } from "./extend.ts";
 export { selectCountsBasis } from "./basis.ts";
 export type { CountsBasis } from "./basis.ts";
 // HttpStore adds byte-range (`Range`) reads on top of a plain fetch, enabling the reader's sub-chunk
-// fast path over HTTP/CDN. Browser code can also use zarrita's FetchStore (no range fast path) or any
-// store implementing the optional `getRange`; NodeFSStore is in ./node-store.ts (imported separately
-// so the browser bundle never pulls in node:fs).
+// fast path over HTTP/CDN. Any object with the `get(key)` / optional `getRange` contract works;
+// NodeFSStore is in ./node-store.ts (imported separately so the browser bundle never pulls in node:fs).
 export { HttpStore } from "./http-store.ts";
 // Single-file `.lstar.zarr.zip` (STORED): ZipStore reads a chunk by ONE range read into the archive
 // (HTTP Range or file pread), no extraction — the reason the archive must be STORED. httpZipSource wraps

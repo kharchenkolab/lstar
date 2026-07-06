@@ -28,6 +28,7 @@ export class WasmSource {
   private M: any;
   private reader: any;
   private cache = new Map<string, Uint8Array | null>();
+  private haveConsolidated = false;      // true once .zmetadata / inline-v3 md is expanded into the cache
 
   constructor(store: LstarStore) { this.store = store; }
 
@@ -49,16 +50,9 @@ export class WasmSource {
   // the inline convention), then v2 (.zmetadata). Also records array metadata in `meta` for the byte-range
   // fast path. Stores without consolidation still work — `_ensure` fetches per-node metadata lazily.
   private async _loadConsolidated(): Promise<void> {
-    const zj = await this.store.get("zarr.json");
-    if (zj) {
-      this.cache.set("zarr.json", zj);
-      const cm = JSON.parse(TD.decode(zj))?.consolidated_metadata?.metadata;
-      if (cm) for (const [node, m] of Object.entries(cm as Record<string, any>)) {
-        this.cache.set(node + "/zarr.json", TE.encode(JSON.stringify(m)));
-        if (m.node_type === "array") this.meta[node + "/zarr.json"] = m;
-      }
-      return;
-    }
+    // v2 (.zmetadata) first — the current default format, so the common path is ONE store read and no
+    // per-node metadata probes. Only if it's absent do we look for a v3 root zarr.json (whose inline
+    // convention carries the whole tree). The two are mutually exclusive on disk.
     const zm = await this.store.get(".zmetadata");
     if (zm) {
       this.cache.set(".zmetadata", zm);
@@ -67,11 +61,29 @@ export class WasmSource {
         this.cache.set(key, TE.encode(JSON.stringify(val)));
         if (key.endsWith("/.zarray")) this.meta[key] = val;
       }
+      this.haveConsolidated = true;
+      return;
+    }
+    const zj = await this.store.get("zarr.json");
+    if (zj) {
+      this.cache.set("zarr.json", zj);
+      const cm = JSON.parse(TD.decode(zj))?.consolidated_metadata?.metadata;
+      if (cm) {
+        for (const [node, m] of Object.entries(cm as Record<string, any>)) {
+          this.cache.set(node + "/zarr.json", TE.encode(JSON.stringify(m)));
+          if (m.node_type === "array") this.meta[node + "/zarr.json"] = m;
+        }
+        this.haveConsolidated = true;
+      }
     }
   }
 
-  // Make sure a node's metadata documents are in cache (no-op when consolidated md already populated them).
+  // Make sure a node's metadata documents are in cache. When the store is consolidated they already are
+  // (from _loadConsolidated), so this is a no-op — crucially, it must NOT probe absent keys (e.g. zarr.json
+  // on a v2 group), which would fire a store read per node and defeat the one-read consolidated open. Only
+  // a non-consolidated store falls through to per-node metadata fetches.
   private async _ensure(path: string): Promise<void> {
+    if (this.haveConsolidated) return;
     const p = path ? path + "/" : "";
     await Promise.all([p + "zarr.json", p + ".zgroup", p + ".zattrs", p + ".zarray"].map((k) => this._put(k)));
   }
@@ -80,6 +92,13 @@ export class WasmSource {
   async groupLstar(path: string): Promise<any> {
     await this._ensure(path);
     return JSON.parse(this.reader.groupAttrs(path)).lstar;
+  }
+
+  // An array's shape from metadata ONLY — no chunk reads (used for axis lengths; a large offsets array
+  // must not be materialized just to read its length).
+  async arrayShape(path: string): Promise<number[]> {
+    await this._ensure(path);
+    return this.reader.shape(path) as number[];
   }
 
   // A whole array -> { data: TypedArray, shape } (matches zarrita's chunk shape/data contract).

@@ -1,11 +1,11 @@
-// Real-data format-invariance for the libzarr WASM reader: on a real dataset, openLstarWasm must read
+// Real-data format-invariance for the libzarr reader: on a real dataset, openLstar (libzarr) must read
 // the v2 and v3 copies to IDENTICAL values across the full L* API (dense/sparse/utf8/categorical), field
 // for field. Absolute correctness (vs the zarr-python reference) is checked separately, at the array
 // level, by io_parity.mjs; this checks the higher-level L* assembly is format-invariant. Zarrita is NOT
 // used as the oracle here: it mis-reads boolean (`|b1`) dense fields as NaN (a real bug the libzarr reader
 // does not share), so comparing against it would spuriously fail on any dataset carrying a bool field.
 // Args: <v2dir> <v3dir>.
-import { openLstarWasm } from "../core/reader.ts";
+import { openLstar } from "../core/reader.ts";      // libzarr is now the sole reader
 import { NodeFSStore } from "../core/node-store.ts";
 
 const [v2dir, v3dir] = process.argv.slice(2);
@@ -26,8 +26,8 @@ async function fieldVals(ds, name) {                     // generic read dispatc
   return { kind: "skip" };
 }
 
-const w2 = await openLstarWasm(new NodeFSStore(v2dir));   // libzarr (v2)
-const w3 = await openLstarWasm(new NodeFSStore(v3dir));   // libzarr (v3), same data
+const w2 = await openLstar(new NodeFSStore(v2dir));   // libzarr (v2)
+const w3 = await openLstar(new NodeFSStore(v3dir));   // libzarr (v3), same data
 
 check("fieldNames", strEq(w3.fieldNames(), w2.fieldNames()));
 check("axisNames", strEq(w3.axisNames(), w2.axisNames()));
@@ -45,6 +45,6 @@ const ax = w2.axisNames()[0];
 check(`axisLabels(${ax})`, strEq(await w3.axisLabels(ax), await w2.axisLabels(ax)));
 
 console.log(fail === 0
-  ? `openLstarWasm reads v2 and v3 to identical values across ${nfields} fields`
+  ? `openLstar (libzarr) reads v2 and v3 to identical values across ${nfields} fields`
   : `  ${fail} format-invariance failures over ${nfields} fields`);
 process.exit(fail === 0 ? 0 : 1);

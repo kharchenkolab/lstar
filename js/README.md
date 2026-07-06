@@ -7,12 +7,14 @@ the chunks/views a viewer needs — and runs the heavy compute in **WebAssembly*
 shows match R and Python exactly.
 
 ```
-TypeScript (zarrita.js): fetch chunks, range reads, v3 sharding, store navigation, deck.gl, UI
-        │  assembled typed arrays            ▲ results (typed arrays)
+TypeScript: async I/O — fetch/range requests, caching, concurrency, store navigation, deck.gl, UI
+        │  raw chunk bytes                   ▲ typed arrays / results
         ▼                                    │
-WebAssembly (@lstar/wasm): decode/normalize/reduce/rank — the libstar kernels
+WebAssembly (libstar): the Zarr reader (decode v2/v3 chunks, chunk-key + shard math) + compute kernels
 ```
-WASM can't `fetch`; JS is slow at tight numeric loops — so I/O stays in TS, compute goes to WASM.
+WASM can't `fetch` and JS shouldn't reimplement Zarr — so **JS owns async I/O, WASM owns the pure sync
+logic** (chunk decode, chunk-key encoding, codecs), the same libstar core R and Python use. No JS Zarr
+dependency, and no async-in-WASM bridge (Asyncify/SharedArrayBuffer) is needed.
 
 ## Status
 
@@ -20,13 +22,15 @@ WASM can't `fetch`; JS is slow at tight numeric loops — so I/O stays in TS, co
   (`colMeanVar`, `cscToCsr`) compiled via Emscripten/embind. Verified in Node to match a dense
   reference *and* the Python kernel. Single-threaded for now (OpenMP/pthreads needs cross-origin
   isolation).
-- **`core/` reader** (Phase B): a zarrita.js reader for L★ stores (any zarrita store — `FetchStore`
-  over HTTP, `HttpStore` for byte-range HTTP, a zip store, or `NodeFSStore` for Node). Opens via the
-  consolidated `.zmetadata` (one request, not ~80) and fetches fields *lazily*: a single CSC
+- **`core/` reader** (`reader.ts` + `wasm-source.ts`): reads L★ stores through the **libstar WASM core**
+  — the same reader R and Python use, so v2 **and** v3 are decoded by one recipe, not a JS Zarr
+  reimplementation (there is no `zarrita` dependency). Any store with the `get(key)`/optional
+  `getRange` contract works (`HttpStore` for byte-range HTTP, a zip store, `NodeFSStore` for Node). Opens
+  via the consolidated metadata (one request, not ~80) and fetches fields *lazily*: a single CSC
   **gene-column** (`cscColumn`), a CSR **cell-row** (`csrRow`), or a coalesced **cell selection**
-  (`csrRows`). When the store offers `getRange` (`HttpStore`/`NodeFSStore`) and the array is an
-  uncompressed single chunk, these issue one **byte-range** read of the exact slice (a gene = a few KB,
-  not the whole chunk); otherwise they fall back to a zarrita chunk read. Works on chunked + gzip stores.
+  (`csrRows`). When the store offers `getRange` and the array is uncompressed, these issue one
+  **byte-range** read of the exact slice (a gene = a few KB, not the whole chunk); otherwise they fall
+  back to a whole-array read + slice via libstar. Works on chunked + gzip stores.
 - **`core/` view** (Phase C): a framework-agnostic `LstarView` — `embedding`, `metadata` (categorical
   codes+categories / numeric), `geneExpression` (on-the-fly log1p of one gene's column), `colStats`
   (per-gene mean/var via WASM), `subsampleDE` (ranked genes A-vs-B), and a typed-array `Crossfilter`.
@@ -44,7 +48,7 @@ WASM can't `fetch`; JS is slow at tight numeric loops — so I/O stays in TS, co
 
 ```ts
 import { openLstar, LstarView, Crossfilter, scalarToRGBA } from "lstar-js";
-import { NodeFSStore } from "lstar-js/node-store";        // browser: new HttpStore(url) or zarrita FetchStore
+import { NodeFSStore } from "lstar-js/node-store";        // browser: new HttpStore(url)
 import { HttpStore } from "lstar-js/http-store";          // byte-range HTTP reads (Range, with 200 fallback)
 
 const ds = await openLstar(new HttpStore("https://cdn/sample.lstar.zarr"));  // or new NodeFSStore(path)
@@ -70,7 +74,7 @@ import createLstarKernels from "lstar-js/wasm";
 const k = await createLstarKernels();
 const gzip: Compressor = { id: "gzip", level: 1, compress: (b) => new Uint8Array(k.gzipCompress(b, 1)) };
 
-await writeStore(new NodeFSStore("out.lstar.zarr"), {        // browser: any zarrita writable store
+await writeStore(new NodeFSStore("out.lstar.zarr"), {        // browser: any store with the get/set contract
   axes: { cells: { labels: [...] }, genes: { labels: [...] } },
   fields: { counts: { encoding: "csc", span: ["cells","genes"], shape: [nc, ng], data, indices, indptr },
             leiden: { encoding: "categorical", span: ["cells"], codes, categories: ["A","B"], ordered: false } },
@@ -100,7 +104,7 @@ M.gzipCompress(bytesU8, /*level*/ 1);   // gzip (RFC1952) for the write path
 
 Needs [emsdk](https://emscripten.org/) (`EMSDK`, or `~/emsdk`), **Python ≥ 3.10** for `emcc`
 (`LSTAR_EMCC_PYTHON=/path/to/python3.10` if the system one is older), a modern Node (emsdk bundles
-one), and `npm install` (for zarrita).
+one). No npm dependencies — the reader is all libstar/WASM.
 
 ```bash
 LSTAR_EMCC_PYTHON=/path/to/python3.10 bash build.sh         # WASM -> dist/
@@ -115,7 +119,7 @@ PYTHONPATH=../python/src python3 test/writer_crossread.py /tmp/x.lstar.zarr   # 
 
 `bash ../conformance/js.sh` runs all of the above (kernels, reader, view, writer, and the JS-write →
 Python-read cross-language gate) in one go.
-Or all of it via `bash ../conformance/js.sh` (guarded; skips if emsdk/zarrita absent). `dist/` and
+Or all of it via `bash ../conformance/js.sh` (guarded; skips if emsdk absent). `dist/` and
 `test/data/` are git-ignored; `test/fixture_python.json` is a committed cross-language fixture.
 
 The TypeScript is written in erasable syntax so Node runs it directly with `--experimental-strip-types`
