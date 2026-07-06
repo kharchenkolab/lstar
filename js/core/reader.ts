@@ -139,18 +139,32 @@ export class LstarDataset {
   auxNames: string[] = [];   // namespaces of the lossless passthrough subtree (uns/@misc)
   axes = new Map<string, AxisMeta>();
   fields = new Map<string, FieldMeta>();
+  src: any;   // optional libzarr/WASM read source; when set, whole-array + group-metadata reads route through it (retires zarrita)
 
-  constructor(store: any) {
+  constructor(store: any, src?: any) {
     this.rawStore = store;
     this.store = store;
     this.root = zarr.root(store);
+    this.src = src;
   }
 
   private _open(p: string) {
     return zarr.open(this.root.resolve(p), { kind: "array" });
   }
   private async _get(p: string, sel?: any) {
+    if (this.src) return this.src.array(p);   // WASM whole-array read (only _readRange passes a `sel`, and it handles src itself)
     return zarr.get(await this._open(p), sel);
+  }
+  // A group's L* attributes ("" = root), format-agnostically through the source or zarrita.
+  private async _groupLstar(path: string): Promise<any> {
+    if (this.src) return this.src.groupLstar(path);
+    const g = await zarr.open(path ? this.root.resolve(path) : this.root, { kind: "group" });
+    return (g.attrs as any).lstar;
+  }
+  // A 1-D array's length without (necessarily) decoding its data — used for axis lengths from labels_offsets.
+  private async _arrayShape(p: string): Promise<number[]> {
+    if (this.src) return (await this.src.array(p)).shape as number[];
+    return (await this._open(p)).shape as number[];
   }
 
   async init(): Promise<this> {
@@ -158,21 +172,27 @@ export class LstarDataset {
     // opening the manifest + axes + fields is a single request instead of ~80 (and gives cscColumn the
     // per-array dtype/chunks/compressor it needs for the byte-range fast path). Absent or malformed ->
     // per-object reads (still correct), e.g. an older store or one extended without refreshing it.
-    const zmeta = await this.rawStore.get(".zmetadata");
-    if (zmeta) {
-      try {
-        const parsed = JSON.parse(TD.decode(zmeta));
-        this.meta = parsed?.metadata ?? {};
-        if (Object.keys(this.meta).length) {
-          this.store = new ConsolidatedStore(this.rawStore, this.meta);
-          this.root = zarr.root(this.store);
-        }
-      } catch { /* malformed consolidated metadata -> fall back to per-object reads */ }
+    if (this.src) {
+      // The libzarr source loads + expands consolidated metadata itself (into `src.meta` for the byte-range
+      // fast path) and reads group attrs through the WASM core -- reads both v2 and v3.
+      await this.src.init();
+      this.meta = this.src.meta ?? {};
+    } else {
+      const zmeta = await this.rawStore.get(".zmetadata");
+      if (zmeta) {
+        try {
+          const parsed = JSON.parse(TD.decode(zmeta));
+          this.meta = parsed?.metadata ?? {};
+          if (Object.keys(this.meta).length) {
+            this.store = new ConsolidatedStore(this.rawStore, this.meta);
+            this.root = zarr.root(this.store);
+          }
+        } catch { /* malformed consolidated metadata -> fall back to per-object reads */ }
+      }
+      try { await zarr.open(this.root, { kind: "group" }); }
+      catch { throw new Error("No L* store at this location — no .zmetadata / .zgroup / zarr.json found. Check the store URL (the ?store= path)."); }   // one clear error instead of zarrita's "v3 array or group" cascade
     }
-    let grp;
-    try { grp = await zarr.open(this.root, { kind: "group" }); }
-    catch { throw new Error("No L* store at this location — no .zmetadata / .zgroup / zarr.json found. Check the store URL (the ?store= path)."); }   // one clear error instead of zarrita's "v3 array or group" cascade
-    const m = (grp.attrs as any).lstar;
+    const m = await this._groupLstar("");
     if (!m) throw new Error("not an L* store (no 'lstar' root attribute)");
     this.kind = m.kind ?? "sample";
     this.specVersion = m.spec_version ?? "0.1";
@@ -180,16 +200,14 @@ export class LstarDataset {
     this.dropped = m.dropped ?? [];
     this.auxNames = m.passthrough ?? [];
     for (const name of m.axes as string[]) {
-      const ax = await zarr.open(this.root.resolve("axes/" + name), { kind: "group" });
-      const offs = await this._open("axes/" + name + "/labels_offsets");
-      const lm = (ax.attrs as any).lstar ?? {};
+      const lm = (await this._groupLstar("axes/" + name)) ?? {};
+      const shape = await this._arrayShape("axes/" + name + "/labels_offsets");
       this.axes.set(name, { name, origin: lm.origin ?? "observed", role: lm.role,
                             induced_by: lm.induced_by ?? undefined,
-                            length: (offs.shape[0] as number) - 1 });
+                            length: (shape[0] as number) - 1 });
     }
     for (const name of m.fields as string[]) {
-      const f = await zarr.open(this.root.resolve("fields/" + name), { kind: "group" });
-      const lm = (f.attrs as any).lstar ?? {};
+      const lm = (await this._groupLstar("fields/" + name)) ?? {};
       this.fields.set(name, { name, role: lm.role, span: lm.span ?? [], encoding: lm.encoding,
                               state: lm.state ?? undefined, subtype: lm.subtype ?? undefined,
                               shape: lm.shape, ordered: lm.ordered,
@@ -245,8 +263,7 @@ export class LstarDataset {
    * `{field: array}` object). Read-only — for inspection / promoting a recognized structure to a field.
    */
   async aux(ns: string): Promise<any> {
-    const g = await zarr.open(this.root.resolve("passthrough/" + ns), { kind: "group" });
-    const lm = (g.attrs as any).lstar ?? {};
+    const lm = (await this._groupLstar("passthrough/" + ns)) ?? {};
     const tree = typeof lm.tree === "string" ? JSON.parse(lm.tree) : lm.tree;
     const byId: Record<string, any> = {};
     for (const a of (lm.arrays ?? []) as Array<{ id: string; kind: string }>) {
@@ -376,6 +393,7 @@ export class LstarDataset {
         if (bytes) return decodeTyped(bytes, ctor, isize);
       }
     }
+    if (this.src) { const whole = (await this.src.array(arrPath)).data; return (whole as any).slice(lo, hi); }  // WASM: whole-array + slice
     return (await this._get(arrPath, [zarr.slice(lo, hi)])).data;   // spans chunks / compressed / no getRange -> zarrita
   }
 
@@ -559,4 +577,15 @@ export class LstarDataset {
 /** Open an L* store and read its manifest. `store` is any zarrita-compatible store. */
 export async function openLstar(store: any): Promise<LstarDataset> {
   return new LstarDataset(store).init();
+}
+
+/**
+ * Open an L* store through the libzarr WASM core instead of zarrita — one reader shared with R/Python,
+ * and it reads v3 stores (which zarrita reads poorly). Whole-array + metadata reads go through libzarr;
+ * the byte-range streaming hot path stays on the raw store (needs `getRange`). `store` is the same
+ * async get/getRange contract as {@link openLstar}.
+ */
+export async function openLstarWasm(store: any): Promise<LstarDataset> {
+  const { WasmSource } = await import("./wasm-source.ts");
+  return new LstarDataset(store, new WasmSource(store)).init();
 }

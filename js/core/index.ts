@@ -1,5 +1,5 @@
 // @lstar/core — read L* Zarr stores in the browser/Node and run the viewer queries.
-export { openLstar, LstarDataset } from "./reader.ts";
+export { openLstar, openLstarWasm, LstarDataset } from "./reader.ts";
 export type { LstarStore, AxisMeta, FieldMeta } from "./reader.ts";
 export { LstarView, Crossfilter, scalarToRGBA } from "./view.ts";
 export type { ColStats, Metadata } from "./view.ts";
