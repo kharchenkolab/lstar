@@ -42,6 +42,24 @@ PYTHONPATH="$ROOT/python/src" python3 "$ROOT/js/test/io_dump.py" "$JV3" /tmp/lst
 "$NODE" "$ROOT/js/test/io_parity.mjs" "$JV3" /tmp/lstar_js_v3.json               # arrays == zarr-python (v3)
 "$NODE" --experimental-strip-types "$ROOT/js/test/wasm_corpus.mjs" "$JV2" "$JV3" 2>/dev/null   # L* API: v2 == v3
 
+# v3-aware byte-range fast path (the viewer's hot path): on UNCOMPRESSED v2 + v3 stores, cscColumn/csrRow
+# issue exact byte-range reads on BOTH formats (v3 chunk keys c/0) and return identical values.
+BV2=/tmp/lstar_js_brv2.lstar.zarr; BV3=/tmp/lstar_js_brv3.lstar.zarr
+PYTHONPATH="$ROOT/python/src" python3 - "$BV2" "$BV3" <<'PY'
+import sys, warnings; warnings.filterwarnings("ignore")
+import lstar, numpy as np, scipy.sparse as sp
+n, g = 120, 50
+ds = lstar.Dataset(kind="sample")
+ds.add_axis("cells", [f"c{i}" for i in range(n)]); ds.add_axis("genes", [f"g{j}" for j in range(g)])
+C = sp.random(n, g, density=0.2, format="csc", random_state=1); C.data = np.ceil(C.data * 9).astype("float32")
+ds.add_field("counts", C, role="measure", span=["cells", "genes"], state="raw")
+R = sp.random(n, g, density=0.2, format="csr", random_state=2).astype("float32")
+ds.add_field("counts_cellmajor", R, role="measure", span=["cells", "genes"], state="raw")
+lstar.write(ds, sys.argv[1], format="v2")            # uncompressed (byte-range fast path needs raw chunks)
+lstar.write(ds, sys.argv[2], format="v3")
+PY
+"$NODE" --experimental-strip-types "$ROOT/js/test/v3_range.mjs" "$BV2" "$BV3"
+
 echo "  -- parallel--"; "$NODE" --experimental-strip-types "$ROOT/js/test/reader_parallel.test.ts" 2>/dev/null   # independent component arrays read concurrently
 echo "  -- view    --"; "$NODE" --experimental-strip-types "$ROOT/js/test/view.test.ts" 2>/dev/null
 echo "  -- enc-inv --"; "$NODE" --experimental-strip-types "$ROOT/js/test/encoding_invariance.test.ts" 2>/dev/null   # live-viewer compute is encoding-invariant (dense/csc/csr) — guards the sparse-hardcoded measure-read regression

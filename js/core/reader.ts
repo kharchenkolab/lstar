@@ -309,32 +309,35 @@ export class LstarDataset {
 
   /**
    * Read elements [lo, hi) of a 1-D array as a typed array. Fast path: when the store supports byte
-   * ranges AND the array is uncompressed + unfiltered (known from consolidated metadata) AND [lo, hi)
-   * lands WITHIN a single chunk, issue ONE `getRange` over the exact bytes of that chunk — a gene/cell
-   * is a few KB instead of the whole chunk. This now covers MULTI-chunk arrays (not just single-chunk):
-   * the chunk index is `floor(lo/chunkLen)` and the byte offset is relative to that chunk's start, so a
-   * chunked `counts` (e.g. `chunkElems`-split) keeps the byte-range fast path instead of falling back to
-   * whole-chunk reads. A span that CROSSES a chunk boundary (rare for one column) falls through to a
-   * whole-array read + slice via libzarr, which decompresses / stitches correctly. Edge (partial last)
-   * chunks are stored full-size + fill-padded by the writer, so `off*isize .. (off+want)*isize` is always
+   * ranges AND the array stores raw (uncompressed) element bytes AND [lo, hi) lands WITHIN a single
+   * chunk, issue ONE `getRange` over the exact bytes of that chunk — a gene/cell is a few KB instead of
+   * the whole chunk. Works on BOTH v2 and v3: libzarr (`arrayInfo`) reports dtype/chunk-shape/raw-ness
+   * from either metadata format, and (`chunkKey`) forms the chunk key in the array's own encoding
+   * (v2 `0`, v3 `c/0`) — the fetch loop stays in JS, the Zarr interpretation stays in libzarr. The chunk
+   * index is `floor(lo/chunkLen)` and the byte offset is relative to that chunk's start, so a chunked
+   * array keeps the fast path. A span that CROSSES a chunk boundary, a compressed array, or a store with
+   * no `getRange` falls through to a whole-array read + slice via libzarr (decompresses / stitches
+   * correctly). Edge (partial last) chunks are stored full-size + fill-padded, so the sub-range is always
    * in-bounds within the chunk. Equivalent results either way.
    */
   private async _readRange(arrPath: string, lo: number, hi: number): Promise<any> {
-    const za: any = this.meta[arrPath + "/.zarray"];
-    const dt = za ? DTYPE[za.dtype] : undefined;
-    const oneD = za && Array.isArray(za.chunks) && za.chunks.length === 1 && za.chunks[0] > 0;
-    const uncompressed = za && za.compressor == null && (za.filters == null || (Array.isArray(za.filters) && za.filters.length === 0));
-    if (typeof this.store.getRange === "function" && dt && oneD && uncompressed && hi > lo) {
-      const [ctor, isize] = dt;
-      const chunkLen = za.chunks[0] as number;
-      const ci = Math.floor(lo / chunkLen);
-      if (hi <= (ci + 1) * chunkLen) {                       // [lo,hi) within one chunk -> exact byte range of chunk `ci`
-        const off = lo - ci * chunkLen;                      // (single-chunk store: chunkLen >= shape, so ci==0, off==lo — unchanged)
-        const bytes = await this.store.getRange(arrPath + "/" + ci, off * isize, (off + (hi - lo)) * isize);
-        if (bytes) return decodeTyped(bytes, ctor, isize);
+    if (typeof this.store.getRange === "function" && hi > lo) {
+      const info = await this.src.arrayInfo(arrPath);      // {dtype, itemsize, chunkShape, uncompressed} — v2 or v3
+      const dt = DTYPE[info.dtype];
+      const oneD = info.chunkShape.length === 1 && info.chunkShape[0] > 0;
+      if (dt && oneD && info.uncompressed) {
+        const [ctor, isize] = dt;
+        const chunkLen = info.chunkShape[0];
+        const ci = Math.floor(lo / chunkLen);
+        if (hi <= (ci + 1) * chunkLen) {                   // [lo,hi) within one chunk -> exact byte range of chunk `ci`
+          const off = lo - ci * chunkLen;
+          const key = this.src.chunkKey(arrPath, [ci]);    // v2 "arrPath/0" form via join below; libzarr gives the leaf key
+          const bytes = await this.store.getRange(arrPath + "/" + key, off * isize, (off + (hi - lo)) * isize);
+          if (bytes) return decodeTyped(bytes, ctor, isize);
+        }
       }
     }
-    const whole = (await this.src.array(arrPath)).data;   // spans chunks / compressed / no getRange -> libzarr whole-array + slice
+    const whole = (await this.src.array(arrPath)).data;    // spans chunks / compressed / no getRange -> libzarr whole-array + slice
     return (whole as any).slice(lo, hi);
   }
 

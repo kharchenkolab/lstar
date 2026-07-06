@@ -117,7 +117,9 @@ await buildStore(dir);
   check("cscColumn fast == slow (equivalence)", same);
 }
 
-// ---- multi-chunk store: fast path is inapplicable -> falls back, still correct ----
+// ---- multi-chunk store: the byte-range fast path still applies per-chunk (chunk index = floor(lo/
+// chunkLen)); a column whose span CROSSES a chunk boundary falls back to a whole-array read. Correct
+// either way. ----
 {
   const mdir = fs.mkdtempSync(path.join(os.tmpdir(), "lstar-sparse-mc-"));
   await buildStore(mdir, { chunkElems: 2 });   // uncompressed but multi-chunk along axis 0
@@ -129,8 +131,8 @@ await buildStore(dir);
     const ref = refCol(c);
     ok = ok && arr(rows).join() === ref.map(([r]) => r).join() && arr(vals).join() === ref.map(([, v]) => v).join();
   }
-  check("cscColumn correct on multi-chunk store (fallback)", ok);
-  check("multi-chunk used chunk gets, not byte-range", rc.chunkGets > 0 && rc.ranges === 0);
+  check("cscColumn correct on multi-chunk store", ok);
+  check("multi-chunk still takes the byte-range fast path where a column fits a chunk", rc.ranges > 0);
 }
 
 console.log(fail === 0 ? "\nsparse OK" : `\nsparse FAIL: ${fail}`);

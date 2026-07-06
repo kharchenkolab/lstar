@@ -94,6 +94,36 @@ class Reader {
         return out;
     }
 
+    // Pure-sync descriptor the JS byte-range fast path needs, format-agnostically (v2 or v3): element
+    // size, chunk shape, and whether a chunk stores raw contiguous element bytes (no bytes->bytes
+    // compressor), so a sub-range of the array maps 1:1 onto a store byte range. JS owns the fetch; this
+    // owns the Zarr metadata interpretation.
+    val arrayInfo(const std::string& path) {
+        zarr::Array a = zarr::Array::open(store_, path);
+        bool raw = true;                                // raw iff no compression codec in the chain
+        for (const auto& c : a.meta().codecs)
+            if (c.name == "gzip" || c.name == "zlib" || c.name == "blosc" || c.name == "zstd") raw = false;
+        val out = val::object();
+        out.set("dtype", zarr::v2::emit_dtype(a.meta().dtype, /*big_endian=*/false));
+        out.set("itemsize", (double)a.meta().dtype.itemsize);
+        val cs = val::array();
+        for (size_t i = 0; i < a.meta().chunk_shape.size(); ++i) cs.set(i, (double)a.meta().chunk_shape[i]);
+        out.set("chunkShape", cs);
+        out.set("uncompressed", raw);
+        return out;
+    }
+
+    // The store key of one chunk, in the array's own chunk-key encoding — v2 "0" / "i.j", v3 default
+    // "c/0" / "c/i/j". The drift-prone bit: computed by libzarr, never reimplemented in JS.
+    std::string chunkKey(const std::string& path, val idx_js) {
+        zarr::Array a = zarr::Array::open(store_, path);
+        std::vector<int> t = emscripten::convertJSArrayToNumberVector<int>(idx_js);   // JS Numbers (chunk idx < 2^31)
+        std::vector<std::uint64_t> idx(t.begin(), t.end());
+        return a.meta().format == zarr::ZarrFormat::v3
+                   ? zarr::v3::chunk_key(idx, a.meta().dimension_separator)
+                   : zarr::v2::chunk_key(idx, a.meta().dimension_separator);
+    }
+
     // a whole array -> {dtype: "<f4"|..., shape: number[], bytes: Uint8Array (C-order, native)}.
     val array(const std::string& path) {
         zarr::Array a = zarr::Array::open(store_, path);
@@ -135,6 +165,8 @@ EMSCRIPTEN_BINDINGS(lstar_io) {
         .function("rootAttrs", &Reader::rootAttrs)
         .function("groupAttrs", &Reader::groupAttrs)
         .function("shape", &Reader::shape)
+        .function("arrayInfo", &Reader::arrayInfo)
+        .function("chunkKey", &Reader::chunkKey)
         .function("array", &Reader::array)
         .function("keysFor", &Reader::keysFor)
         .function("version", &Reader::version);
