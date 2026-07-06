@@ -171,6 +171,10 @@ echo "== Zarr v3 on the R surface (R reads both v2+v3; writes v3; zarr-python co
 bash conformance/v3_r.sh >/tmp/lstar_v3r.log 2>&1 \
   && pass "v3 read+write on the R surface" || { echo "  FAIL v3_r"; tail -20 /tmp/lstar_v3r.log; exit 1; }
 
+echo "== Zstd read parity on the R surface (R reads zarr-python's default zstd v3 store; needs libzstd) =="
+bash conformance/zstd_r.sh >/tmp/lstar_zstdr.log 2>&1 \
+  && pass "zstd read parity on the R surface" || { echo "  FAIL zstd_r"; tail -20 /tmp/lstar_zstdr.log; exit 1; }
+
 echo "== disk-backed targets (L* -> h5ad -> backed AnnData / Seurat+BPCells / SCE+HDF5Array) =="
 bash conformance/backed_targets.sh >/tmp/lstar_bt.log 2>&1 \
   && { pass "disk-backed conversion targets"; grep "SKIP" /tmp/lstar_bt.log | sed 's/^/      /'; } \

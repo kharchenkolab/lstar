@@ -53,14 +53,20 @@ def write(ds, path, compressor=None, chunk_elems=None, stream=False, viewer=Fals
     zfmt = 3 if format == "v3" else 2
     if zfmt == 3 and compressor is not None:
         # v3 arrays take a Zarr v3 codec, not a numcodecs compressor. Translate lstar's gzip (its writer
-        # default) to zarr's GzipCodec; the rest of the writer passes `compressor=` through unchanged.
+        # default) or zstd (zarr-python 3's own v3 default — so a zstd store is what "wild" v3 looks like)
+        # to the matching v3 codec; an already-v3 codec passes through. The rest of the writer passes
+        # `compressor=` through unchanged. gzip + zstd are both read by the C++/R/JS libzarr cores.
         import numcodecs
-        from zarr.codecs import GzipCodec
+        from zarr.codecs import GzipCodec, ZstdCodec
         if isinstance(compressor, numcodecs.GZip):
             compressor = GzipCodec(level=compressor.level)
+        elif isinstance(compressor, numcodecs.Zstd):
+            compressor = ZstdCodec(level=compressor.level)
+        elif isinstance(compressor, (GzipCodec, ZstdCodec)):
+            pass                                          # already a v3 codec — use as-is
         else:
             raise ValueError(
-                f"format='v3' supports gzip or no compression (Zarr v3 has no zlib codec); "
+                f"format='v3' supports gzip, zstd, or no compression; "
                 f"got {type(compressor).__name__}")
     if viewer:
         from .viewer import extend_for_viewer

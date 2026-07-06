@@ -21,7 +21,7 @@ Suggests: SeuratObject, Seurat, SingleCellExperiment, SummarizedExperiment,
     testthat (>= 3.0.0), knitr, rmarkdown
 VignetteBuilder: knitr
 Additional_repositories: https://bnprks.r-universe.dev
-SystemRequirements: C++17, zlib
+SystemRequirements: C++17, zlib, GNU make, libzstd (optional, for reading Zstd-compressed Zarr v3 stores)
 Roxygen: list(markdown = TRUE)
 Config/testthat/edition: 3
 Config/roxygen2/version: 8.0.0
