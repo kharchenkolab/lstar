@@ -39,3 +39,16 @@ mkdir -p "$JS/dist"
   -sEXPORT_NAME=createLstarKernels \
   -o "$JS/dist/lstar_kernels.mjs"
 echo "built $JS/dist/lstar_kernels.mjs (+ lstar_kernels.wasm)"
+
+# The I/O module: the libzarr-backed reader (retires the zarrita reimplementation). Needs libzarr's
+# gzip codec (-DLIBZARR_HAS_ZLIB) atop the zlib port. Kept a separate module from the kernels for now
+# (the kernels stay I/O-free and dead-code-stripped); the viewer loads both.
+"${EMCC[@]}" "$JS/wasm/lstar_reader.cpp" \
+  -I"$ROOT/core/include" \
+  -std=c++17 -O3 -lembind \
+  -sUSE_ZLIB=1 -DLSTAR_HAVE_ZLIB -DLIBZARR_HAS_ZLIB \
+  -sMODULARIZE=1 -sEXPORT_ES6=1 -sENVIRONMENT=node,web \
+  -sALLOW_MEMORY_GROWTH=1 \
+  -sEXPORT_NAME=createLstarIO \
+  -o "$JS/dist/lstar_io.mjs"
+echo "built $JS/dist/lstar_io.mjs (+ lstar_io.wasm)"
