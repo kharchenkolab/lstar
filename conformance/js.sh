@@ -30,6 +30,20 @@ echo "  [py ] generated test store + references"
 # 3) run the Node tests (kernels: dense+Python conformance; reader: manifest+fields; view: queries)
 echo "  -- kernels --"; "$NODE" "$ROOT/js/test/kernels.test.mjs"
 echo "  -- reader  --"; "$NODE" --experimental-strip-types "$ROOT/js/test/reader.test.ts" 2>/dev/null
+
+# libzarr WASM reader (retires zarrita): on a maximal store, whole-array reads == zarr-python for BOTH v2
+# and v3 (gzip), and the full L* reader API via openLstarWasm matches the zarrita reader across every
+# encoding + reads v3 to the same values. The v3 store is written by zarr-python (an independent writer).
+echo "  -- libzarr io (v2+v3, retires zarrita) --"
+JV2=/tmp/lstar_js_v2.lstar.zarr; JV3=/tmp/lstar_js_v3.lstar.zarr
+PYTHONPATH="$ROOT/python/src" python3 "$ROOT/conformance/v3_gen.py" "$JV2" >/dev/null
+PYTHONPATH="$ROOT/python/src" python3 "$ROOT/conformance/v3_verify.py" reemit_gzip "$JV2" "$JV3" >/dev/null
+PYTHONPATH="$ROOT/python/src" python3 "$ROOT/js/test/io_dump.py" "$JV2" /tmp/lstar_js_v2.json >/dev/null
+PYTHONPATH="$ROOT/python/src" python3 "$ROOT/js/test/io_dump.py" "$JV3" /tmp/lstar_js_v3.json >/dev/null
+"$NODE" "$ROOT/js/test/io_parity.mjs" "$JV2" /tmp/lstar_js_v2.json
+"$NODE" "$ROOT/js/test/io_parity.mjs" "$JV3" /tmp/lstar_js_v3.json
+"$NODE" --experimental-strip-types "$ROOT/js/test/wasm_reader.test.ts" "$JV2" "$JV3" 2>/dev/null
+
 echo "  -- parallel--"; "$NODE" --experimental-strip-types "$ROOT/js/test/reader_parallel.test.ts" 2>/dev/null   # independent component arrays read concurrently
 echo "  -- view    --"; "$NODE" --experimental-strip-types "$ROOT/js/test/view.test.ts" 2>/dev/null
 echo "  -- enc-inv --"; "$NODE" --experimental-strip-types "$ROOT/js/test/encoding_invariance.test.ts" 2>/dev/null   # live-viewer compute is encoding-invariant (dense/csc/csr) — guards the sparse-hardcoded measure-read regression

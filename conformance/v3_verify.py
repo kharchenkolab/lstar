@@ -38,11 +38,11 @@ def check(v3, v2ref):
     assert bad == 0, f"{bad} array mismatches vs v2 reference"
     print(f"  zarr-python reads C++ v3: {len(array_keys(v3))} arrays == v2, format 3, inline-consolidated")
 
-def reemit(v2, v3out):
+def _reemit(v2, v3out, compressors):
     shutil.rmtree(v3out, ignore_errors=True)
     g2 = zarr.open_group(v2, mode="r")
     store = zarr.storage.LocalStore(v3out)
-    g3 = zarr.create_group(store=store, overwrite=True)               # zarr_format 3 default (zstd chunks)
+    g3 = zarr.create_group(store=store, overwrite=True)               # zarr_format 3
     for k, v in dict(g2.attrs).items():
         g3.attrs[k] = v
     for dp, _, fns in os.walk(v2):
@@ -52,8 +52,9 @@ def reemit(v2, v3out):
         node = "/".join(rel.split(os.sep))
         if ".zarray" in fns:
             arr = np.asarray(g2[node][...])
+            kw = {} if compressors is None else {"compressors": compressors}
             d = g3.create_array(name=node, shape=arr.shape, dtype=arr.dtype,
-                                chunks=arr.shape if arr.size else (1,))
+                                chunks=arr.shape if arr.size else (1,), **kw)
             if arr.size:
                 d[...] = arr
             for k, v in dict(g2[node].attrs).items():
@@ -63,7 +64,15 @@ def reemit(v2, v3out):
             for k, v in dict(g2[node].attrs).items():
                 sub.attrs[k] = v
     zarr.consolidate_metadata(store)
+
+def reemit(v2, v3out):                                               # zarr-python's default compressor (zstd)
+    _reemit(v2, v3out, compressors=None)
     print("  zarr-python re-emitted v3 (zstd default) ->", v3out)
+
+def reemit_gzip(v2, v3out):                                         # gzip: readable by the WASM reader (no zstd port)
+    from zarr.codecs import GzipCodec
+    _reemit(v2, v3out, compressors=[GzipCodec(level=5)])
+    print("  zarr-python re-emitted v3 (gzip) ->", v3out)
 
 def compare(a, b):
     ga = zarr.open_group(a, mode="r"); gb = zarr.open_group(b, mode="r")
@@ -79,4 +88,5 @@ def compare(a, b):
     print(f"  {len(ka)} arrays value-identical between the two stores")
 
 if __name__ == "__main__":
-    {"check": check, "reemit": reemit, "compare": compare}[sys.argv[1]](sys.argv[2], sys.argv[3])
+    {"check": check, "reemit": reemit, "reemit_gzip": reemit_gzip,
+     "compare": compare}[sys.argv[1]](sys.argv[2], sys.argv[3])
