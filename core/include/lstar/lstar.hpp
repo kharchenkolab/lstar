@@ -365,42 +365,25 @@ inline std::vector<int64_t> chunk_shape_for(const std::vector<int64_t>& shape, i
 // fill-padded per the v2 spec.
 inline void write_array(const fs::path& dir, const NdArray& a,
                         int64_t chunk_elems = 0, const json& compressor = json(nullptr)) {
-    fs::create_directories(dir);
-    std::vector<int64_t> chunks = chunk_shape_for(a.shape, chunk_elems);
-    json za;
-    za["zarr_format"] = 2;
-    za["shape"] = a.shape;
-    za["chunks"] = chunks;
-    za["dtype"] = a.dtype;
-    za["compressor"] = compressor;
-    za["fill_value"] = 0;
-    za["order"] = "C";
-    za["filters"] = nullptr;
-    write_text(dir / ".zarray", za.dump());
-    write_text(dir / ".zattrs", json::object().dump());
-
-    const size_t ndim = a.shape.size();
-    const size_t dsz = dtype_size(a.dtype);
-    if (ndim == 0) {                                          // scalar -> single chunk "0"
-        write_bytes(dir / "0", a.bytes.data(), a.bytes.size());
-        return;
+    // libzarr writes the .zarray + chunks (v2). chunk_shape_for keeps lstar's first-axis-only chunking
+    // and single-chunk default; separator '.' + fill 0 match lstar's existing layout. Canonical metadata
+    // formatting differs from the old hand-rolled dump, but readers are value-based (conformance checks
+    // values, not store bytes).
+    auto store = std::make_shared<zarr::FilesystemStore>(dir, /*create=*/true);
+    zarr::ArraySpec spec;
+    spec.format = zarr::ZarrFormat::v2;
+    spec.shape.assign(a.shape.begin(), a.shape.end());
+    const std::vector<int64_t> chunks = chunk_shape_for(a.shape, chunk_elems);
+    spec.chunks.assign(chunks.begin(), chunks.end());
+    spec.dtype = zarr::v2::parse_dtype(a.dtype, dir.string()).dtype;
+    spec.dimension_separator = '.';
+    if (!compressor.is_null()) {
+        const std::string id = compressor.value("id", std::string());
+        if (id != "gzip" && id != "zlib") throw std::runtime_error("unsupported compressor id for write: " + id);
+        spec.codecs.push_back(zarr::CodecSpec{id, {{"level", compressor.value("level", 5)}}});
     }
-    int64_t inner = 1;
-    for (size_t i = 1; i < ndim; ++i) inner *= a.shape[i];
-    const int64_t crows = chunks[0];
-    const int64_t nchunks0 = (a.shape[0] + crows - 1) / crows;
-    const size_t chunk_bytes = static_cast<size_t>(crows) * static_cast<size_t>(inner) * dsz;
-    for (int64_t ci = 0; ci < nchunks0; ++ci) {
-        const int64_t r0 = ci * crows;
-        const int64_t rows = std::min<int64_t>(crows, a.shape[0] - r0);
-        std::vector<uint8_t> chunk(chunk_bytes, 0);          // full-size, fill_value 0 padded
-        std::memcpy(chunk.data(), a.bytes.data() + static_cast<size_t>(r0) * inner * dsz,
-                    static_cast<size_t>(rows) * inner * dsz);
-        std::vector<uint8_t> enc = encode_chunk(compressor, std::move(chunk));
-        std::string key = std::to_string(ci);
-        for (size_t i = 1; i < ndim; ++i) key += ".0";       // only the first axis is chunked
-        write_bytes(dir / key, enc.data(), enc.size());
-    }
+    zarr::Array za = zarr::Array::create(store, "", spec);
+    if (!a.bytes.empty()) za.write(a.bytes.data(), a.bytes.size());
 }
 
 // ---------------------------------------------------------- string codec ----
