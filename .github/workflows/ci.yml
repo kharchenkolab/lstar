@@ -61,6 +61,9 @@ jobs:
       - name: Zarr v3 format (C++ <-> zarr-python; read both, write v3, zstd default)
         if: matrix.tag == 'latest'
         run: bash conformance/v3_format.sh
+      - name: Zarr v3 sharding (lstar writes sharded v3; C++/zarr-python read == unsharded)
+        if: matrix.tag == 'latest'
+        run: bash conformance/v3_shard.sh
       - name: single-file .lstar.zarr.zip parity (Python + C++ + CLI + STORED/ZIP64 guardrails)
         run: bash conformance/zip.sh
 

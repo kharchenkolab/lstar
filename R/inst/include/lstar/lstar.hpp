@@ -367,6 +367,25 @@ inline std::vector<int64_t> chunk_shape_for(const std::vector<int64_t>& shape, i
     return cs;
 }
 
+// Shard (outer-chunk) shape packing ~shard_elems into one shard object -- a v3 hosting optimization:
+// many inner chunks in one object (fewer HTTP requests), byte-range-readable via the shard index. The
+// shard first-axis extent is a POSITIVE MULTIPLE of the chunk extent (v3 spec), capped so one shard
+// covers at most the whole array. Returns {} (unsharded) when there's nothing to gain (single chunk).
+inline std::vector<int64_t> shard_shape_for(const std::vector<int64_t>& shape,
+                                            const std::vector<int64_t>& chunks, int64_t shard_elems) {
+    if (shard_elems <= 0 || shape.empty() || chunks.empty() || chunks[0] <= 0) return {};
+    const int64_t chunk_rows = chunks[0];
+    if (chunk_rows >= shape[0]) return {};                     // single chunk -> nothing to shard
+    int64_t inner = 1;
+    for (size_t i = 1; i < shape.size(); ++i) inner *= shape[i];
+    const int64_t num_chunks = (shape[0] + chunk_rows - 1) / chunk_rows;
+    const int64_t target_rows = shard_elems / std::max<int64_t>(1, inner);
+    const int64_t k = std::max<int64_t>(1, std::min<int64_t>(num_chunks, target_rows / chunk_rows));
+    std::vector<int64_t> ss = chunks;                          // inner dims: shard extent == chunk extent (a multiple)
+    ss[0] = k * chunk_rows;
+    return ss;
+}
+
 // Write a zarr v2 array, optionally chunked (along the first axis) and/or compressed. chunk_elems<=0
 // and compressor=null reproduce the original single-chunk uncompressed output exactly (so existing
 // stores are byte-identical). Because only the first (outermost, slowest) axis is chunked, each chunk
@@ -374,18 +393,23 @@ inline std::vector<int64_t> chunk_shape_for(const std::vector<int64_t>& shape, i
 // fill-padded per the v2 spec.
 inline void write_array(const fs::path& dir, const NdArray& a,
                         int64_t chunk_elems = 0, const json& compressor = json(nullptr),
-                        zarr::ZarrFormat fmt = zarr::ZarrFormat::v2) {
+                        zarr::ZarrFormat fmt = zarr::ZarrFormat::v2, int64_t shard_elems = 0) {
     // libzarr writes the array metadata + chunks in `fmt` (v2 .zarray, or v3 zarr.json).
     // chunk_shape_for keeps lstar's first-axis-only chunking and single-chunk default; fill 0 matches
     // lstar's layout. For v3, libzarr prepends the required `bytes` codec and uses the 'default' chunk-key
-    // encoding ('/'), so the same compressor spec + dtype carry over. Canonical metadata formatting differs
-    // from the old hand-rolled dump, but readers are value-based (conformance checks values, not store bytes).
+    // encoding ('/'), so the same compressor spec + dtype carry over. shard_elems>0 (v3 only) packs inner
+    // chunks into shard objects. Canonical metadata formatting differs from the old hand-rolled dump, but
+    // readers are value-based (conformance checks values, not store bytes).
     auto store = std::make_shared<zarr::FilesystemStore>(dir, /*create=*/true);
     zarr::ArraySpec spec;
     spec.format = fmt;
     spec.shape.assign(a.shape.begin(), a.shape.end());
     const std::vector<int64_t> chunks = chunk_shape_for(a.shape, chunk_elems);
     spec.chunks.assign(chunks.begin(), chunks.end());
+    if (fmt == zarr::ZarrFormat::v3 && shard_elems > 0) {      // v3 sharding: shard extent = multiple of chunk
+        const std::vector<int64_t> shards = shard_shape_for(a.shape, chunks, shard_elems);
+        if (!shards.empty()) spec.shards.assign(shards.begin(), shards.end());
+    }
     spec.dtype = zarr::v2::parse_dtype(a.dtype, dir.string()).dtype;
     spec.dimension_separator = '.';
     if (!compressor.is_null()) {
@@ -414,7 +438,7 @@ inline std::vector<std::string> read_strings(const fs::path& gdir, const std::st
 inline void write_strings(const fs::path& gdir, const std::string& name,
                           const std::vector<std::string>& strs,
                           int64_t chunk_elems = 0, const json& compressor = json(nullptr),
-                          zarr::ZarrFormat fmt = zarr::ZarrFormat::v2) {
+                          zarr::ZarrFormat fmt = zarr::ZarrFormat::v2, int64_t shard_elems = 0) {
     std::vector<int64_t> off(strs.size() + 1, 0);
     std::string buf;
     for (size_t i = 0; i < strs.size(); ++i) {
@@ -430,8 +454,8 @@ inline void write_strings(const fs::path& gdir, const std::string& name,
     offsets.shape = {static_cast<int64_t>(off.size())};
     offsets.bytes.resize(off.size() * 8);
     std::memcpy(offsets.bytes.data(), off.data(), off.size() * 8);
-    write_array(gdir / name, data, chunk_elems, compressor, fmt);
-    write_array(gdir / (name + "_offsets"), offsets, chunk_elems, compressor, fmt);
+    write_array(gdir / name, data, chunk_elems, compressor, fmt, shard_elems);
+    write_array(gdir / (name + "_offsets"), offsets, chunk_elems, compressor, fmt, shard_elems);
 }
 
 // ------------------------------------------------------------ group IO ------
@@ -793,11 +817,11 @@ inline Dataset read(const fs::path& root) {
 
 inline void write(const Dataset& ds, const fs::path& root,
                   int64_t chunk_elems = 0, const json& compressor = json(nullptr),
-                  zarr::ZarrFormat fmt = zarr::ZarrFormat::v2) {
+                  zarr::ZarrFormat fmt = zarr::ZarrFormat::v2, int64_t shard_elems = 0) {
     if (root.extension() == ".zip") {                 // single-file .lstar.zarr.zip: write a dir, pack STORED
         fs::path tmp = unique_temp_dir("lstar_zip_");
         try {
-            write(ds, tmp, chunk_elems, compressor, fmt);  // recurse into the directory path (writes + consolidates)
+            write(ds, tmp, chunk_elems, compressor, fmt, shard_elems);  // recurse into the directory path (writes + consolidates)
             pack_stored_zip(tmp, root);
             fs::remove_all(tmp);
             return;
@@ -833,7 +857,7 @@ inline void write(const Dataset& ds, const fs::path& root,
         al["induced_by"] = a.induced_by.empty() ? json(nullptr) : json(a.induced_by);
         al["provenance"] = a.provenance;
         write_group(g, json{{"lstar", al}}, fmt);
-        write_strings(g, "labels", a.labels, chunk_elems, compressor, fmt);
+        write_strings(g, "labels", a.labels, chunk_elems, compressor, fmt, shard_elems);
     }
 
     for (auto& f : ds.fields) {
@@ -862,19 +886,19 @@ inline void write(const Dataset& ds, const fs::path& root,
             fl["shape"] = f.dense.shape;   // dense: shape in the manifest too (parity; a reader shouldn't need values/.zarray)
         write_group(g, json{{"lstar", fl}}, fmt);
         if (f.encoding == "csr" || f.encoding == "csc") {
-            write_array(g / "data", f.data, chunk_elems, compressor, fmt);
-            write_array(g / "indices", f.indices, chunk_elems, compressor, fmt);
-            write_array(g / "indptr", f.indptr, chunk_elems, compressor, fmt);
+            write_array(g / "data", f.data, chunk_elems, compressor, fmt, shard_elems);
+            write_array(g / "indices", f.indices, chunk_elems, compressor, fmt, shard_elems);
+            write_array(g / "indptr", f.indptr, chunk_elems, compressor, fmt, shard_elems);
         } else if (f.encoding == "utf8") {
-            write_strings(g, "values", f.strings, chunk_elems, compressor, fmt);
+            write_strings(g, "values", f.strings, chunk_elems, compressor, fmt, shard_elems);
         } else if (f.encoding == "categorical") {
-            write_array(g / "codes", f.codes, chunk_elems, compressor, fmt);
-            write_strings(g, "categories", f.categories, chunk_elems, compressor, fmt);  // inline (P1)
+            write_array(g / "codes", f.codes, chunk_elems, compressor, fmt, shard_elems);
+            write_strings(g, "categories", f.categories, chunk_elems, compressor, fmt, shard_elems);  // inline (P1)
         } else {
-            write_array(g / "values", f.dense, chunk_elems, compressor, fmt);
+            write_array(g / "values", f.dense, chunk_elems, compressor, fmt, shard_elems);
         }
-        if (f.has_mask) write_array(g / "mask", f.mask, chunk_elems, compressor, fmt);
-        if (f.has_index) write_array(g / "index", f.index, chunk_elems, compressor, fmt);
+        if (f.has_mask) write_array(g / "mask", f.mask, chunk_elems, compressor, fmt, shard_elems);
+        if (f.has_index) write_array(g / "index", f.index, chunk_elems, compressor, fmt, shard_elems);
     }
 
     if (!ds.aux.empty()) {                                            // verbatim passthrough subtree
@@ -883,8 +907,8 @@ inline void write(const Dataset& ds, const fs::path& root,
             fs::path g = root / "passthrough" / ax.ns;
             write_group(g, json{{"lstar", ax.attrs}}, fmt);
             for (auto& leaf : ax.leaves) {
-                if (leaf.kind == "utf8") write_strings(g, leaf.id, leaf.strings, chunk_elems, compressor, fmt);
-                else write_array(g / leaf.id, leaf.dense, chunk_elems, compressor, fmt);
+                if (leaf.kind == "utf8") write_strings(g, leaf.id, leaf.strings, chunk_elems, compressor, fmt, shard_elems);
+                else write_array(g / leaf.id, leaf.dense, chunk_elems, compressor, fmt, shard_elems);
             }
         }
     }

@@ -74,6 +74,23 @@ def reemit_gzip(v2, v3out):                                         # gzip: read
     _reemit(v2, v3out, compressors=[GzipCodec(level=5)])
     print("  zarr-python re-emitted v3 (gzip) ->", v3out)
 
+def shardcheck(sharded, ref):
+    # the sharded store must (a) genuinely use the sharding_indexed codec on its big arrays, packing many
+    # inner chunks into fewer objects, and (b) read to the same values as the unsharded reference.
+    import os
+    dj = json.load(open(os.path.join(sharded, "fields", "counts", "data", "zarr.json")))
+    assert dj["codecs"][0]["name"] == "sharding_indexed", f"counts/data not sharded: {dj['codecs']}"
+    ncs = os.path.join(sharded, "fields", "counts", "data", "c")
+    nshards = sum(1 for _ in os.walk(ncs)) if os.path.isdir(ncs) else 0
+    gs = zarr.open_group(sharded, mode="r"); gr = zarr.open_group(ref, mode="r")
+    bad = 0
+    for k in array_keys(sharded):
+        a = np.asarray(gs[k][...]); b = np.asarray(gr[k][...])
+        if not (a.dtype == b.dtype and a.shape == b.shape and np.array_equal(a, b, equal_nan=True)):
+            bad += 1; print("  MISMATCH", k)
+    assert bad == 0, f"{bad} array mismatches vs the unsharded reference"
+    print(f"  sharded store: sharding_indexed on counts/data; {len(array_keys(sharded))} arrays == unsharded seed")
+
 def compare(a, b):
     ga = zarr.open_group(a, mode="r"); gb = zarr.open_group(b, mode="r")
     assert dict(ga.attrs) == dict(gb.attrs), "root attrs differ"
@@ -89,4 +106,4 @@ def compare(a, b):
 
 if __name__ == "__main__":
     {"check": check, "reemit": reemit, "reemit_gzip": reemit_gzip,
-     "compare": compare}[sys.argv[1]](sys.argv[2], sys.argv[3])
+     "compare": compare, "shardcheck": shardcheck}[sys.argv[1]](sys.argv[2], sys.argv[3])

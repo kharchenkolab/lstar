@@ -56,12 +56,17 @@ static void cmp(const Dataset& A, const Dataset& B) {
     }
 }
 int main(int argc, char** argv) {
-    if (argc < 4) { std::cerr << "usage: test_v3 write|compare <a> <b>\n"; return 2; }
+    if (argc < 4) { std::cerr << "usage: test_v3 write|shard|compare <a> <b>\n"; return 2; }
     std::string mode = argv[1], a = argv[2], b = argv[3];
     json gz; gz["id"] = "gzip"; gz["level"] = 5;
     if (mode == "write") {                               // read a (any fmt) -> write b as v3 -> compare
         Dataset A = read(a);
         write(A, b, 0, gz, zarr::ZarrFormat::v3);
+        Dataset B = read(b);
+        cmp(A, B);
+    } else if (mode == "shard") {                        // read a -> write b as chunked+SHARDED v3 -> compare
+        Dataset A = read(a);
+        write(A, b, /*chunk_elems*/1000, gz, zarr::ZarrFormat::v3, /*shard_elems*/4000);
         Dataset B = read(b);
         cmp(A, B);
     } else if (mode == "compare") {                      // read both -> compare (either format)

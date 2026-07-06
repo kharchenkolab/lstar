@@ -143,6 +143,10 @@ echo "== Zarr v3 format (read both v2+v3; write v3; C++<->zarr-python<->R, incl.
 bash conformance/v3_format.sh >/tmp/lstar_v3.log 2>&1 \
   && pass "v3 read+write conformant across C++/zarr-python/R" || { echo "  FAIL v3_format"; tail -20 /tmp/lstar_v3.log; exit 1; }
 
+echo "== Zarr v3 sharding (lstar writes sharded v3; C++/zarr-python/WASM read == unsharded) =="
+bash conformance/v3_shard.sh >/tmp/lstar_v3sh.log 2>&1 \
+  && pass "v3 sharded write + read conformant across C++/zarr-python/WASM" || { echo "  FAIL v3_shard"; tail -20 /tmp/lstar_v3sh.log; exit 1; }
+
 echo "== single-file .lstar.zarr.zip parity (Python + C++ + CLI + R + JS; STORED + ZIP64) =="
 bash conformance/zip.sh >/tmp/lstar_zip.log 2>&1 \
   && pass "single-file .lstar.zarr.zip cross-surface parity" || { echo "  FAIL zip"; tail -25 /tmp/lstar_zip.log; exit 1; }
