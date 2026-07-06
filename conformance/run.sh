@@ -139,6 +139,10 @@ echo "== chunked+gzip conformance (Python -> C++ -> Python) =="
 bash conformance/chunked.sh >/tmp/lstar_chunk.log 2>&1 \
   && pass "chunked+compressed cross-impl + transpose" || { echo "  FAIL chunked"; tail -15 /tmp/lstar_chunk.log; exit 1; }
 
+echo "== Zarr v3 format (read both v2+v3; write v3; C++<->zarr-python<->R, incl. zstd-default) =="
+bash conformance/v3_format.sh >/tmp/lstar_v3.log 2>&1 \
+  && pass "v3 read+write conformant across C++/zarr-python/R" || { echo "  FAIL v3_format"; tail -20 /tmp/lstar_v3.log; exit 1; }
+
 echo "== single-file .lstar.zarr.zip parity (Python + C++ + CLI + R + JS; STORED + ZIP64) =="
 bash conformance/zip.sh >/tmp/lstar_zip.log 2>&1 \
   && pass "single-file .lstar.zarr.zip cross-surface parity" || { echo "  FAIL zip"; tail -25 /tmp/lstar_zip.log; exit 1; }
@@ -158,6 +162,10 @@ bash conformance/read_block.sh >/tmp/lstar_rb.log 2>&1 \
 echo "== R writer chunking/compression (R-written chunked+gzip == default; cross-impl) =="
 bash conformance/r_write_chunked.sh >/tmp/lstar_rwc.log 2>&1 \
   && pass "R writer emits chunked+gzip stores readable by Py/C++" || { echo "  FAIL r_write_chunked"; tail -15 /tmp/lstar_rwc.log; exit 1; }
+
+echo "== Zarr v3 on the R surface (R reads both v2+v3; writes v3; zarr-python confirms) =="
+bash conformance/v3_r.sh >/tmp/lstar_v3r.log 2>&1 \
+  && pass "v3 read+write on the R surface" || { echo "  FAIL v3_r"; tail -20 /tmp/lstar_v3r.log; exit 1; }
 
 echo "== disk-backed targets (L* -> h5ad -> backed AnnData / Seurat+BPCells / SCE+HDF5Array) =="
 bash conformance/backed_targets.sh >/tmp/lstar_bt.log 2>&1 \

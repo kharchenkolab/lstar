@@ -34,6 +34,10 @@ jobs:
       # The Python reference impl uses the zarr-python 3 library (zarr>=3.1) but still writes the
       # v2 on-disk FORMAT (zarr_format=2), so the C++/R/JS readers are unchanged. Library != format.
       - run: pip install ${{ matrix.pip }}
+      # libzstd lets the C++ core read zstd-compressed chunks -- zarr-python 3's DEFAULT v3 compressor,
+      # so it's what externally-produced v3 stores use (exercised by the v3 format leg below).
+      - name: system deps (zstd)
+        run: sudo apt-get update && sudo apt-get install -y libzstd-dev
       - name: build libstar (C++ core)
         run: cmake -S core -B core/build -DCMAKE_BUILD_TYPE=Release && cmake --build core/build -j2
       - name: binding-parity tripwire (a shared kernel bound in one surface must be bound in all)
@@ -51,6 +55,12 @@ jobs:
         run: pip install -q pytest && PYTHONPATH=python/src python3 -m pytest python/tests/test_viewer.py -q -k primary
       - name: chunked+gzip cross-impl (Python -> C++ -> Python) + transpose
         run: bash conformance/chunked.sh
+      # v3 format: C++ reads/writes v3, cross-conformant with zarr-python 3 (incl. its zstd default).
+      # latest only -- the verifier drives zarr-python's create_group/consolidate_metadata, whose API
+      # is exercised on the newest deps; the floor job still compiles all v3 code paths in the core build.
+      - name: Zarr v3 format (C++ <-> zarr-python; read both, write v3, zstd default)
+        if: matrix.tag == 'latest'
+        run: bash conformance/v3_format.sh
       - name: single-file .lstar.zarr.zip parity (Python + C++ + CLI + STORED/ZIP64 guardrails)
         run: bash conformance/zip.sh
 
@@ -110,6 +120,8 @@ jobs:
         run: bash conformance/provenance.sh
       - name: R-path fidelity (float32 value dtype + graph directed/weighted survive Py->R->Py)
         run: bash conformance/r_fidelity.sh
+      - name: Zarr v3 on the R surface (R reads both v2+v3; writes v3; zarr-python confirms)
+        run: bash conformance/v3_r.sh
       - name: single-file .lstar.zarr.zip parity (R <-> Python via the C++ core .zip dispatch)
         run: bash conformance/zip_r.sh
       - name: partial-coverage conformance (partial index over a derived union axis survives the R path)
