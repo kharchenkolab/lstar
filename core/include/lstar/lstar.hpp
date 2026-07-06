@@ -32,6 +32,11 @@
 #include "nlohmann/json.hpp"
 #pragma GCC diagnostic pop
 
+// libzarr: the header-only Zarr v2+v3 core that backs lstar's array I/O (read_array/read_array_range
+// today; the writer + consolidated orchestration next). Shares this file's vendored nlohmann/json.
+#include <libzarr/libzarr.hpp>
+#include <libzarr/adapters/filesystem_store.hpp>
+
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -303,70 +308,15 @@ inline std::vector<uint8_t> encode_chunk(const json& compressor, std::vector<uin
 // Read a (possibly chunked, possibly compressed) zarr v2 array into a contiguous C-order buffer.
 // Edge chunks are stored full-size and fill-padded; missing chunk files default to fill_value 0.
 inline NdArray read_array(const fs::path& dir) {
-    json za = read_json(dir / ".zarray");
-    if (za.contains("order") && za["order"].is_string() && za["order"].get<std::string>() != "C")
-        throw std::runtime_error("F-order array unsupported: " + dir.string());
+    // A single zarr array lives at `dir` (its .zarray + chunk files); libzarr reads it as the root of a
+    // filesystem store. Chunk decode, fill-padding, gzip, and multi-dim assembly are libzarr's job now.
+    auto store = std::make_shared<zarr::FilesystemStore>(dir, false);
+    zarr::Array za = zarr::Array::open(store, "");
     NdArray a;
-    a.dtype = za["dtype"].get<std::string>();
-    a.shape = za["shape"].get<std::vector<int64_t>>();
-    auto chunks = za["chunks"].get<std::vector<int64_t>>();
-    json compressor = za.contains("compressor") ? za["compressor"] : json(nullptr);
-    const size_t ndim = a.shape.size();
-    const size_t dsz = dtype_size(a.dtype);
-    a.bytes.assign(static_cast<size_t>(a.nelem()) * dsz, 0);  // fill_value 0
-    if (ndim == 0 || a.nelem() == 0) return a;
-
-    std::vector<int64_t> grid(ndim), ostride(ndim, 1), cstride(ndim, 1);
-    int64_t nchunks = 1, chunk_elems = 1;
-    for (size_t i = 0; i < ndim; ++i) {
-        grid[i] = (a.shape[i] + chunks[i] - 1) / chunks[i];
-        nchunks *= grid[i];
-        chunk_elems *= chunks[i];
-    }
-    for (int i = static_cast<int>(ndim) - 2; i >= 0; --i) {
-        ostride[i] = ostride[i + 1] * a.shape[i + 1];
-        cstride[i] = cstride[i + 1] * chunks[i + 1];
-    }
-
-    std::vector<int64_t> cc(ndim, 0);
-    for (int64_t ci = 0; ci < nchunks; ++ci) {
-        std::string key = std::to_string(cc[0]);
-        for (size_t i = 1; i < ndim; ++i) key += "." + std::to_string(cc[i]);
-        fs::path cf = dir / key;
-        if (fs::exists(cf)) {
-            std::vector<uint8_t> raw =
-                decode_chunk(compressor, read_bytes(cf), static_cast<size_t>(chunk_elems) * dsz);
-            raw.resize(static_cast<size_t>(chunk_elems) * dsz);  // pad a short final chunk
-
-            std::vector<int64_t> base(ndim), ext(ndim);
-            for (size_t i = 0; i < ndim; ++i) {
-                base[i] = cc[i] * chunks[i];
-                ext[i] = std::min<int64_t>(chunks[i], a.shape[i] - base[i]);
-            }
-            const int64_t runlen = ext[ndim - 1];
-            int64_t nruns = 1;
-            for (size_t i = 0; i + 1 < ndim; ++i) nruns *= ext[i];
-            std::vector<int64_t> idx(ndim, 0);
-            for (int64_t r = 0; r < nruns; ++r) {
-                int64_t src = 0, dst = base[ndim - 1];
-                for (size_t i = 0; i + 1 < ndim; ++i) {
-                    src += idx[i] * cstride[i];
-                    dst += (base[i] + idx[i]) * ostride[i];
-                }
-                std::memcpy(a.bytes.data() + static_cast<size_t>(dst) * dsz,
-                            raw.data() + static_cast<size_t>(src) * dsz,
-                            static_cast<size_t>(runlen) * dsz);
-                for (int i = static_cast<int>(ndim) - 2; i >= 0; --i) {
-                    if (++idx[i] < ext[i]) break;
-                    idx[i] = 0;
-                }
-            }
-        }
-        for (int i = static_cast<int>(ndim) - 1; i >= 0; --i) {
-            if (++cc[i] < grid[i]) break;
-            cc[i] = 0;
-        }
-    }
+    a.dtype = zarr::v2::emit_dtype(za.meta().dtype, /*big_endian=*/false);  // little-endian, C-order (lstar always)
+    a.shape.assign(za.meta().shape.begin(), za.meta().shape.end());          // uint64 -> int64
+    a.bytes.resize(za.nbytes());
+    if (!a.bytes.empty()) za.read(a.bytes.data(), a.bytes.size());
     return a;
 }
 
@@ -376,35 +326,22 @@ inline NdArray read_array(const fs::path& dir) {
 // (When the array was written as a single chunk -- the unchunked default -- this still decodes that
 // one chunk, so bounded streaming needs a chunked store, e.g. one written with chunk_elems set.)
 inline NdArray read_array_range(const fs::path& dir, int64_t lo, int64_t hi) {
-    json za = read_json(dir / ".zarray");
-    if (za.contains("order") && za["order"].is_string() && za["order"].get<std::string>() != "C")
-        throw std::runtime_error("F-order array unsupported: " + dir.string());
-    auto shape = za["shape"].get<std::vector<int64_t>>();
-    if (shape.size() != 1) throw std::runtime_error("read_array_range: 1-D only: " + dir.string());
-    const int64_t n = shape[0];
-    const int64_t cs = za["chunks"].get<std::vector<int64_t>>()[0];
-    json compressor = za.contains("compressor") ? za["compressor"] : json(nullptr);
-    NdArray a;
-    a.dtype = za["dtype"].get<std::string>();
-    const size_t dsz = dtype_size(a.dtype);
+    // Elements [lo, hi) of a 1-D array. libzarr's read_region reads only the overlapping chunks (decoding
+    // each), padding missing chunks with fill 0 -- the same bounded read the hand-rolled loop did.
+    auto store = std::make_shared<zarr::FilesystemStore>(dir, false);
+    zarr::Array za = zarr::Array::open(store, "");
+    if (za.meta().shape.size() != 1) throw std::runtime_error("read_array_range: 1-D only: " + dir.string());
+    const int64_t n = static_cast<int64_t>(za.meta().shape[0]);
     lo = std::max<int64_t>(0, lo);
     hi = std::min<int64_t>(n, hi);
     const int64_t len = std::max<int64_t>(0, hi - lo);
+    NdArray a;
+    a.dtype = zarr::v2::emit_dtype(za.meta().dtype, /*big_endian=*/false);
     a.shape = {len};
-    a.bytes.assign(static_cast<size_t>(len) * dsz, 0);   // fill_value 0 for any missing chunk
+    const size_t dsz = za.meta().dtype.itemsize;
+    a.bytes.assign(static_cast<size_t>(len) * dsz, 0);
     if (len == 0) return a;
-    for (int64_t ci = lo / cs; ci <= (hi - 1) / cs; ++ci) {
-        const int64_t cstart = ci * cs;
-        const int64_t s = std::max(lo, cstart), e = std::min(hi, cstart + cs);  // overlap [s,e)
-        fs::path cf = dir / std::to_string(ci);
-        if (e <= s || !fs::exists(cf)) continue;
-        std::vector<uint8_t> raw =
-            decode_chunk(compressor, read_bytes(cf), static_cast<size_t>(cs) * dsz);
-        raw.resize(static_cast<size_t>(cs) * dsz);       // pad a short final chunk
-        std::memcpy(a.bytes.data() + static_cast<size_t>(s - lo) * dsz,
-                    raw.data() + static_cast<size_t>(s - cstart) * dsz,
-                    static_cast<size_t>(e - s) * dsz);
-    }
+    za.read_region({static_cast<std::uint64_t>(lo)}, {static_cast<std::uint64_t>(len)}, a.bytes.data(), a.bytes.size());
     return a;
 }
 
