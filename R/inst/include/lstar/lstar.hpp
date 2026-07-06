@@ -215,6 +215,15 @@ inline void write_bytes(const fs::path& p, const uint8_t* b, size_t n) {
 }
 inline json read_json(const fs::path& p) { return json::parse(read_text(p)); }
 
+// A group's user attributes, format-agnostically: libzarr's Group::open probes v3 (zarr.json's
+// "attributes") before v2 (.zattrs), so lstar reads either format's stores without branching. Opening a
+// fresh FilesystemStore rooted at the group dir mirrors read_array's per-node pattern; the root group
+// reads through .zmetadata/inline-consolidated when present, subgroups read their local metadata.
+inline json read_group_attrs(const fs::path& dir) {
+    auto store = std::make_shared<zarr::FilesystemStore>(dir, /*create=*/false);
+    return zarr::Group::open(store, "").attributes();
+}
+
 // chunk key for an all-zero chunk index: "0" (1-D), "0.0" (2-D), ...
 inline std::string zero_chunk_key(size_t ndim) {
     std::string k = "0";
@@ -364,14 +373,16 @@ inline std::vector<int64_t> chunk_shape_for(const std::vector<int64_t>& shape, i
 // is a contiguous byte range of the C-order buffer -- no scatter; edge chunks are full-size,
 // fill-padded per the v2 spec.
 inline void write_array(const fs::path& dir, const NdArray& a,
-                        int64_t chunk_elems = 0, const json& compressor = json(nullptr)) {
-    // libzarr writes the .zarray + chunks (v2). chunk_shape_for keeps lstar's first-axis-only chunking
-    // and single-chunk default; separator '.' + fill 0 match lstar's existing layout. Canonical metadata
-    // formatting differs from the old hand-rolled dump, but readers are value-based (conformance checks
-    // values, not store bytes).
+                        int64_t chunk_elems = 0, const json& compressor = json(nullptr),
+                        zarr::ZarrFormat fmt = zarr::ZarrFormat::v2) {
+    // libzarr writes the array metadata + chunks in `fmt` (v2 .zarray, or v3 zarr.json).
+    // chunk_shape_for keeps lstar's first-axis-only chunking and single-chunk default; fill 0 matches
+    // lstar's layout. For v3, libzarr prepends the required `bytes` codec and uses the 'default' chunk-key
+    // encoding ('/'), so the same compressor spec + dtype carry over. Canonical metadata formatting differs
+    // from the old hand-rolled dump, but readers are value-based (conformance checks values, not store bytes).
     auto store = std::make_shared<zarr::FilesystemStore>(dir, /*create=*/true);
     zarr::ArraySpec spec;
-    spec.format = zarr::ZarrFormat::v2;
+    spec.format = fmt;
     spec.shape.assign(a.shape.begin(), a.shape.end());
     const std::vector<int64_t> chunks = chunk_shape_for(a.shape, chunk_elems);
     spec.chunks.assign(chunks.begin(), chunks.end());
@@ -402,7 +413,8 @@ inline std::vector<std::string> read_strings(const fs::path& gdir, const std::st
 
 inline void write_strings(const fs::path& gdir, const std::string& name,
                           const std::vector<std::string>& strs,
-                          int64_t chunk_elems = 0, const json& compressor = json(nullptr)) {
+                          int64_t chunk_elems = 0, const json& compressor = json(nullptr),
+                          zarr::ZarrFormat fmt = zarr::ZarrFormat::v2) {
     std::vector<int64_t> off(strs.size() + 1, 0);
     std::string buf;
     for (size_t i = 0; i < strs.size(); ++i) {
@@ -418,25 +430,33 @@ inline void write_strings(const fs::path& gdir, const std::string& name,
     offsets.shape = {static_cast<int64_t>(off.size())};
     offsets.bytes.resize(off.size() * 8);
     std::memcpy(offsets.bytes.data(), off.data(), off.size() * 8);
-    write_array(gdir / name, data, chunk_elems, compressor);
-    write_array(gdir / (name + "_offsets"), offsets, chunk_elems, compressor);
+    write_array(gdir / name, data, chunk_elems, compressor, fmt);
+    write_array(gdir / (name + "_offsets"), offsets, chunk_elems, compressor, fmt);
 }
 
 // ------------------------------------------------------------ group IO ------
 
-inline void write_group(const fs::path& dir, const json& attrs) {
+inline void write_group(const fs::path& dir, const json& attrs,
+                        zarr::ZarrFormat fmt = zarr::ZarrFormat::v2) {
     fs::create_directories(dir);
-    write_text(dir / ".zgroup", json{{"zarr_format", 2}}.dump());
-    write_text(dir / ".zattrs", attrs.dump());
+    if (fmt == zarr::ZarrFormat::v2) {                    // v2: hand-write .zgroup + .zattrs (proven default path)
+        write_text(dir / ".zgroup", json{{"zarr_format", 2}}.dump());
+        write_text(dir / ".zattrs", attrs.dump());
+    } else {                                              // v3: libzarr emits zarr.json (node_type + attributes)
+        auto store = std::make_shared<zarr::FilesystemStore>(dir, /*create=*/true);
+        zarr::Group g = zarr::Group::create(store, "", zarr::ZarrFormat::v3);
+        g.set_attributes(attrs);
+    }
 }
 
-// Walk a finished store and emit a consolidated .zmetadata (so zarr.open_consolidated works and
-// the metadata is one read instead of many small stats).
-inline void consolidate_metadata(const fs::path& root) {
-    // libzarr emits .zmetadata deterministically, parent-before-child. (The old fs-walk order was a
-    // latent hazard for strict consolidated readers -- the class of bug we hit on the JS writer side.)
+// Walk a finished store and emit consolidated metadata (so a reader gets the tree in one read instead
+// of many small stats): v2 -> a `.zmetadata` document; v3 -> the inline convention in root zarr.json.
+inline void consolidate_metadata(const fs::path& root, zarr::ZarrFormat fmt = zarr::ZarrFormat::v2) {
+    // libzarr emits deterministically, parent-before-child. (The old fs-walk order was a latent hazard
+    // for strict consolidated readers -- the class of bug we hit on the JS writer side.)
     zarr::FilesystemStore store(root, /*create=*/false);
-    zarr::v2::consolidate(store);
+    if (fmt == zarr::ZarrFormat::v2) zarr::v2::consolidate(store);
+    else zarr::v3::consolidate(store);
 }
 
 inline std::string opt_str(const json& m, const char* k) {
@@ -676,7 +696,7 @@ inline Dataset read(const fs::path& root) {
             return ds;
         } catch (...) { std::error_code ec; fs::remove_all(tmp, ec); throw; }
     }
-    json rmeta = read_json(root / ".zattrs")["lstar"];
+    json rmeta = read_group_attrs(root)["lstar"];
     Dataset ds;
     ds.kind = rmeta.value("kind", std::string("sample"));
     ds.spec_version = rmeta.value("spec_version", std::string("0.1"));
@@ -686,7 +706,7 @@ inline Dataset read(const fs::path& root) {
     for (auto& an : rmeta["axes"]) {
         std::string name = an.get<std::string>();
         fs::path g = root / "axes" / name;
-        json m = read_json(g / ".zattrs")["lstar"];
+        json m = read_group_attrs(g)["lstar"];
         Axis a;
         a.name = name;
         a.origin = m.value("origin", std::string("observed"));
@@ -700,7 +720,7 @@ inline Dataset read(const fs::path& root) {
     for (auto& fn : rmeta["fields"]) {
         std::string name = fn.get<std::string>();
         fs::path g = root / "fields" / name;
-        json m = read_json(g / ".zattrs")["lstar"];
+        json m = read_group_attrs(g)["lstar"];
         Field f;
         f.name = name;
         f.role = opt_str(m, "role");
@@ -754,7 +774,7 @@ inline Dataset read(const fs::path& root) {
             fs::path g = root / "passthrough" / ns;
             Aux ax;
             ax.ns = ns;
-            ax.attrs = read_json(g / ".zattrs")["lstar"];
+            ax.attrs = read_group_attrs(g)["lstar"];
             if (ax.attrs.contains("arrays") && !ax.attrs["arrays"].is_null()) {
                 for (auto& a : ax.attrs["arrays"]) {
                     AuxLeaf leaf;
@@ -772,11 +792,12 @@ inline Dataset read(const fs::path& root) {
 }
 
 inline void write(const Dataset& ds, const fs::path& root,
-                  int64_t chunk_elems = 0, const json& compressor = json(nullptr)) {
+                  int64_t chunk_elems = 0, const json& compressor = json(nullptr),
+                  zarr::ZarrFormat fmt = zarr::ZarrFormat::v2) {
     if (root.extension() == ".zip") {                 // single-file .lstar.zarr.zip: write a dir, pack STORED
         fs::path tmp = unique_temp_dir("lstar_zip_");
         try {
-            write(ds, tmp, chunk_elems, compressor);  // recurse into the directory path (writes + consolidates)
+            write(ds, tmp, chunk_elems, compressor, fmt);  // recurse into the directory path (writes + consolidates)
             pack_stored_zip(tmp, root);
             fs::remove_all(tmp);
             return;
@@ -798,10 +819,10 @@ inline void write(const Dataset& ds, const fs::path& root,
     std::vector<std::string> auxnames;
     for (auto& a : ds.aux) auxnames.push_back(a.ns);
     rl["passthrough"] = auxnames;
-    write_group(root, json{{"lstar", rl}});
-    write_group(root / "axes", json::object());
-    write_group(root / "fields", json::object());
-    write_group(root / "models", json::object());
+    write_group(root, json{{"lstar", rl}}, fmt);
+    write_group(root / "axes", json::object(), fmt);
+    write_group(root / "fields", json::object(), fmt);
+    write_group(root / "models", json::object(), fmt);
 
     for (auto& a : ds.axes) {
         fs::path g = root / "axes" / a.name;
@@ -811,8 +832,8 @@ inline void write(const Dataset& ds, const fs::path& root,
         al["role"] = a.role.empty() ? json(nullptr) : json(a.role);
         al["induced_by"] = a.induced_by.empty() ? json(nullptr) : json(a.induced_by);
         al["provenance"] = a.provenance;
-        write_group(g, json{{"lstar", al}});
-        write_strings(g, "labels", a.labels, chunk_elems, compressor);
+        write_group(g, json{{"lstar", al}}, fmt);
+        write_strings(g, "labels", a.labels, chunk_elems, compressor, fmt);
     }
 
     for (auto& f : ds.fields) {
@@ -839,35 +860,35 @@ inline void write(const Dataset& ds, const fs::path& root,
         }
         if (!(f.encoding == "csr" || f.encoding == "csc" || f.encoding == "utf8" || f.encoding == "categorical"))
             fl["shape"] = f.dense.shape;   // dense: shape in the manifest too (parity; a reader shouldn't need values/.zarray)
-        write_group(g, json{{"lstar", fl}});
+        write_group(g, json{{"lstar", fl}}, fmt);
         if (f.encoding == "csr" || f.encoding == "csc") {
-            write_array(g / "data", f.data, chunk_elems, compressor);
-            write_array(g / "indices", f.indices, chunk_elems, compressor);
-            write_array(g / "indptr", f.indptr, chunk_elems, compressor);
+            write_array(g / "data", f.data, chunk_elems, compressor, fmt);
+            write_array(g / "indices", f.indices, chunk_elems, compressor, fmt);
+            write_array(g / "indptr", f.indptr, chunk_elems, compressor, fmt);
         } else if (f.encoding == "utf8") {
-            write_strings(g, "values", f.strings, chunk_elems, compressor);
+            write_strings(g, "values", f.strings, chunk_elems, compressor, fmt);
         } else if (f.encoding == "categorical") {
-            write_array(g / "codes", f.codes, chunk_elems, compressor);
-            write_strings(g, "categories", f.categories, chunk_elems, compressor);  // inline (P1)
+            write_array(g / "codes", f.codes, chunk_elems, compressor, fmt);
+            write_strings(g, "categories", f.categories, chunk_elems, compressor, fmt);  // inline (P1)
         } else {
-            write_array(g / "values", f.dense, chunk_elems, compressor);
+            write_array(g / "values", f.dense, chunk_elems, compressor, fmt);
         }
-        if (f.has_mask) write_array(g / "mask", f.mask, chunk_elems, compressor);
-        if (f.has_index) write_array(g / "index", f.index, chunk_elems, compressor);
+        if (f.has_mask) write_array(g / "mask", f.mask, chunk_elems, compressor, fmt);
+        if (f.has_index) write_array(g / "index", f.index, chunk_elems, compressor, fmt);
     }
 
     if (!ds.aux.empty()) {                                            // verbatim passthrough subtree
-        write_group(root / "passthrough", json::object());
+        write_group(root / "passthrough", json::object(), fmt);
         for (auto& ax : ds.aux) {
             fs::path g = root / "passthrough" / ax.ns;
-            write_group(g, json{{"lstar", ax.attrs}});
+            write_group(g, json{{"lstar", ax.attrs}}, fmt);
             for (auto& leaf : ax.leaves) {
-                if (leaf.kind == "utf8") write_strings(g, leaf.id, leaf.strings, chunk_elems, compressor);
-                else write_array(g / leaf.id, leaf.dense, chunk_elems, compressor);
+                if (leaf.kind == "utf8") write_strings(g, leaf.id, leaf.strings, chunk_elems, compressor, fmt);
+                else write_array(g / leaf.id, leaf.dense, chunk_elems, compressor, fmt);
             }
         }
     }
-    consolidate_metadata(root);
+    consolidate_metadata(root, fmt);
 }
 
 // ---------------------------------------------------- translation primitives --
@@ -1020,7 +1041,7 @@ struct CscBlock {
     int64_t nrows = 0, ncols = 0;     // nrows = #cells; ncols = g_hi-g_lo (genes in the block)
 };
 inline CscBlock read_csc_block(const fs::path& field_group, int64_t g_lo, int64_t g_hi) {
-    json m = read_json(field_group / ".zattrs")["lstar"];
+    json m = read_group_attrs(field_group)["lstar"];
     if (opt_str(m, "encoding") != "csc")
         throw std::runtime_error("read_csc_block: field is not CSC (gene-major)");
     auto shape = m["shape"].get<std::vector<int64_t>>();
@@ -1086,7 +1107,7 @@ struct ChunkReader {
 // for scattered columns). `cols` must be sorted ascending and unique (the R wrapper enforces this and
 // restores the caller's order). Returns the gathered columns as their own CSC arrays.
 inline CscBlock read_csc_cols(const fs::path& field_group, const std::vector<int64_t>& cols) {
-    json m = read_json(field_group / ".zattrs")["lstar"];
+    json m = read_group_attrs(field_group)["lstar"];
     if (opt_str(m, "encoding") != "csc")
         throw std::runtime_error("read_csc_cols: field is not CSC (gene-major)");
     auto shape = m["shape"].get<std::vector<int64_t>>();
@@ -1129,7 +1150,7 @@ inline ColStats stream_csc_col_mean_var(const fs::path& field_group, int64_t blo
                                         int n_threads = 0, bool lognorm = false,
                                         const std::vector<double>* depth = nullptr,
                                         double depthScale = 1.0, bool population = false) {
-    json m = read_json(field_group / ".zattrs")["lstar"];
+    json m = read_group_attrs(field_group)["lstar"];
     if (opt_str(m, "encoding") != "csc")
         throw std::runtime_error("stream_csc_col_mean_var: field is not CSC (need gene-major)");
     auto shape = m["shape"].get<std::vector<int64_t>>();
@@ -1414,7 +1435,7 @@ inline void sum_by_group_block_dispatch(const NdArray& data, const int64_t* lind
 inline std::vector<double> stream_csc_col_sum_by_group(const fs::path& field_group,
         const std::vector<int>& group_of_cell, int ngroups, bool lognorm,
         const std::vector<double>* depth, double depthScale, int64_t block, int n_threads) {
-    json m = read_json(field_group / ".zattrs")["lstar"];
+    json m = read_group_attrs(field_group)["lstar"];
     if (opt_str(m, "encoding") != "csc")
         throw std::runtime_error("stream_csc_col_sum_by_group: field is not CSC (need gene-major)");
     auto shape = m["shape"].get<std::vector<int64_t>>();

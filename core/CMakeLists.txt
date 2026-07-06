@@ -20,6 +20,20 @@ if(ZLIB_FOUND)
   target_compile_definitions(lstar INTERFACE LSTAR_HAVE_ZLIB LIBZARR_HAS_ZLIB)
 endif()
 
+# zstd enables reading zstd-compressed chunks -- zarr-python 3's DEFAULT compressor, so it's what
+# externally-produced v3 (and many v2) stores use. Optional: absent -> lstar reads gzip/none stores
+# fine and throws a clear "compile with LIBZARR_HAS_ZSTD" error only on an actual zstd chunk.
+find_library(ZSTD_LIBRARY NAMES zstd)
+find_path(ZSTD_INCLUDE_DIR NAMES zstd.h)
+if(ZSTD_LIBRARY AND ZSTD_INCLUDE_DIR)
+  target_include_directories(lstar INTERFACE ${ZSTD_INCLUDE_DIR})
+  target_link_libraries(lstar INTERFACE ${ZSTD_LIBRARY})
+  target_compile_definitions(lstar INTERFACE LIBZARR_HAS_ZSTD)
+  message(STATUS "lstar: zstd codec enabled (${ZSTD_LIBRARY})")
+else()
+  message(STATUS "lstar: zstd not found; zstd-compressed stores will be unreadable")
+endif()
+
 # OpenMP for the translation primitives.
 find_package(OpenMP)
 if(OpenMP_CXX_FOUND)
@@ -59,6 +73,12 @@ add_executable(test_zip test/test_zip.cpp)
 target_link_libraries(test_zip PRIVATE lstar)
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 11)
   target_link_libraries(test_zip PRIVATE stdc++fs)
+endif()
+
+add_executable(test_v3 test/test_v3.cpp)
+target_link_libraries(test_v3 PRIVATE lstar)
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 11)
+  target_link_libraries(test_v3 PRIVATE stdc++fs)
 endif()
 
 enable_testing()
