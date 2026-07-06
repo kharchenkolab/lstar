@@ -29,7 +29,14 @@ NODE="$(ls -d "$EMSDK"/node/*/bin/node 2>/dev/null | head -1)"; NODE="${NODE:-$(
 if [ -n "$NODE" ] && [ -f "$ROOT/js/dist/lstar_io.mjs" ]; then
   python3 "$ROOT/js/test/io_dump.py" "$SH" /tmp/v3sh_dump.json >/dev/null
   "$NODE" "$ROOT/js/test/io_parity.mjs" "$SH" /tmp/v3sh_dump.json
+  # 4. byte-range hot path (cscColumn): on UNCOMPRESSED unsharded vs sharded stores of the same data, the
+  #    reader must return identical nonzeros (a sharded array's chunks live inside shard objects, so the
+  #    plain chunk-key range read is skipped in favour of a correct read).
+  UNS=/tmp/v3sh_rawun.lstar.zarr; SHR=/tmp/v3sh_rawsh.lstar.zarr
+  "$BIN" rawchunk "$SEED" "$UNS"
+  "$BIN" rawshard "$SEED" "$SHR"
+  "$NODE" --experimental-strip-types "$ROOT/js/test/shard_range.mjs" "$UNS" "$SHR" 2>/dev/null
 else
-  echo "  [skip] no node / WASM dist — WASM sharded-read leg skipped"
+  echo "  [skip] no node / WASM dist — WASM sharded-read legs skipped"
 fi
-echo "  v3 sharding: write + read conformant across C++, zarr-python, and the WASM reader"
+echo "  v3 sharding: write + read conformant across C++, zarr-python, and the WASM reader (byte-range correct)"

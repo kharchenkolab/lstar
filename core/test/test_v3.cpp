@@ -69,6 +69,10 @@ int main(int argc, char** argv) {
         write(A, b, /*chunk_elems*/1000, gz, zarr::ZarrFormat::v3, /*shard_elems*/4000);
         Dataset B = read(b);
         cmp(A, B);
+    } else if (mode == "rawchunk") {                     // uncompressed chunked v3 (byte-range fast path reference)
+        write(read(a), b, /*chunk_elems*/500, json(nullptr), zarr::ZarrFormat::v3, /*shard_elems*/0);
+    } else if (mode == "rawshard") {                     // uncompressed chunked+SHARDED v3 (byte-range through shards)
+        write(read(a), b, /*chunk_elems*/500, json(nullptr), zarr::ZarrFormat::v3, /*shard_elems*/2000);
     } else if (mode == "compare") {                      // read both -> compare (either format)
         cmp(read(a), read(b));
     } else { std::cerr << "unknown mode: " << mode << "\n"; return 2; }

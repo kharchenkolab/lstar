@@ -322,10 +322,12 @@ export class LstarDataset {
    */
   private async _readRange(arrPath: string, lo: number, hi: number): Promise<any> {
     if (typeof this.store.getRange === "function" && hi > lo) {
-      const info = await this.src.arrayInfo(arrPath);      // {dtype, itemsize, chunkShape, uncompressed} — v2 or v3
+      const info = await this.src.arrayInfo(arrPath);      // {dtype, itemsize, chunkShape, uncompressed, sharded} — v2 or v3
       const dt = DTYPE[info.dtype];
       const oneD = info.chunkShape.length === 1 && info.chunkShape[0] > 0;
-      if (dt && oneD && info.uncompressed) {
+      // a sharded array's chunks live inside shard objects, so the plain chunk-key range read doesn't
+      // map 1:1 — fall through to the (correct) whole-array read via libzarr's transparent ShardStore.
+      if (dt && oneD && info.uncompressed && !info.sharded) {
         const [ctor, isize] = dt;
         const chunkLen = info.chunkShape[0];
         const ci = Math.floor(lo / chunkLen);

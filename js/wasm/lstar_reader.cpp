@@ -110,6 +110,10 @@ class Reader {
         for (size_t i = 0; i < a.meta().chunk_shape.size(); ++i) cs.set(i, (double)a.meta().chunk_shape[i]);
         out.set("chunkShape", cs);
         out.set("uncompressed", raw);
+        // A sharded array's inner chunks live INSIDE shard objects, so the plain chunk-key byte-range
+        // fast path does not apply; the reader falls back to a whole-array read (correct) unless the JS
+        // shard-resolve path is used. (sharding_indexed is lowered into shard_levels, not codecs.)
+        out.set("sharded", !a.meta().shard_levels.empty());
         return out;
     }
 

@@ -104,8 +104,8 @@ export class WasmSource {
   // The byte-range fast path's descriptor for an array (dtype, itemsize, chunk shape, uncompressed) —
   // format-agnostic (v2/v3), computed by libzarr. Cached per path (a gene panel reads many columns of
   // the same array). Metadata only; no chunk reads.
-  private _info = new Map<string, { dtype: string; itemsize: number; chunkShape: number[]; uncompressed: boolean }>();
-  async arrayInfo(path: string): Promise<{ dtype: string; itemsize: number; chunkShape: number[]; uncompressed: boolean }> {
+  private _info = new Map<string, { dtype: string; itemsize: number; chunkShape: number[]; uncompressed: boolean; sharded: boolean }>();
+  async arrayInfo(path: string): Promise<{ dtype: string; itemsize: number; chunkShape: number[]; uncompressed: boolean; sharded: boolean }> {
     let v = this._info.get(path);
     if (!v) { await this._ensure(path); v = this.reader.arrayInfo(path); this._info.set(path, v!); }
     return v!;
