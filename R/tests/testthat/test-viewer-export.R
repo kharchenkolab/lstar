@@ -60,8 +60,9 @@ test_that("write_seurat / .lstar_drop_cache drop viewer@0.1 cache navigators, ke
 })
 
 # extend_for_viewer selects the count basis by STATE, not the literal name "counts": a raw measure
-# named otherwise is auto-picked; no raw basis gives a clear error; basis="lognorm" preps from a log
-# measure. (Regression for the anndata-class bug where converters named the raw matrix `X`/modality.)
+# named otherwise is auto-picked; with no raw, basis="auto" FALLS BACK to a log-normalized measure (with
+# a warning); a scaled-only store gives a clear error (scaled is never a basis). Identical contract to
+# Python/JS. (Regression for the anndata-class bug where converters named the raw matrix `X`/modality.)
 test_that("extend_for_viewer selects basis by state (not the name 'counts')", {
   skip_if_not_installed("Matrix")
   set.seed(2); nc <- 60L; ng <- 20L
@@ -79,9 +80,12 @@ test_that("extend_for_viewer selects basis by state (not the name 'counts')", {
   d <- extend_for_viewer(mk("raw"), grouping = "leiden")
   expect_false(is.null(d$fields[["od_score"]]))
   expect_false(is.null(d$fields[["counts_cellmajor"]]))
-  # no raw basis -> clear, actionable error (not a bare "no counts measure")
-  expect_error(extend_for_viewer(mk("scaled"), grouping = "leiden"), "no raw counts measure")
-  # opt-in lognorm basis
+  # a scaled-only measure cannot be a viewer basis -> clear error; auto NEVER falls into it
+  expect_error(extend_for_viewer(mk("scaled"), grouping = "leiden"), "no raw or log-normalized measure")
+  # no raw, but a lognorm measure present -> auto FALLS BACK to lognorm (with a warning), does not error
+  expect_warning(d2 <- extend_for_viewer(mk("lognorm"), grouping = "leiden"), "log-normalized")
+  expect_equal(d2$fields[["counts_cellmajor"]]$state, "lognorm")
+  # opt-in explicit lognorm basis (no warning)
   d3 <- extend_for_viewer(mk("lognorm"), grouping = "leiden", basis = "lognorm")
   expect_equal(d3$fields[["counts_cellmajor"]]$state, "lognorm")
 })

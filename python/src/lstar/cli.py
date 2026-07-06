@@ -357,7 +357,7 @@ def _read_dataset(src: str, ff: str, backend: str = "auto"):
 
 
 def convert(src: str, dst: str, from_fmt: str | None = None, to_fmt: str | None = None,
-            backend: str = "auto", viewer: bool = False):
+            backend: str = "auto", viewer: bool = False, basis: str = "auto", counts: str | None = None):
     """Convert *src* → *dst*. Returns ``(ds, from_fmt, to_fmt)`` with the bridging L* dataset.
 
     Python-side ↔ Python-side runs in-process; any leg in R (Seurat/SCE) is bridged through a temporary
@@ -376,7 +376,7 @@ def convert(src: str, dst: str, from_fmt: str | None = None, to_fmt: str | None 
     if not src_r and not dst_r:                    # in-process Python path
         ds = _load_py(src, ff, backend)
         if viewer:
-            lstar.extend_for_viewer(ds)
+            lstar.extend_for_viewer(ds, basis=basis, counts=counts)
         _emit_py(ds, dst, tf, backend)
         return ds, ff, tf
     if not os.path.exists(src):
@@ -393,7 +393,7 @@ def convert(src: str, dst: str, from_fmt: str | None = None, to_fmt: str | None 
             _r_write_from_store(bridge, dst, tf, backend)
         else:
             if viewer:                              # R source -> store --viewer: extend before emit
-                lstar.extend_for_viewer(ds)
+                lstar.extend_for_viewer(ds, basis=basis, counts=counts)
             _emit_py(ds, dst, tf, backend)
         return ds, ff, tf
     finally:
@@ -506,6 +506,11 @@ def main(argv=None) -> int:
     c.add_argument("--viewer", action="store_true",
                    help="when the target is a store, extend it with the lstar-viewer precomputed "
                         "fields (counts_cellmajor, per-group stats + markers, od_score, hybrid order)")
+    c.add_argument("--basis", choices=("auto", "raw", "lognorm"), default="auto",
+                   help="viewer prep basis: auto [default] uses raw counts if present, else falls back "
+                        "to a log-normalized measure; raw/lognorm force one")
+    c.add_argument("--counts", default=None, metavar="FIELD",
+                   help="force the viewer count measure (else chosen by --basis)")
     c.add_argument("--report", action="store_true", help="print the full fidelity report")
     c.add_argument("--report-json", dest="report_json", metavar="FILE", default=None,
                    help="write the fidelity report as JSON to FILE")
@@ -521,6 +526,11 @@ def main(argv=None) -> int:
     vw.add_argument("store", help="a *.lstar.zarr store to extend in place")
     vw.add_argument("--grouping", default=None, help="primary grouping label (default: auto-detect)")
     vw.add_argument("--also", nargs="*", default=[], help="additional grouping labels to summarize")
+    vw.add_argument("--basis", choices=("auto", "raw", "lognorm"), default="auto",
+                    help="prep basis: auto [default] uses raw counts if present, else a log-normalized "
+                         "measure; raw/lognorm force one")
+    vw.add_argument("--counts", default=None, metavar="FIELD",
+                    help="force the count measure (else chosen by --basis)")
     vw.add_argument("-q", "--quiet", action="store_true", help="suppress the summary")
 
     i = sub.add_parser("inspect", help="read SRC and report its L* structure (no write)")
@@ -535,7 +545,8 @@ def main(argv=None) -> int:
     try:
         if args.cmd == "convert":
             ds, ff, tf = convert(args.src, args.dst, args.from_fmt, args.to_fmt, args.backend,
-                                 viewer=getattr(args, "viewer", False))
+                                 viewer=getattr(args, "viewer", False),
+                                 basis=getattr(args, "basis", "auto"), counts=getattr(args, "counts", None))
             rep = build_report(ds, args.src, ff, args.dst, tf)
             nc = None
             if args.check:
@@ -557,7 +568,7 @@ def main(argv=None) -> int:
             import lstar
             ds = lstar.read(args.store)
             groupings = ([args.grouping] + list(args.also)) if args.grouping else (list(args.also) or None)
-            lstar.extend_for_viewer(ds, groupings=groupings)
+            lstar.extend_for_viewer(ds, groupings=groupings, basis=args.basis, counts=args.counts)
             lstar.write(ds, args.store)
             if not args.quiet:
                 added = [n for n in ds.fields if n.startswith(("stats_", "markers_", "counts_cellmajor", "od_score"))]

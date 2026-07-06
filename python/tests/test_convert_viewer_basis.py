@@ -64,14 +64,30 @@ def test_raw_X_becomes_counts():
 
 # ---- the reported bug: no-counts file must fail CLEARLY, and be preppable via basis="lognorm" ----
 
-def test_no_counts_gives_clear_error():
+def test_auto_falls_back_to_lognorm():
+    # scaled .X + lognorm .raw, NO counts: the default (basis='auto') now falls back to the lognorm
+    # measure — with a warning — instead of erroring, so `--viewer` works on a scanpy .h5ad that kept
+    # only normalized values. (var-of-lognorm stats are approximate; the warning says so.)
     ds = lstar.read_anndata(_pbmc_like())
+    with pytest.warns(UserWarning, match="log-normalized"):
+        lstar.extend_for_viewer(ds, order="none")
+    assert "od_score" in ds.fields
+    assert ds.field("od_score").provenance.get("basis") == "lognorm-input"
+    assert ds.field("counts_cellmajor").state == "lognorm"
+
+
+def test_scaled_only_gives_clear_error():
+    # a store whose ONLY measure is scaled/z-scored (no raw, no lognorm) cannot be a viewer basis
+    # (log1p on negatives is meaningless) -> a clear error that lists what is present and says why.
+    rng = np.random.default_rng(0)
+    a = ad.AnnData(X=rng.normal(size=(120, 40)).astype("float32"))     # negatives -> scaled, named "X"
+    a.obs["leiden"] = np.array([str(i % 3) for i in range(120)])
+    ds = lstar.read_anndata(a)
     with pytest.raises(ValueError) as e:
         lstar.extend_for_viewer(ds)
     msg = str(e.value)
-    assert "no raw counts measure" in msg
-    assert "X[scaled]" in msg and "raw[lognorm]" in msg     # lists what IS present
-    assert "basis='lognorm'" in msg                         # and the actionable escape hatch
+    assert "no raw or log-normalized measure" in msg
+    assert "scaled" in msg                                             # explains why it cannot be used
 
 
 def test_lognorm_basis_fallback():

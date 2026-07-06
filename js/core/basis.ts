@@ -22,24 +22,37 @@ export function selectCountsBasis(ds: DatasetLike, opts: { counts?: string; basi
     return !!f && f.role === "measure" && Array.isArray(f.span) && f.span.length === 2 && String(f.span[0]).startsWith("cells");
   });
   const present = twod.map((n) => `${n}[${ds.field(n)!.state ?? "?"}]`).join(", ") || "(none)";
+  const rawPick = () => (twod.includes("counts") ? "counts" : twod.find((n) => ds.field(n)!.state === "raw"));
+  // name fallback EXCLUDES a scaled/z-scored measure (a scaled `X` is not lognorm).
+  const lognormPick = () => twod.find((n) => ds.field(n)!.state === "lognorm")
+    ?? twod.find((n) => LOGNORM_NAMES.includes(n) && ds.field(n)!.state !== "scaled");
 
-  // explicit measure — honour it; log1p unless it (or basis=) says the values are already log-normalized.
+  // explicit measure — honour it; log1p unless the values are already log-normalized.
   if (counts != null) {
     const f = ds.field(counts);
     if (!f) throw new Error(`extendForViewer: counts="${counts}" is not a measure (present cells×genes measures: ${present})`);
-    return { field: counts, log1p: basis !== "lognorm" && f.state !== "lognorm" };
+    return { field: counts, log1p: f.state !== "lognorm" };
   }
-  // explicit lognorm basis — a log-normalized measure (by state, else the usual names), used as-is.
-  if (basis === "lognorm") {
-    const pick = twod.find((n) => ds.field(n)!.state === "lognorm") ?? twod.find((n) => LOGNORM_NAMES.includes(n));
-    if (!pick) throw new Error(`extendForViewer: basis="lognorm" but no log-normalized measure found (present: ${present})`);
+  const b = basis ?? "auto";
+  if (b === "raw") {
+    const pick = rawPick();
+    if (!pick) throw new Error(`extendForViewer: basis="raw" but no raw counts measure found (present cells×genes measures: ${present}).`);
+    return { field: pick, log1p: true };
+  }
+  if (b === "lognorm") {
+    const pick = lognormPick();
+    if (!pick) throw new Error(`extendForViewer: basis="lognorm" but no log-normalized measure found (present cells×genes measures: ${present}).`);
     return { field: pick, log1p: false };
   }
-  // default: a measure named "counts", else any raw-state measure; log1p'd.
-  const pick = (twod.includes("counts") ? "counts" : undefined) ?? twod.find((n) => ds.field(n)!.state === "raw");
-  if (pick) return { field: pick, log1p: true };
-  throw new Error(
-    `extendForViewer: not viewer-optimizable — no raw counts measure found (present cells×genes measures: ${present}). ` +
-    `Viewer prep needs raw counts; pass counts=<field>, provide a raw-counts measure, or pass ` +
-    `basis="lognorm" to prep (approximately) from a log-normalized measure.`);
+  if (b === "auto") {
+    const raw = rawPick();
+    if (raw) return { field: raw, log1p: true };            // prefer raw (log1p)
+    const ln = lognormPick();
+    if (ln) return { field: ln, log1p: false };             // fall back to lognorm (as-is)
+    throw new Error(
+      `extendForViewer: no raw or log-normalized measure found (present cells×genes measures: ${present}). ` +
+      `Viewer prep needs raw counts or log-normalized values; pass counts=<field> to force a measure. ` +
+      `(A scaled/z-scored measure cannot be used as a basis.)`);
+  }
+  throw new Error(`extendForViewer: basis must be "auto", "raw", or "lognorm" (or pass counts=<field>); got "${basis}"`);
 }

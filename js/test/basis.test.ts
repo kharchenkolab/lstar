@@ -17,11 +17,24 @@ test("default: no 'counts' name → picks a raw-state measure (e.g. an AnnData .
   assert.deepEqual(r, { field: "X", log1p: true });
 });
 
-test("no raw basis (scaled .X + lognorm .raw, the pbmc3k tutorial) → clear error listing measures", () => {
-  const call = () => selectCountsBasis(ds({ X: M(["cells", "genes"], "measure", "scaled"), rawX: M(["cells", "genes"], "measure", "lognorm") }));
-  assert.throws(call, /no raw counts/);
-  assert.throws(call, /X\[scaled\]/);          // present measures + state are listed
-  assert.throws(call, /basis="lognorm"/);      // and it offers the way forward
+test("auto: no raw (scaled .X + lognorm .rawX, the pbmc3k tutorial) → falls back to the lognorm measure", () => {
+  const r = selectCountsBasis(ds({ X: M(["cells", "genes"], "measure", "scaled"), rawX: M(["cells", "genes"], "measure", "lognorm") }));
+  assert.deepEqual(r, { field: "rawX", log1p: false });     // used as-is (var-of-lognorm), not the scaled X
+});
+
+test("auto: only a scaled measure (no raw, no lognorm) → clear error; scaled is never used as a basis", () => {
+  const call = () => selectCountsBasis(ds({ X: M(["cells", "genes"], "measure", "scaled") }));
+  assert.throws(call, /no raw or log-normalized measure/);
+  assert.throws(call, /scaled/);
+});
+
+test("basis='raw' forces raw; errors when there is no raw measure", () => {
+  assert.deepEqual(selectCountsBasis(ds({ counts: M(["cells", "genes"], "measure", "raw") }), { basis: "raw" }), { field: "counts", log1p: true });
+  assert.throws(() => selectCountsBasis(ds({ X: M(["cells", "genes"], "measure", "lognorm") }), { basis: "raw" }), /basis="raw" but no raw/);
+});
+
+test("invalid basis is rejected", () => {
+  assert.throws(() => selectCountsBasis(ds({ counts: M(["cells", "genes"], "measure", "raw") }), { basis: "zzz" }), /basis must be/);
 });
 
 test("counts= forces a measure (and rejects an unknown one)", () => {
