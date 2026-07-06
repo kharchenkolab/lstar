@@ -433,17 +433,10 @@ inline void write_group(const fs::path& dir, const json& attrs) {
 // Walk a finished store and emit a consolidated .zmetadata (so zarr.open_consolidated works and
 // the metadata is one read instead of many small stats).
 inline void consolidate_metadata(const fs::path& root) {
-    json meta = json::object();
-    for (auto& e : fs::recursive_directory_iterator(root)) {
-        if (!e.is_regular_file()) continue;
-        std::string fn = e.path().filename().string();
-        if (fn == ".zgroup" || fn == ".zattrs" || fn == ".zarray")
-            meta[fs::relative(e.path(), root).generic_string()] = read_json(e.path());
-    }
-    json out;
-    out["zarr_consolidated_format"] = 1;
-    out["metadata"] = meta;
-    write_text(root / ".zmetadata", out.dump());
+    // libzarr emits .zmetadata deterministically, parent-before-child. (The old fs-walk order was a
+    // latent hazard for strict consolidated readers -- the class of bug we hit on the JS writer side.)
+    zarr::FilesystemStore store(root, /*create=*/false);
+    zarr::v2::consolidate(store);
 }
 
 inline std::string opt_str(const json& m, const char* k) {
