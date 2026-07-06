@@ -26,4 +26,13 @@ python3 "$ROOT/conformance/v3_gen.py" "$SEED" | sed 's/^/  [py] /'
 python3 "$ROOT/conformance/v3_verify.py" check "$V3" "$SEED"   # 2. zarr-python reads C++ v3
 python3 "$ROOT/conformance/v3_verify.py" reemit "$SEED" "$V3ZPY"  # 3a. zarr-python writes v3 (zstd)
 "$BIN" compare "$SEED" "$V3ZPY"                                # 3b. C++ reads zarr-python v3 == v2
-echo "  v3 format: read-both + write-v3 conformant across C++ and zarr-python (incl. zstd default)"
+
+PYLSTAR=/tmp/v3_pylstar.lstar.zarr
+python3 - "$SEED" "$PYLSTAR" <<'PY'                           # 4a. lstar's PYTHON writer emits v3 (gzip)
+import sys, warnings; warnings.filterwarnings("ignore")
+import lstar, numcodecs
+lstar.write(lstar.read(sys.argv[1]), sys.argv[2], compressor=numcodecs.GZip(5), format="v3")
+print("  [py] lstar Python writer emitted v3")
+PY
+"$BIN" compare "$SEED" "$PYLSTAR"                             # 4b. C++ reads lstar-Python v3 == v2 seed
+echo "  v3 format: read-both + write-v3 conformant across C++, zarr-python, and lstar's Python writer"

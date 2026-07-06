@@ -24,7 +24,7 @@ LSTAR = "lstar"
 SPEC_VERSION = "0.1"
 
 
-def write(ds, path, compressor=None, chunk_elems=None, stream=False, viewer=False):
+def write(ds, path, compressor=None, chunk_elems=None, stream=False, viewer=False, format="v2"):
     """Serialize an L* Dataset to a Zarr store at `path`.
 
     compressor=None (default) writes uncompressed chunks; pass a numcodecs codec (e.g.
@@ -42,7 +42,26 @@ def write(ds, path, compressor=None, chunk_elems=None, stream=False, viewer=Fals
     viewer=True first calls `lstar.extend_for_viewer(ds)` to add the lstar-viewer precomputed fields
     (counts_cellmajor, per-group stats + marker tables, od_score, and a hybrid cell order) so the
     resulting store is ready for fast differential-expression / variable-gene / dotplot browsing.
+
+    format="v2" (default) writes the Zarr v2 on-disk format; format="v3" writes Zarr v3 (zarr.json +
+    inline-consolidated metadata). Both are read by the C++/R/JS libzarr cores and by zarr-python; the
+    default stays v2 until the whole stack flips. (Library != format: the writer always uses the
+    zarr-python 3 *library*, whichever on-disk *format* is requested.)
     """
+    if format not in ("v2", "v3"):
+        raise ValueError(f"format must be 'v2' or 'v3', got {format!r}")
+    zfmt = 3 if format == "v3" else 2
+    if zfmt == 3 and compressor is not None:
+        # v3 arrays take a Zarr v3 codec, not a numcodecs compressor. Translate lstar's gzip (its writer
+        # default) to zarr's GzipCodec; the rest of the writer passes `compressor=` through unchanged.
+        import numcodecs
+        from zarr.codecs import GzipCodec
+        if isinstance(compressor, numcodecs.GZip):
+            compressor = GzipCodec(level=compressor.level)
+        else:
+            raise ValueError(
+                f"format='v3' supports gzip or no compression (Zarr v3 has no zlib codec); "
+                f"got {type(compressor).__name__}")
     if viewer:
         from .viewer import extend_for_viewer
         extend_for_viewer(ds)
@@ -54,7 +73,7 @@ def write(ds, path, compressor=None, chunk_elems=None, stream=False, viewer=Fals
         import tempfile
         _zip_target = str(path)
         path = tempfile.mkdtemp(suffix=".lstar.zarr")
-    root = zarr.open_group(path, mode="w", zarr_format=2)   # zarr-python 3 library, v2 on-disk format
+    root = zarr.open_group(path, mode="w", zarr_format=zfmt)   # zarr-python 3 library; v2 or v3 on-disk format
     axg = root.create_group("axes")
     flg = root.create_group("fields")
     root.create_group("models")

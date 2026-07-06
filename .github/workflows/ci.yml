@@ -18,7 +18,7 @@ jobs:
         include:
           - tag: latest
             pip: 'numpy scipy "zarr>=3.1" anndata scanpy mudata'
-            tests: 'test_roundtrip test_anndata_profile test_crossimpl test_validate test_versions test_lazy test_stream_write test_categorical test_induce test_nullable test_aux test_de test_tier1_promote test_real_atlas test_mudata test_partial test_spatial test_fuzz test_legacy_format test_determinism test_collection_reduce test_arity3'
+            tests: 'test_roundtrip test_anndata_profile test_crossimpl test_validate test_versions test_lazy test_stream_write test_categorical test_induce test_nullable test_aux test_de test_tier1_promote test_real_atlas test_mudata test_partial test_spatial test_fuzz test_legacy_format test_determinism test_collection_reduce test_arity3 test_v3_format'
           - tag: pinned-old
             pip: '"numpy<2" scipy "zarr==3.1.0" "anndata==0.8.0"'   # support floor: oldest zarr (3.1.0) + old anndata (0.8, predates numpy 2.0)
             # core lstar tests only; exclude ones that drive anndata's *h5ad writer* for newer dtypes
