@@ -37,7 +37,9 @@ class Group {
   /// Creates a group at `path` ("" = store root) in the requested format,
   /// including any missing ancestor groups (writers that skip intermediate
   /// group documents are a known interop hazard). Existing group documents
-  /// along the chain are left untouched.
+  /// along the chain are left untouched. Not `[[nodiscard]]`: creating writes
+  /// the group metadata as a side effect, so discarding the returned handle
+  /// (create-and-forget) is a legitimate use.
   static Group create(std::shared_ptr<Store> store, const std::string& path = "",
                       ZarrFormat format = ZarrFormat::v2) {
     if (!store) {
@@ -52,8 +54,8 @@ class Group {
   /// Consolidated metadata — v2 .zmetadata at the store root, or the v3
   /// inline convention — is used when present and shared with every node
   /// opened through this group.
-  static Group open(std::shared_ptr<Store> store, const std::string& path = "",
-                    OpenOptions options = {}) {
+  [[nodiscard]] static Group open(std::shared_ptr<Store> store, const std::string& path = "",
+                                  OpenOptions options = {}) {
     if (!store) {
       throw error("Group::open: null store");
     }
@@ -62,7 +64,7 @@ class Group {
     // v3 probe.
     const std::string v3_key = v3::meta_key(path);
     if (const auto bytes = store->read(v3_key)) {
-      const json doc = v2::parse_json(*bytes, v3_key);
+      const json doc = detail::parse_json(*bytes, v3_key);
       if (doc.is_object() && doc.value("node_type", "") == std::string("array")) {
         throw error("'" + path + "' is an array, not a group");
       }
@@ -107,7 +109,7 @@ class Group {
       if (!bytes) {
         throw error(key + ": metadata disappeared");
       }
-      json doc = v2::parse_json(*bytes, key);
+      json doc = detail::parse_json(*bytes, key);
       if (attributes_.empty()) {
         doc.erase("attributes");
       } else {
@@ -151,7 +153,7 @@ class Group {
 
   /// Opens a child (possibly nested) array.
   [[nodiscard]] Array open_array(const std::string& name) const {
-    return Array::open(store_, child_path(name), options_, consolidated_);
+    return Array::open_impl(store_, child_path(name), options_, consolidated_);
   }
 
   /// Lists immediate children, classified by their metadata documents.
@@ -201,7 +203,7 @@ class Group {
     if (!bytes) {
       return std::nullopt;
     }
-    return v2::parse_json(*bytes, key);
+    return detail::parse_json(*bytes, key);
   }
 
   [[nodiscard]] Group open_v3_child_group(const std::string& target) const {
@@ -232,7 +234,7 @@ class Group {
       if (!bytes) {
         return std::nullopt;
       }
-      return v2::parse_json(*bytes, key);
+      return detail::parse_json(*bytes, key);
     };
 
     const std::string group_key = v2::meta_key(path, v2::kGroupSuffix);
@@ -274,7 +276,7 @@ class Group {
       if (format == ZarrFormat::v3) {
         const std::string key = v3::meta_key(node);
         if (const auto bytes = store.read(key)) {
-          const json doc = v2::parse_json(*bytes, key);
+          const json doc = detail::parse_json(*bytes, key);
           if (doc.is_object() && doc.value("node_type", "") == std::string("array")) {
             throw error("'" + node + "' is an array; cannot create a group inside it");
           }
@@ -284,7 +286,7 @@ class Group {
       } else {
         const std::string key = v2::meta_key(node, v2::kGroupSuffix);
         if (!store.exists(key)) {
-          v2::write_meta_key(store, key, v2::group_meta_json());
+          v2::write_meta_key(store, key, v2::emit_group_meta());
         }
       }
     }

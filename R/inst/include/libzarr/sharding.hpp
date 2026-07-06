@@ -27,9 +27,7 @@
 /// leading) index. The array machinery above stays completely unaware, and
 /// nested sharding falls out as ShardStore-wrapping-ShardStore.
 
-namespace zarr {
-
-namespace detail_shard {
+namespace zarr::detail_shard {
 
 inline constexpr std::uint64_t kSentinel = std::numeric_limits<std::uint64_t>::max();
 
@@ -64,8 +62,6 @@ inline std::uint64_t index_encoded_size(const std::vector<CodecSpec>& index_code
   return size;
 }
 
-}  // namespace detail_shard
-
 /// How a ShardStore maps inner-chunk keys onto shards.
 struct ShardParams {
   /// Store-key prefix of the array's chunks ("" for a root array, else
@@ -83,33 +79,83 @@ struct ShardParams {
   std::vector<CodecSpec> index_codecs;
   /// v3 sharding spec: index_location "end" (default) or "start".
   bool index_at_end = true;
-
-  /// The params for shard `level` of a (possibly nested) sharded array — the exact computation the
-  /// array machinery uses to wrap its chunk store, factored out so external byte-range readers can
-  /// build the SAME mapping from metadata alone. `prefix` is the store-key prefix of the array's
-  /// chunks ("" yields leaf-relative keys). Inner shape is the next level's shard shape, or the
-  /// chunk shape at the innermost level.
-  [[nodiscard]] static ShardParams for_level(const ArrayMeta& meta, std::size_t level,
-                                             const std::string& prefix) {
-    const std::vector<std::uint64_t>& inner_shape =
-        level + 1 < meta.shard_levels.size() ? meta.shard_levels[level + 1].shard_shape
-                                             : meta.chunk_shape;
-    const ShardLevel& lvl = meta.shard_levels[level];
-    ShardParams params;
-    params.chunk_prefix = prefix;
-    params.key_encoding = meta.key_encoding;
-    params.separator = meta.dimension_separator;
-    params.index_codecs = lvl.index_codecs;
-    params.index_at_end = lvl.index_at_end;
-    params.per_shard.resize(inner_shape.size());
-    params.inner_grid.resize(inner_shape.size());
-    for (std::size_t d = 0; d < inner_shape.size(); ++d) {
-      params.per_shard[d] = lvl.shard_shape[d] / inner_shape[d];
-      params.inner_grid[d] = detail::ceil_div(meta.shape[d], inner_shape[d]);
-    }
-    return params;
-  }
 };
+
+/// Builds the ShardParams for shard `level` (0 = outermost) of a sharded array
+/// whose chunks live under `prefix`. Single source of the per-level geometry,
+/// shared by Array::wrap_shards and the zarr::shard façade.
+inline ShardParams params_for_level(const ArrayMeta& meta, std::size_t level,
+                                    const std::string& prefix) {
+  const ShardLevel& lvl = meta.shard_levels[level];
+  const std::vector<std::uint64_t>& inner_shape = level + 1 < meta.shard_levels.size()
+                                                      ? meta.shard_levels[level + 1].shard_shape
+                                                      : meta.chunk_shape;
+  ShardParams params;
+  params.chunk_prefix = prefix;
+  params.key_encoding = meta.key_encoding;
+  params.separator = meta.dimension_separator;
+  params.index_codecs = lvl.index_codecs;
+  params.index_at_end = lvl.index_at_end;
+  params.per_shard.resize(inner_shape.size());
+  params.inner_grid.resize(inner_shape.size());
+  for (std::size_t d = 0; d < inner_shape.size(); ++d) {
+    params.per_shard[d] = lvl.shard_shape[d] / inner_shape[d];
+    params.inner_grid[d] = detail::ceil_div(meta.shape[d], inner_shape[d]);
+  }
+  return params;
+}
+
+/// Maps an inner-chunk grid index to its owning shard's store key and the
+/// C-order slot within that shard. Shared by ShardStore::locate and shard::place.
+inline void locate_index(const ShardParams& params, const std::vector<std::uint64_t>& index,
+                         std::string& shard_key, std::uint64_t& slot) {
+  const std::size_t rank = params.per_shard.size();
+  std::vector<std::uint64_t> outer(rank, 0);
+  slot = 0;
+  for (std::size_t d = 0; d < rank; ++d) {
+    outer[d] = index[d] / params.per_shard[d];
+    slot = slot * params.per_shard[d] + index[d] % params.per_shard[d];
+  }
+  shard_key = params.chunk_prefix + (params.key_encoding == ChunkKeyKind::v3_default
+                                         ? v3::chunk_key(outer, params.separator)
+                                         : v2::chunk_key(outer, params.separator));
+}
+
+/// The shard index as a decodable "array" of uint64 [offset, nbytes] pairs.
+inline ArrayMeta index_array_meta(std::uint64_t entry_count,
+                                  const std::vector<CodecSpec>& index_codecs) {
+  ArrayMeta meta;
+  meta.shape = {entry_count * 2};
+  meta.chunk_shape = {entry_count * 2};
+  meta.dtype = DataType::of(DType::uint64);
+  meta.codecs = index_codecs;
+  return meta;
+}
+
+/// Decodes raw shard-index bytes into entries, validating the layout. Shared by
+/// ShardStore::load_index and shard::extent; the size check guards the façade
+/// against malformed caller-supplied bytes.
+inline std::vector<IndexEntry> decode_index(const CodecPipeline& pipeline,
+                                            std::uint64_t entry_count, Bytes stored,
+                                            const std::string& ctx) {
+  const Bytes decoded = pipeline.decode(std::move(stored));
+  if (decoded.size() != entry_count * 16) {
+    throw error(ctx + ": corrupt shard index");
+  }
+  std::vector<IndexEntry> entries(static_cast<std::size_t>(entry_count));
+  for (std::size_t i = 0; i < entries.size(); ++i) {
+    std::memcpy(&entries[i].offset, decoded.data() + i * 16, 8);
+    std::memcpy(&entries[i].nbytes, decoded.data() + i * 16 + 8, 8);
+    const bool sentinel_mismatch =
+        (entries[i].offset == kSentinel) != (entries[i].nbytes == kSentinel);
+    const bool overflow =
+        !entries[i].missing() && entries[i].nbytes > kSentinel - entries[i].offset;
+    if (sentinel_mismatch || overflow) {
+      throw error(ctx + ": corrupt shard index");
+    }
+  }
+  return entries;
+}
 
 /// Store adapter presenting the inner chunks of a sharded array as ordinary
 /// keys. Reads cost one index fetch per shard (cached, one suffix/prefix
@@ -183,48 +229,6 @@ class ShardStore final : public Store {
 
   [[nodiscard]] bool exists(std::string_view key) override { return size(key).has_value(); }
 
-  // --- Byte-range support for external readers that own their fetch loop ---------------------------
-  // The two-phase resolve behind read_range, exposed so a reader (e.g. the WASM/JS viewer) can fetch
-  // only a shard's index and then only the wanted chunk's bytes, instead of the whole shard object.
-
-  /// Where an inner chunk lives: the store key of its owning shard, the chunk's C-order slot within
-  /// that shard, and the shard index's on-disk layout (encoded size + end/start) so the reader knows
-  /// which bytes of the shard to fetch for the index. Pure — no store read.
-  struct ChunkPlacement {
-    std::string shard_key;
-    std::uint64_t intra = 0;
-    std::uint64_t index_size = 0;
-    bool index_at_end = true;
-  };
-  /// The chunk's bytes within its shard: [offset, nbytes), or `missing` when the chunk is a fill
-  /// (all-default) chunk absent from the shard.
-  struct ChunkExtent {
-    std::uint64_t offset = 0;
-    std::uint64_t nbytes = 0;
-    bool missing = false;
-  };
-
-  [[nodiscard]] ChunkPlacement place(std::string_view inner_key) const {
-    const Location loc = locate(inner_key);
-    return {loc.shard_key, static_cast<std::uint64_t>(loc.intra), index_size_, params_.index_at_end};
-  }
-
-  /// Decode a fetched shard index (the `index_size` bytes at the index location) and return the
-  /// slot's extent within the shard. The caller supplies the bytes; no store read happens here.
-  [[nodiscard]] ChunkExtent extent(const Bytes& index_bytes, std::uint64_t intra) const {
-    if (intra >= entry_count_) {
-      throw error("ShardStore::extent: slot out of range");
-    }
-    const Bytes decoded = index_pipeline_.decode(Bytes(index_bytes));
-    detail_shard::IndexEntry e;
-    std::memcpy(&e.offset, decoded.data() + intra * 16, 8);
-    std::memcpy(&e.nbytes, decoded.data() + intra * 16 + 8, 8);
-    if (e.missing()) {
-      return {0, 0, true};
-    }
-    return {e.offset, e.nbytes, false};
-  }
-
   void write(std::string_view key, Bytes value) override {
     put(locate(key), std::optional<Bytes>(std::move(value)));
   }
@@ -259,12 +263,7 @@ class ShardStore final : public Store {
 
   /// Metadata describing the index as a decodable "array": uint64 pairs.
   [[nodiscard]] ArrayMeta index_meta() const {
-    ArrayMeta meta;
-    meta.shape = {entry_count_ * 2};
-    meta.chunk_shape = {entry_count_ * 2};
-    meta.dtype = DataType::of(DType::uint64);
-    meta.codecs = params_.index_codecs;
-    return meta;
+    return index_array_meta(entry_count_, params_.index_codecs);
   }
 
   static void resolve_range(ByteRange range, std::uint64_t size, std::uint64_t& begin,
@@ -335,17 +334,9 @@ class ShardStore final : public Store {
     }
 
     Location loc;
-    std::vector<std::uint64_t> outer(rank, 0);
-    std::uint64_t intra = 0;
-    for (std::size_t d = 0; d < rank; ++d) {
-      outer[d] = index[d] / params_.per_shard[d];
-      intra = intra * params_.per_shard[d] + index[d] % params_.per_shard[d];
-    }
-    loc.intra = detail::checked_size(intra, "shard entry");
-    const std::string relative = params_.key_encoding == ChunkKeyKind::v3_default
-                                     ? v3::chunk_key(outer, params_.separator)
-                                     : v2::chunk_key(outer, params_.separator);
-    loc.shard_key = params_.chunk_prefix + relative;
+    std::uint64_t slot = 0;
+    locate_index(params_, index, loc.shard_key, slot);
+    loc.intra = detail::checked_size(slot, "shard entry");
     return loc;
   }
 
@@ -368,19 +359,8 @@ class ShardStore final : public Store {
     if (!stored) {
       return nullptr;
     }
-    const Bytes decoded = index_pipeline_.decode(std::move(*stored));
-    std::vector<detail_shard::IndexEntry> entries(static_cast<std::size_t>(entry_count_));
-    for (std::size_t i = 0; i < entries.size(); ++i) {
-      std::memcpy(&entries[i].offset, decoded.data() + i * 16, 8);
-      std::memcpy(&entries[i].nbytes, decoded.data() + i * 16 + 8, 8);
-      const bool sentinel_mismatch = (entries[i].offset == detail_shard::kSentinel) !=
-                                     (entries[i].nbytes == detail_shard::kSentinel);
-      const bool overflow =
-          !entries[i].missing() && entries[i].nbytes > detail_shard::kSentinel - entries[i].offset;
-      if (sentinel_mismatch || overflow) {
-        throw error(shard_key + ": corrupt shard index");
-      }
-    }
+    std::vector<detail_shard::IndexEntry> entries =
+        decode_index(index_pipeline_, entry_count_, std::move(*stored), shard_key);
     cache_.insert(cache_.begin(), {shard_key, std::move(entries)});
     if (cache_.size() > kCacheCapacity) {
       cache_.pop_back();
@@ -491,6 +471,104 @@ class ShardStore final : public Store {
   std::optional<Assembly> assembly_;
 };
 
-}  // namespace zarr
+}  // namespace zarr::detail_shard
+
+/// Pure shard-index resolution for consumers that own their own I/O (e.g. a
+/// browser fetching HTTP ranges). No Store, no fetch loop: the caller drives a
+/// two-phase handshake — resolve the shard and where its index sits, fetch that
+/// index, then resolve the chunk's extent — so the drift-prone index math stays
+/// in libzarr while the fetches stay in the consumer. A complete pure-sync read
+/// is `place()` -> fetch index bytes -> `extent()` -> fetch chunk bytes ->
+/// `CodecPipeline::resolve(meta).decode(bytes)`.
+namespace zarr::shard {
+
+/// Which shard object holds an inner chunk and where its index sits — computed
+/// from `ArrayMeta` and the array's path alone (shard::place).
+struct Placement {
+  /// Store key of the owning shard object.
+  std::string shard_key;
+  /// C-order slot of the chunk within the shard (pass to extent()).
+  std::uint64_t slot = 0;
+  /// Encoded byte size of the shard index; fetch this many bytes at the index
+  /// location (a suffix range when index_at_end, else a prefix range).
+  std::uint64_t index_size = 0;
+  /// index_location: `end` (default, index is the trailing index_size bytes) or
+  /// `start` (index is the leading index_size bytes).
+  bool index_at_end = true;
+};
+
+/// A chunk's byte extent within its shard object, decoded from the index bytes
+/// (shard::extent).
+struct Extent {
+  /// Byte offset of the chunk within the shard object.
+  std::uint64_t offset = 0;
+  /// Encoded byte length of the chunk.
+  std::uint64_t nbytes = 0;
+  /// True if the chunk is all-fill (not stored); offset/nbytes are unset.
+  bool missing = false;
+};
+
+/// Resolves which shard holds inner chunk `inner_index` (an inner-chunk grid
+/// coordinate) for the array at `path` ("" = store root). `level` selects the
+/// shard level (0 = outermost) for nested sharding. Pure: reads only `meta`.
+/// Throws if `level` is not a shard level or `inner_index` is out of range.
+[[nodiscard]] inline Placement place(const ArrayMeta& meta, const std::string& path,
+                                     const std::vector<std::uint64_t>& inner_index,
+                                     std::size_t level = 0) {
+  if (level >= meta.shard_levels.size()) {
+    throw error("zarr::shard::place: level " + std::to_string(level) + " is not a shard level (" +
+                std::to_string(meta.shard_levels.size()) + " levels)");
+  }
+  const std::string prefix = path.empty() ? "" : path + "/";
+  const detail_shard::ShardParams params = detail_shard::params_for_level(meta, level, prefix);
+  if (inner_index.size() != params.per_shard.size()) {
+    throw error("zarr::shard::place: inner_index rank " + std::to_string(inner_index.size()) +
+                " != array rank " + std::to_string(params.per_shard.size()));
+  }
+  for (std::size_t d = 0; d < inner_index.size(); ++d) {
+    if (inner_index[d] >= params.inner_grid[d]) {
+      throw error("zarr::shard::place: inner_index[" + std::to_string(d) +
+                  "] = " + std::to_string(inner_index[d]) + " out of range");
+    }
+  }
+  Placement out;
+  detail_shard::locate_index(params, inner_index, out.shard_key, out.slot);
+  const std::uint64_t entry_count = detail::checked_product(params.per_shard, "shard grid");
+  out.index_size =
+      detail_shard::index_encoded_size(params.index_codecs, entry_count, "sharding_indexed");
+  out.index_at_end = params.index_at_end;
+  return out;
+}
+
+/// Decodes `index_bytes` (the Placement::index_size bytes the caller fetched at
+/// the index location) and returns slot `slot`'s extent. `level` must match the
+/// place() call. Pure: no I/O. Throws on a malformed or wrong-size index.
+[[nodiscard]] inline Extent extent(const ArrayMeta& meta, const Bytes& index_bytes,
+                                   std::uint64_t slot, std::size_t level = 0) {
+  if (level >= meta.shard_levels.size()) {
+    throw error("zarr::shard::extent: level " + std::to_string(level) + " is not a shard level");
+  }
+  const detail_shard::ShardParams params = detail_shard::params_for_level(meta, level, "");
+  const std::uint64_t entry_count = detail::checked_product(params.per_shard, "shard grid");
+  if (slot >= entry_count) {
+    throw error("zarr::shard::extent: slot " + std::to_string(slot) + " out of range (" +
+                std::to_string(entry_count) + " entries)");
+  }
+  const CodecPipeline pipeline =
+      CodecPipeline::resolve(detail_shard::index_array_meta(entry_count, params.index_codecs));
+  const std::vector<detail_shard::IndexEntry> entries =
+      detail_shard::decode_index(pipeline, entry_count, index_bytes, "sharding_indexed");
+  const detail_shard::IndexEntry& e = entries[static_cast<std::size_t>(slot)];
+  Extent out;
+  if (e.missing()) {
+    out.missing = true;
+  } else {
+    out.offset = e.offset;
+    out.nbytes = e.nbytes;
+  }
+  return out;
+}
+
+}  // namespace zarr::shard
 
 #endif  // LIBZARR_SHARDING_HPP

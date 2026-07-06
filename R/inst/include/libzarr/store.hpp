@@ -41,18 +41,18 @@ struct ByteRange {
   std::uint64_t length = 0;
 
   /// The whole value.
-  static constexpr ByteRange full() { return ByteRange{}; }
+  [[nodiscard]] static constexpr ByteRange full() { return ByteRange{}; }
 
   /// `length` bytes starting at byte `offset`. A range that lies outside the
   /// value is an error, not a truncation.
-  static constexpr ByteRange slice(std::uint64_t offset, std::uint64_t length) {
+  [[nodiscard]] static constexpr ByteRange slice(std::uint64_t offset, std::uint64_t length) {
     return ByteRange{Kind::slice, offset, length};
   }
 
   /// The final `length` bytes — fetches a trailing shard index in one round
   /// trip without knowing the value size. `length` greater than the value
   /// size is an error.
-  static constexpr ByteRange suffix(std::uint64_t length) {
+  [[nodiscard]] static constexpr ByteRange suffix(std::uint64_t length) {
     return ByteRange{Kind::suffix, 0, length};
   }
 };
@@ -209,8 +209,9 @@ class MemoryStore final : public Store {
     return out;
   }
 
-  /// Number of keys held.
-  [[nodiscard]] std::size_t size() const { return map_.size(); }
+  /// Number of keys held. (Named `key_count`, not `size`, to avoid colliding
+  /// with `Store::size(key)`, which returns a value's byte length.)
+  [[nodiscard]] std::size_t key_count() const { return map_.size(); }
 
  private:
   static bool starts_with(std::string_view text, std::string_view prefix) {

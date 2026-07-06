@@ -104,7 +104,7 @@ class Reader {
         for (const auto& c : a.meta().codecs)
             if (c.name == "gzip" || c.name == "zlib" || c.name == "blosc" || c.name == "zstd") raw = false;
         val out = val::object();
-        out.set("dtype", zarr::v2::emit_dtype(a.meta().dtype, /*big_endian=*/false));
+        out.set("dtype", zarr::v2::emit_data_type(a.meta().dtype, /*big_endian=*/false));
         out.set("itemsize", (double)a.meta().dtype.itemsize);
         val cs = val::array();
         for (size_t i = 0; i < a.meta().chunk_shape.size(); ++i) cs.set(i, (double)a.meta().chunk_shape[i]);
@@ -136,12 +136,12 @@ class Reader {
         zarr::Array a = zarr::Array::open(store_, path);
         std::vector<int> t = emscripten::convertJSArrayToNumberVector<int>(idx_js);
         std::vector<std::uint64_t> idx(t.begin(), t.end());
-        const std::string inner = zarr::v3::chunk_key(idx, a.meta().dimension_separator);
-        zarr::ShardStore ss(store_, zarr::ShardParams::for_level(a.meta(), 0, ""));
-        const auto p = ss.place(inner);
+        // libzarr's public shard-resolution façade (v1.0). path="" -> the shard key is leaf-relative
+        // (JS prepends the array path, same convention as chunkKey). Pure: no store read.
+        const auto p = zarr::shard::place(a.meta(), /*path=*/"", idx, /*level=*/0);
         val out = val::object();
         out.set("shardKey", p.shard_key);
-        out.set("intra", (double)p.intra);
+        out.set("intra", (double)p.slot);
         out.set("indexSize", (double)p.index_size);
         out.set("indexAtEnd", p.index_at_end);
         return out;
@@ -152,9 +152,8 @@ class Reader {
     // JS then range-reads exactly the chunk's bytes off the shard object. No store read here.
     val shardEntry(const std::string& path, val index_js, double intra) {
         zarr::Array a = zarr::Array::open(store_, path);
-        zarr::ShardStore ss(store_, zarr::ShardParams::for_level(a.meta(), 0, ""));
         const Bytes idx = to_bytes(index_js);
-        const auto e = ss.extent(idx, (std::uint64_t)intra);
+        const auto e = zarr::shard::extent(a.meta(), idx, (std::uint64_t)intra, /*level=*/0);
         val out = val::object();
         out.set("offset", (double)e.offset);
         out.set("nbytes", (double)e.nbytes);
@@ -168,7 +167,7 @@ class Reader {
         Bytes b(a.nbytes());
         if (!b.empty()) a.read(b.data(), b.size());
         val out = val::object();
-        out.set("dtype", zarr::v2::emit_dtype(a.meta().dtype, /*big_endian=*/false));
+        out.set("dtype", zarr::v2::emit_data_type(a.meta().dtype, /*big_endian=*/false));
         val shape = val::array();
         for (size_t i = 0; i < a.meta().shape.size(); ++i) shape.set(i, (double)a.meta().shape[i]);
         out.set("shape", shape);

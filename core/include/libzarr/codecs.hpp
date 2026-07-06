@@ -40,7 +40,7 @@ class CodecPipeline {
   /// known names, well-formed configurations) and builds the plan. Codecs
   /// compiled out of this build (e.g. gzip without LIBZARR_HAS_ZLIB) fail
   /// here with a precise error, never at link time.
-  static CodecPipeline resolve(const ArrayMeta& meta) {
+  [[nodiscard]] static CodecPipeline resolve(const ArrayMeta& meta) {
     CodecPipeline p;
     p.chunk_shape_ = meta.chunk_shape;
     p.itemsize_ = meta.dtype.itemsize;

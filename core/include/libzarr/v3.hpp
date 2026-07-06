@@ -29,7 +29,7 @@ namespace zarr::v3 {
 inline constexpr const char* kMetaKey = "zarr.json";
 
 /// Store key of the metadata document for the node at `path` ("" = root).
-inline std::string meta_key(const std::string& path) {
+[[nodiscard]] inline std::string meta_key(const std::string& path) {
   return path.empty() ? kMetaKey : path + "/" + kMetaKey;
 }
 
@@ -150,7 +150,7 @@ inline Bytes float_fill(const json& v, DType kind, std::uint32_t itemsize, const
 }  // namespace detail_v3
 
 /// Parses a v3 data_type name. Extension (object) data types are rejected.
-inline DataType parse_data_type(const json& v, const std::string& ctx) {
+[[nodiscard]] inline DataType parse_data_type(const json& v, const std::string& ctx) {
   if (!v.is_string()) {
     throw error(ctx + ": extension data_type objects are not supported");
   }
@@ -224,8 +224,8 @@ inline Bytes raw_fill(const json& v, DataType dt, const std::string& ctx) {
 }  // namespace detail_v3
 
 /// Parses a v3 fill_value, dtype-directed (v3 core "Fill value" table).
-inline std::optional<Bytes> parse_fill(const json& v, DataType dt, const std::string& ctx,
-                                       bool lenient) {
+[[nodiscard]] inline std::optional<Bytes> parse_fill(const json& v, DataType dt,
+                                                     const std::string& ctx, bool lenient) {
   if (v.is_null()) {
     // v3 requires a concrete fill_value; null appears from pre-final writers.
     if (lenient) {
@@ -490,7 +490,8 @@ inline ArrayMeta parse_array_meta_impl(const json& j, const std::string& ctx, bo
 }  // namespace detail_v3
 
 /// Parses a v3 array zarr.json document into normalized ArrayMeta.
-inline ArrayMeta parse_array_meta(const json& j, const std::string& ctx, bool lenient = false) {
+[[nodiscard]] inline ArrayMeta parse_array_meta(const json& j, const std::string& ctx,
+                                                bool lenient = false) {
   return detail::guard_json(ctx, [&] { return detail_v3::parse_array_meta_impl(j, ctx, lenient); });
 }
 
@@ -505,7 +506,8 @@ struct GroupMeta {
 };
 
 /// Parses a v3 group zarr.json document.
-inline GroupMeta parse_group_meta(const json& j, const std::string& ctx, bool lenient = false) {
+[[nodiscard]] inline GroupMeta parse_group_meta(const json& j, const std::string& ctx,
+                                                bool lenient = false) {
   return detail::guard_json(ctx, [&]() -> GroupMeta {
     if (!j.is_object()) {
       throw error(ctx + ": expected a JSON object");
@@ -532,7 +534,8 @@ inline GroupMeta parse_group_meta(const json& j, const std::string& ctx, bool le
 }
 
 /// v3 chunk key relative to the array (v3 core "chunk key encoding").
-inline std::string chunk_key(const std::vector<std::uint64_t>& index, char separator) {
+[[nodiscard]] inline std::string chunk_key(const std::vector<std::uint64_t>& index,
+                                           char separator) {
   std::string key = "c";  // rank 0: the key is exactly "c"
   for (const std::uint64_t i : index) {
     key += separator;
@@ -544,7 +547,7 @@ inline std::string chunk_key(const std::vector<std::uint64_t>& index, char separ
 // ---- emission (canonical, deterministic) ------------------------------------
 
 /// Emits the canonical v3 data_type name.
-inline std::string emit_data_type(DataType dt) {
+[[nodiscard]] inline std::string emit_data_type(DataType dt) {
   switch (dt.kind) {
     case DType::boolean:
       return "bool";
@@ -630,7 +633,7 @@ inline json emit_float_fill(const std::uint8_t* data, DType kind, std::uint32_t 
 /// Emits a normalized fill as canonical v3 JSON. A missing fill (legal only
 /// on leniently-read metadata) is synthesized as zeros: v3 requires a
 /// concrete fill_value.
-inline json emit_fill(const std::optional<Bytes>& fill, DataType dt) {
+[[nodiscard]] inline json emit_fill(const std::optional<Bytes>& fill, DataType dt) {
   const Bytes zeros(dt.itemsize, 0);
   const Bytes& bytes = fill ? *fill : zeros;
   switch (dt.kind) {
@@ -677,7 +680,7 @@ inline json emit_codec_list(const std::vector<CodecSpec>& codecs) {
 /// Emits canonical v3 array metadata. Deterministic: fixed member set (empty
 /// attributes and absent dimension_names are omitted), sorted keys, stable
 /// forms. Shard levels fold back into nested sharding_indexed codecs.
-inline json emit_array_meta(const ArrayMeta& meta) {
+[[nodiscard]] inline json emit_array_meta(const ArrayMeta& meta) {
   json j;
   j["zarr_format"] = 3;
   j["node_type"] = "array";
@@ -714,7 +717,7 @@ inline json emit_array_meta(const ArrayMeta& meta) {
 }
 
 /// Emits canonical v3 group metadata.
-inline json emit_group_meta(const json& attributes) {
+[[nodiscard]] inline json emit_group_meta(const json& attributes) {
   json j;
   j["zarr_format"] = 3;
   j["node_type"] = "group";
@@ -733,7 +736,7 @@ inline void consolidate(Store& store) {
   if (!root_bytes) {
     throw error("v3::consolidate: no zarr.json at the store root");
   }
-  json root = v2::parse_json(*root_bytes, kMetaKey);
+  json root = detail::parse_json(*root_bytes, kMetaKey);
   json metadata = json::object();
   for (const std::string& key : store.list_prefix("")) {
     if (key == kMetaKey || !detail::ends_with(key, std::string("/") + kMetaKey)) {
@@ -741,7 +744,7 @@ inline void consolidate(Store& store) {
     }
     const std::string path = key.substr(0, key.size() - std::string(kMetaKey).size() - 1);
     if (const auto bytes = store.read(key)) {
-      metadata[path] = v2::parse_json(*bytes, key);
+      metadata[path] = detail::parse_json(*bytes, key);
     }
   }
   root["consolidated_metadata"] = {

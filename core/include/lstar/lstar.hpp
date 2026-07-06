@@ -322,7 +322,7 @@ inline NdArray read_array(const fs::path& dir) {
     auto store = std::make_shared<zarr::FilesystemStore>(dir, false);
     zarr::Array za = zarr::Array::open(store, "");
     NdArray a;
-    a.dtype = zarr::v2::emit_dtype(za.meta().dtype, /*big_endian=*/false);  // little-endian, C-order (lstar always)
+    a.dtype = zarr::v2::emit_data_type(za.meta().dtype, /*big_endian=*/false);  // little-endian, C-order (lstar always)
     a.shape.assign(za.meta().shape.begin(), za.meta().shape.end());          // uint64 -> int64
     a.bytes.resize(za.nbytes());
     if (!a.bytes.empty()) za.read(a.bytes.data(), a.bytes.size());
@@ -345,7 +345,7 @@ inline NdArray read_array_range(const fs::path& dir, int64_t lo, int64_t hi) {
     hi = std::min<int64_t>(n, hi);
     const int64_t len = std::max<int64_t>(0, hi - lo);
     NdArray a;
-    a.dtype = zarr::v2::emit_dtype(za.meta().dtype, /*big_endian=*/false);
+    a.dtype = zarr::v2::emit_data_type(za.meta().dtype, /*big_endian=*/false);
     a.shape = {len};
     const size_t dsz = za.meta().dtype.itemsize;
     a.bytes.assign(static_cast<size_t>(len) * dsz, 0);
@@ -410,7 +410,7 @@ inline void write_array(const fs::path& dir, const NdArray& a,
         const std::vector<int64_t> shards = shard_shape_for(a.shape, chunks, shard_elems);
         if (!shards.empty()) spec.shards.assign(shards.begin(), shards.end());
     }
-    spec.dtype = zarr::v2::parse_dtype(a.dtype, dir.string()).dtype;
+    spec.dtype = zarr::v2::parse_data_type(a.dtype, dir.string()).dtype;
     spec.dimension_separator = '.';
     if (!compressor.is_null()) {
         const std::string id = compressor.value("id", std::string());
@@ -1101,7 +1101,7 @@ struct ChunkReader {
         cs = static_cast<int64_t>(arr.meta().chunk_shape.at(0));
         n = static_cast<int64_t>(arr.meta().shape.at(0));
         dsz = arr.meta().dtype.itemsize;
-        dtype = zarr::v2::emit_dtype(arr.meta().dtype, /*big_endian=*/false);
+        dtype = zarr::v2::emit_data_type(arr.meta().dtype, /*big_endian=*/false);
     }
     const uint8_t* chunk(int64_t ci) {
         if (ci != cached) {                                // libzarr decodes + fill-pads the whole chunk

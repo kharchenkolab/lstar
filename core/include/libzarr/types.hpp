@@ -17,10 +17,15 @@
 /// Library major version.
 #define LIBZARR_VERSION_MAJOR 0
 /// Library minor version.
-#define LIBZARR_VERSION_MINOR 1
+#define LIBZARR_VERSION_MINOR 3
 /// Library patch version.
 #define LIBZARR_VERSION_PATCH 0
 // NOLINTEND(modernize-macro-to-enum,cppcoreguidelines-macro-to-enum)
+
+/// Marks a public symbol deprecated with a migration message. Per
+/// docs/COMPATIBILITY.md a deprecated symbol is kept — emitting a compiler
+/// warning — for at least one minor release before removal in the next major.
+#define LIBZARR_DEPRECATED(msg) [[deprecated(msg)]]
 
 namespace zarr {
 
@@ -63,30 +68,30 @@ enum class DType : std::uint8_t {
 };
 
 /// True for float16/float32/float64.
-constexpr bool is_float(DType kind) {
+[[nodiscard]] constexpr bool is_float(DType kind) {
   return kind == DType::float16 || kind == DType::float32 || kind == DType::float64;
 }
 
 /// True for int8..int64.
-constexpr bool is_signed_int(DType kind) {
+[[nodiscard]] constexpr bool is_signed_int(DType kind) {
   return kind == DType::int8 || kind == DType::int16 || kind == DType::int32 ||
          kind == DType::int64;
 }
 
 /// True for uint8..uint64.
-constexpr bool is_unsigned_int(DType kind) {
+[[nodiscard]] constexpr bool is_unsigned_int(DType kind) {
   return kind == DType::uint8 || kind == DType::uint16 || kind == DType::uint32 ||
          kind == DType::uint64;
 }
 
 /// True for complex64/complex128.
-constexpr bool is_complex(DType kind) {
+[[nodiscard]] constexpr bool is_complex(DType kind) {
   return kind == DType::complex64 || kind == DType::complex128;
 }
 
 /// Element size in bytes fixed by the kind; 0 for DType::raw (whose size is
 /// per-array).
-constexpr std::uint32_t fixed_itemsize(DType kind) {
+[[nodiscard]] constexpr std::uint32_t fixed_itemsize(DType kind) {
   switch (kind) {
     case DType::boolean:
     case DType::int8:
@@ -120,21 +125,27 @@ struct DataType {
   /// Element size in bytes.
   std::uint32_t itemsize = 1;
 
-  /// A DataType of fixed-size `kind` (anything but raw).
-  static constexpr DataType of(DType kind) {
-    assert(kind != DType::raw);
+  /// A DataType of fixed-size `kind` (anything but raw). `DType::raw` has no
+  /// fixed size and must be built with raw_bytes(); passing it throws rather
+  /// than asserting, because the kind can originate from parsed metadata.
+  [[nodiscard]] static constexpr DataType of(DType kind) {
+    if (kind == DType::raw) {
+      throw error("DataType::of(DType::raw): raw has no fixed size, use DataType::raw_bytes()");
+    }
     return DataType{kind, fixed_itemsize(kind)};
   }
 
   /// A raw byte-string type of `size` bytes (v2 `|V<size>`).
-  static constexpr DataType raw_bytes(std::uint32_t size) { return DataType{DType::raw, size}; }
+  [[nodiscard]] static constexpr DataType raw_bytes(std::uint32_t size) {
+    return DataType{DType::raw, size};
+  }
 
   /// Equal kind and size.
-  friend constexpr bool operator==(DataType a, DataType b) {
+  [[nodiscard]] friend constexpr bool operator==(DataType a, DataType b) {
     return a.kind == b.kind && a.itemsize == b.itemsize;
   }
   /// Differing kind or size.
-  friend constexpr bool operator!=(DataType a, DataType b) { return !(a == b); }
+  [[nodiscard]] friend constexpr bool operator!=(DataType a, DataType b) { return !(a == b); }
 };
 
 }  // namespace zarr

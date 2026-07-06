@@ -22,7 +22,7 @@
 /// Single-file archives: a whole store packed into one ZIP with STORED
 /// (uncompressed) entries only, so every entry — and any byte range inside
 /// it — stays byte-range-readable through the archive (chunk codecs still
-/// apply; the zip layer never re-compresses). ZIP64-aware. ZipReader is a
+/// apply; the zip layer never re-compresses). ZIP64-aware. ZipStore is a
 /// read-only Store view over an archive held in any other Store, using
 /// nothing but read_range.
 
@@ -212,14 +212,14 @@ inline void append_end_records(Bytes& out, std::uint64_t count, std::uint64_t ce
 /// `archive_key` inside another Store. All access goes through read_range, so
 /// a remote archive is never downloaded whole; entry reads cost one range
 /// request (plus one 30-byte header read the first time an entry is touched).
-class ZipReader final : public Store {
+class ZipStore final : public Store {
  public:
   /// Opens the archive at `archive_key` in `source` (parses its central
   /// directory with one size probe plus one suffix range read).
-  ZipReader(std::shared_ptr<Store> source, std::string archive_key)
+  ZipStore(std::shared_ptr<Store> source, std::string archive_key)
       : source_(std::move(source)), key_(std::move(archive_key)) {
     if (!source_) {
-      throw error("ZipReader: null store");
+      throw error("ZipStore: null store");
     }
     parse_directory();
   }
@@ -272,9 +272,9 @@ class ZipReader final : public Store {
   }
 
   void write(std::string_view /*key*/, Bytes /*value*/) override {
-    throw error("ZipReader is read-only");
+    throw error("ZipStore is read-only");
   }
-  void erase(std::string_view /*key*/) override { throw error("ZipReader is read-only"); }
+  void erase(std::string_view /*key*/) override { throw error("ZipStore is read-only"); }
 
   [[nodiscard]] std::vector<std::string> list_prefix(std::string_view prefix) override {
     check_prefix(prefix);
@@ -390,10 +390,21 @@ class ZipReader final : public Store {
     Bytes eocd64;
     if (eocd64_offset >= tail_start) {
       const auto local = static_cast<std::size_t>(eocd64_offset - tail_start);
+      // APPNOTE 4.3.14: the ZIP64 EOCD must lie fully within the archive. A
+      // crafted locator can point past the tail we hold; assigning past end()
+      // is an out-of-bounds read (fuzz-found SEGV).
+      if (local > tail.size() || z::kEocd64Size > tail.size() - local) {
+        throw error(context() + ": ZIP64 end-of-central-directory record out of range");
+      }
       eocd64.assign(tail.begin() + static_cast<std::ptrdiff_t>(local),
                     tail.begin() + static_cast<std::ptrdiff_t>(local + z::kEocd64Size));
     } else {
       eocd64 = must_read(eocd64_offset, z::kEocd64Size);
+    }
+    // must_read returns fewer bytes when the offset runs past EOF; the fixed
+    // field offsets below (rd32/rd64) require the whole record.
+    if (eocd64.size() < z::kEocd64Size) {
+      throw error(context() + ": ZIP64 end-of-central-directory record truncated");
     }
     if (z::rd32(eocd64.data()) != z::kEocd64Sig) {
       throw error(context() + ": bad ZIP64 end-of-central-directory record");
@@ -492,12 +503,13 @@ class ZipReader final : public Store {
   std::map<std::string, detail_zip::Entry, std::less<>> entries_;
 };
 
-/// Packs every key of `source` under `prefix` into a STORED-entry ZIP written
-/// at `dest_key` in `dest`. Deterministic byte-for-byte: sorted entries, zero
-/// timestamps (DOS epoch), no comments. `force_zip64` exists for testing the
-/// ZIP64 structures with small archives.
-inline void zip_pack(Store& source, Store& dest, const std::string& dest_key,
-                     const std::string& prefix = "", bool force_zip64 = false) {
+namespace detail_zip {
+
+/// Implementation of zip_pack. `force_zip64` forces the ZIP64 structures even
+/// when no value overflows 32 bits — used by tests to exercise them on small
+/// archives; not part of the public API.
+inline void zip_pack_impl(Store& source, Store& dest, const std::string& dest_key,
+                          const std::string& prefix, bool force_zip64) {
   namespace z = detail_zip;
   Bytes out;
   Bytes cen;
@@ -528,6 +540,16 @@ inline void zip_pack(Store& source, Store& dest, const std::string& dest_key,
   out.insert(out.end(), cen.begin(), cen.end());
   z::append_end_records(out, count, cen.size(), cen_offset, force_zip64);
   dest.write(dest_key, std::move(out));
+}
+
+}  // namespace detail_zip
+
+/// Packs every key of `source` under `prefix` into a STORED-entry ZIP written
+/// at `dest_key` in `dest`. Deterministic byte-for-byte: sorted entries, zero
+/// timestamps (DOS epoch), no comments.
+inline void zip_pack(Store& source, Store& dest, const std::string& dest_key,
+                     const std::string& prefix = "") {
+  detail_zip::zip_pack_impl(source, dest, dest_key, prefix, /*force_zip64=*/false);
 }
 
 }  // namespace zarr
