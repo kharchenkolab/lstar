@@ -13,6 +13,11 @@
 export interface LstarStore {
   get(key: string): Promise<Uint8Array | undefined>;
   getRange?(key: string, start: number, end: number): Promise<Uint8Array | undefined>;
+  /** Read the LAST `n` bytes of an object (a suffix range), or undefined if absent. Enables the
+   * byte-range fast path on SHARDED arrays: a v3 shard's index sits at the end of the shard object,
+   * so the reader suffix-reads the index, then range-reads just the wanted chunk's bytes. Optional —
+   * a store without it falls back to a whole-array read on sharded arrays (correct, not streamed). */
+  getSuffix?(key: string, n: number): Promise<Uint8Array | undefined>;
 }
 
 export interface AxisMeta {
@@ -325,22 +330,54 @@ export class LstarDataset {
       const info = await this.src.arrayInfo(arrPath);      // {dtype, itemsize, chunkShape, uncompressed, sharded} — v2 or v3
       const dt = DTYPE[info.dtype];
       const oneD = info.chunkShape.length === 1 && info.chunkShape[0] > 0;
-      // a sharded array's chunks live inside shard objects, so the plain chunk-key range read doesn't
-      // map 1:1 — fall through to the (correct) whole-array read via libzarr's transparent ShardStore.
-      if (dt && oneD && info.uncompressed && !info.sharded) {
+      if (dt && oneD && info.uncompressed) {
         const [ctor, isize] = dt;
         const chunkLen = info.chunkShape[0];
         const ci = Math.floor(lo / chunkLen);
         if (hi <= (ci + 1) * chunkLen) {                   // [lo,hi) within one chunk -> exact byte range of chunk `ci`
           const off = lo - ci * chunkLen;
-          const key = this.src.chunkKey(arrPath, [ci]);    // v2 "arrPath/0" form via join below; libzarr gives the leaf key
-          const bytes = await this.store.getRange(arrPath + "/" + key, off * isize, (off + (hi - lo)) * isize);
-          if (bytes) return decodeTyped(bytes, ctor, isize);
+          if (!info.sharded) {
+            const key = this.src.chunkKey(arrPath, [ci]);  // v2 "arrPath/0" form via join below; libzarr gives the leaf key
+            const bytes = await this.store.getRange(arrPath + "/" + key, off * isize, (off + (hi - lo)) * isize);
+            if (bytes) return decodeTyped(bytes, ctor, isize);
+          } else {
+            // a sharded array's chunk lives INSIDE a shard object — resolve it through the shard index
+            // (suffix-read the index, then range-read the chunk's own bytes); undefined -> fall back.
+            const got = await this._readShardedChunkRange(arrPath, ci, off, hi - lo, ctor, isize);
+            if (got) return got;
+          }
         }
       }
     }
     const whole = (await this.src.array(arrPath)).data;    // spans chunks / compressed / no getRange -> libzarr whole-array + slice
     return (whole as any).slice(lo, hi);
+  }
+
+  /**
+   * Stream `n` elements at offset `off` within inner chunk `ci` of a SHARDED (v3) array, reading only
+   * the shard's index + the chunk's own bytes — not the whole shard. Resolves through libzarr's shard
+   * math: `shardLocate` names the shard object + index layout; a suffix (or leading) read fetches the
+   * small index; `shardEntry` decodes it to the chunk's [offset, nbytes) within the shard; one final
+   * `getRange` reads the wanted elements. Returns undefined (→ caller falls back to a whole-array read,
+   * always correct) when the store can't suffix-read an end-located index, a fetch misses, or the chunk
+   * is a fill (missing) chunk.
+   */
+  private async _readShardedChunkRange(arrPath: string, ci: number, off: number, n: number, ctor: any, isize: number): Promise<any | undefined> {
+    const loc = this.src.shardLocate(arrPath, [ci]);        // { shardKey (leaf), intra, indexSize, indexAtEnd }
+    const shardKey = arrPath + "/" + loc.shardKey;
+    let idx: Uint8Array | undefined;
+    if (loc.indexAtEnd) {
+      if (typeof this.store.getSuffix !== "function") return undefined;   // no suffix read -> whole-array fallback
+      idx = await this.store.getSuffix(shardKey, loc.indexSize);
+    } else {
+      idx = await this.store.getRange!(shardKey, 0, loc.indexSize);
+    }
+    if (!idx || idx.byteLength < loc.indexSize) return undefined;
+    const e = this.src.shardEntry(arrPath, idx, loc.intra);  // { offset, nbytes, missing }
+    if (e.missing) return undefined;
+    const start = e.offset + off * isize;
+    const bytes = await this.store.getRange!(shardKey, start, start + n * isize);
+    return bytes ? decodeTyped(bytes, ctor, isize) : undefined;
   }
 
   /**

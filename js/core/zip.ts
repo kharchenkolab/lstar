@@ -140,6 +140,16 @@ export class ZipStore implements LstarStore {
     return this.read(name, e, s, Math.max(0, en - s));
   }
 
+  /** Read the LAST `n` bytes of an entry (a suffix read, one range request), or undefined if absent.
+   * Backs the byte-range fast path on sharded arrays (the v3 shard index sits at the object's end). */
+  async getSuffix(key: string, n: number): Promise<Uint8Array | undefined> {
+    const name = this.norm(key);
+    const e = this.idx.get(name);
+    if (!e) return undefined;
+    const want = Math.min(e.size, Math.max(0, n));
+    return this.read(name, e, e.size - want, want);
+  }
+
   /**
    * Read `want` data bytes of entry `e` starting at data-offset `start`, in a SINGLE range request.
    * The data offset depends on the LOCAL header's name/extra lengths (which can differ from the central

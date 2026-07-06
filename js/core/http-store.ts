@@ -35,4 +35,16 @@ export class HttpStore implements LstarStore {
     if (res.status === 206) return buf;
     return buf.subarray(start, Math.min(end, buf.length));
   }
+  /** Read the LAST `n` bytes of an object (a suffix `Range: bytes=-n`), or undefined on 404. Backs the
+   * byte-range fast path on sharded arrays (the v3 shard index lives at the object's end). Falls back to
+   * slicing the tail of the full body when a server ignores Range (200) — correct, just no bandwidth win. */
+  async getSuffix(key: string, n: number): Promise<Uint8Array | undefined> {
+    if (n <= 0) return new Uint8Array(0);
+    const res = await this._fetch(this.url(key), { headers: { Range: `bytes=-${n}` } });
+    if (res.status === 404) return undefined;
+    if (!res.ok && res.status !== 206) throw new Error(`HTTP ${res.status} for ${this.url(key)}`);
+    const buf = new Uint8Array(await res.arrayBuffer());
+    if (res.status === 206) return buf;                     // exactly the last n bytes
+    return buf.subarray(Math.max(0, buf.length - n));       // 200: whole body -> take the tail
+  }
 }

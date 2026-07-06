@@ -116,6 +116,18 @@ export class WasmSource {
     return this.reader.chunkKey(path, idx);
   }
 
+  // Sharded byte-range resolve (v3 sharding). Both sync (metadata already cached via arrayInfo/_ensure)
+  // — libzarr owns the shard-index math; JS owns the two fetches (index, then chunk). shardLocate: which
+  // shard object holds inner chunk `idx` (leaf key — JS prepends the array path, like chunkKey), the
+  // chunk's slot, and the index layout (byte size + at-end). shardEntry: decode the fetched index bytes
+  // -> the chunk's [offset, nbytes) within the shard (missing == a fill chunk).
+  shardLocate(path: string, idx: number[]): { shardKey: string; intra: number; indexSize: number; indexAtEnd: boolean } {
+    return this.reader.shardLocate(path, idx);
+  }
+  shardEntry(path: string, indexBytes: Uint8Array, intra: number): { offset: number; nbytes: number; missing: boolean } {
+    return this.reader.shardEntry(path, indexBytes, intra);
+  }
+
   // A whole array -> { data: TypedArray, shape } (matches zarrita's chunk shape/data contract).
   async array(path: string): Promise<{ data: any; shape: number[] }> {
     await this._ensure(path);

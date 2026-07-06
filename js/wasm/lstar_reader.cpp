@@ -128,6 +128,40 @@ class Reader {
                    : zarr::v2::chunk_key(idx, a.meta().dimension_separator);
     }
 
+    // Sharded byte-range resolve (v3 sharding), phase 1: where inner chunk `idx` lives. Returns the
+    // leaf shard-object key (JS prepends the array path, exactly like chunkKey), the chunk's slot in
+    // that shard, and the shard index's layout (encoded size + end/start) so JS knows which bytes of
+    // the shard to fetch for the index. Metadata-only; no chunk read. libzarr owns the shard math.
+    val shardLocate(const std::string& path, val idx_js) {
+        zarr::Array a = zarr::Array::open(store_, path);
+        std::vector<int> t = emscripten::convertJSArrayToNumberVector<int>(idx_js);
+        std::vector<std::uint64_t> idx(t.begin(), t.end());
+        const std::string inner = zarr::v3::chunk_key(idx, a.meta().dimension_separator);
+        zarr::ShardStore ss(store_, zarr::ShardParams::for_level(a.meta(), 0, ""));
+        const auto p = ss.place(inner);
+        val out = val::object();
+        out.set("shardKey", p.shard_key);
+        out.set("intra", (double)p.intra);
+        out.set("indexSize", (double)p.index_size);
+        out.set("indexAtEnd", p.index_at_end);
+        return out;
+    }
+
+    // Sharded byte-range resolve, phase 2: decode the shard index bytes JS fetched (per shardLocate)
+    // and return inner chunk `intra`'s [offset, nbytes) within the shard, or missing == a fill chunk.
+    // JS then range-reads exactly the chunk's bytes off the shard object. No store read here.
+    val shardEntry(const std::string& path, val index_js, double intra) {
+        zarr::Array a = zarr::Array::open(store_, path);
+        zarr::ShardStore ss(store_, zarr::ShardParams::for_level(a.meta(), 0, ""));
+        const Bytes idx = to_bytes(index_js);
+        const auto e = ss.extent(idx, (std::uint64_t)intra);
+        val out = val::object();
+        out.set("offset", (double)e.offset);
+        out.set("nbytes", (double)e.nbytes);
+        out.set("missing", e.missing);
+        return out;
+    }
+
     // a whole array -> {dtype: "<f4"|..., shape: number[], bytes: Uint8Array (C-order, native)}.
     val array(const std::string& path) {
         zarr::Array a = zarr::Array::open(store_, path);
@@ -171,6 +205,8 @@ EMSCRIPTEN_BINDINGS(lstar_io) {
         .function("shape", &Reader::shape)
         .function("arrayInfo", &Reader::arrayInfo)
         .function("chunkKey", &Reader::chunkKey)
+        .function("shardLocate", &Reader::shardLocate)
+        .function("shardEntry", &Reader::shardEntry)
         .function("array", &Reader::array)
         .function("keysFor", &Reader::keysFor)
         .function("version", &Reader::version);

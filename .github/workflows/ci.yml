@@ -194,6 +194,11 @@ jobs:
         run: cd js && npm install
       - name: JS/WASM conformance (build WASM kernels + Node kernels/reader/view vs Python store)
         run: bash conformance/js.sh
+      # v3 sharding: the WASM byte-range STREAMING leg (sharded cscColumn suffix-reads the shard index +
+      # range-reads the chunk, never the whole shard). Runs HERE because only this job has node+WASM
+      # alongside zarr>=3.1; the python-cpp job's v3_shard run skips the WASM legs (no node there).
+      - name: Zarr v3 sharding — WASM byte-range streaming (shard-index resolve + suffix reads)
+        run: bash conformance/v3_shard.sh
       - name: viewer@0.1 grouping-policy linter (Python + JS lists match the canonical)
         run: python conformance/policy_linter.py
       - name: JS viewer@0.1 parity (lstar's own extend-viewer.ts == Python prep; CSC + CSR counts)

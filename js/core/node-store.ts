@@ -35,6 +35,27 @@ export class NodeFSStore implements LstarStore {
       await fh?.close();
     }
   }
+  /** Read the LAST `n` bytes of one object (a suffix read via stat + pread), or undefined if absent.
+   * Backs the byte-range fast path on sharded arrays (the v3 shard index sits at the object's end). */
+  async getSuffix(key: string, n: number): Promise<Uint8Array | undefined> {
+    if (n <= 0) return new Uint8Array(0);
+    let fh: fs.FileHandle | undefined;
+    try {
+      fh = await fs.open(path.join(this.root, key), "r");
+      const { size } = await fh.stat();
+      const start = Math.max(0, size - n);
+      const len = size - start;
+      const buf = new Uint8Array(len);
+      if (len === 0) return buf;
+      const { bytesRead } = await fh.read(buf, 0, len, start);
+      return bytesRead === len ? buf : buf.subarray(0, bytesRead);
+    } catch (e: any) {
+      if (e && e.code === "ENOENT") return undefined;
+      throw e;
+    } finally {
+      await fh?.close();
+    }
+  }
   /** Write one object (mkdir -p the parent). The write side of the `get` contract used by writer.ts. */
   async set(key: string, value: Uint8Array): Promise<void> {
     const fp = path.join(this.root, key);

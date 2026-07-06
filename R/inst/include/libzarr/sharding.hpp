@@ -83,6 +83,32 @@ struct ShardParams {
   std::vector<CodecSpec> index_codecs;
   /// v3 sharding spec: index_location "end" (default) or "start".
   bool index_at_end = true;
+
+  /// The params for shard `level` of a (possibly nested) sharded array — the exact computation the
+  /// array machinery uses to wrap its chunk store, factored out so external byte-range readers can
+  /// build the SAME mapping from metadata alone. `prefix` is the store-key prefix of the array's
+  /// chunks ("" yields leaf-relative keys). Inner shape is the next level's shard shape, or the
+  /// chunk shape at the innermost level.
+  [[nodiscard]] static ShardParams for_level(const ArrayMeta& meta, std::size_t level,
+                                             const std::string& prefix) {
+    const std::vector<std::uint64_t>& inner_shape =
+        level + 1 < meta.shard_levels.size() ? meta.shard_levels[level + 1].shard_shape
+                                             : meta.chunk_shape;
+    const ShardLevel& lvl = meta.shard_levels[level];
+    ShardParams params;
+    params.chunk_prefix = prefix;
+    params.key_encoding = meta.key_encoding;
+    params.separator = meta.dimension_separator;
+    params.index_codecs = lvl.index_codecs;
+    params.index_at_end = lvl.index_at_end;
+    params.per_shard.resize(inner_shape.size());
+    params.inner_grid.resize(inner_shape.size());
+    for (std::size_t d = 0; d < inner_shape.size(); ++d) {
+      params.per_shard[d] = lvl.shard_shape[d] / inner_shape[d];
+      params.inner_grid[d] = detail::ceil_div(meta.shape[d], inner_shape[d]);
+    }
+    return params;
+  }
 };
 
 /// Store adapter presenting the inner chunks of a sharded array as ordinary
@@ -156,6 +182,48 @@ class ShardStore final : public Store {
   }
 
   [[nodiscard]] bool exists(std::string_view key) override { return size(key).has_value(); }
+
+  // --- Byte-range support for external readers that own their fetch loop ---------------------------
+  // The two-phase resolve behind read_range, exposed so a reader (e.g. the WASM/JS viewer) can fetch
+  // only a shard's index and then only the wanted chunk's bytes, instead of the whole shard object.
+
+  /// Where an inner chunk lives: the store key of its owning shard, the chunk's C-order slot within
+  /// that shard, and the shard index's on-disk layout (encoded size + end/start) so the reader knows
+  /// which bytes of the shard to fetch for the index. Pure — no store read.
+  struct ChunkPlacement {
+    std::string shard_key;
+    std::uint64_t intra = 0;
+    std::uint64_t index_size = 0;
+    bool index_at_end = true;
+  };
+  /// The chunk's bytes within its shard: [offset, nbytes), or `missing` when the chunk is a fill
+  /// (all-default) chunk absent from the shard.
+  struct ChunkExtent {
+    std::uint64_t offset = 0;
+    std::uint64_t nbytes = 0;
+    bool missing = false;
+  };
+
+  [[nodiscard]] ChunkPlacement place(std::string_view inner_key) const {
+    const Location loc = locate(inner_key);
+    return {loc.shard_key, static_cast<std::uint64_t>(loc.intra), index_size_, params_.index_at_end};
+  }
+
+  /// Decode a fetched shard index (the `index_size` bytes at the index location) and return the
+  /// slot's extent within the shard. The caller supplies the bytes; no store read happens here.
+  [[nodiscard]] ChunkExtent extent(const Bytes& index_bytes, std::uint64_t intra) const {
+    if (intra >= entry_count_) {
+      throw error("ShardStore::extent: slot out of range");
+    }
+    const Bytes decoded = index_pipeline_.decode(Bytes(index_bytes));
+    detail_shard::IndexEntry e;
+    std::memcpy(&e.offset, decoded.data() + intra * 16, 8);
+    std::memcpy(&e.nbytes, decoded.data() + intra * 16 + 8, 8);
+    if (e.missing()) {
+      return {0, 0, true};
+    }
+    return {e.offset, e.nbytes, false};
+  }
 
   void write(std::string_view key, Bytes value) override {
     put(locate(key), std::optional<Bytes>(std::move(value)));
