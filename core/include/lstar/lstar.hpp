@@ -1044,31 +1044,23 @@ inline CscBlock read_csc_block(const fs::path& field_group, int64_t g_lo, int64_
 // a gather issues ranges in ascending order, each chunk is decoded at most once across all ranges --
 // the key to an efficient scattered-column gather (vs decoding a chunk once per touched column).
 struct ChunkReader {
-    fs::path dir;
+    zarr::Array arr;
     int64_t cs = 1, n = 0;
     size_t dsz = 1;
-    json compressor;
+    std::string dtype;
     int64_t cached = -1;
     std::vector<uint8_t> buf;                              // the decoded chunk (cs*dsz bytes)
 
-    explicit ChunkReader(const fs::path& d) : dir(d) {
-        json za = read_json(d / ".zarray");
-        cs = za["chunks"].get<std::vector<int64_t>>()[0];
-        n = za["shape"].get<std::vector<int64_t>>()[0];
-        dsz = dtype_size(za["dtype"].get<std::string>());
-        compressor = za.contains("compressor") ? za["compressor"] : json(nullptr);
+    explicit ChunkReader(const fs::path& d)
+        : arr(zarr::Array::open(std::make_shared<zarr::FilesystemStore>(d, false), "")) {
+        cs = static_cast<int64_t>(arr.meta().chunk_shape.at(0));
+        n = static_cast<int64_t>(arr.meta().shape.at(0));
+        dsz = arr.meta().dtype.itemsize;
+        dtype = zarr::v2::emit_dtype(arr.meta().dtype, /*big_endian=*/false);
     }
     const uint8_t* chunk(int64_t ci) {
-        if (ci != cached) {
-            fs::path cf = dir / std::to_string(ci);
-            if (fs::exists(cf)) {
-                std::vector<uint8_t> raw =
-                    decode_chunk(compressor, read_bytes(cf), static_cast<size_t>(cs) * dsz);
-                raw.resize(static_cast<size_t>(cs) * dsz);
-                buf.swap(raw);
-            } else {
-                buf.assign(static_cast<size_t>(cs) * dsz, 0);   // missing chunk -> fill 0
-            }
+        if (ci != cached) {                                // libzarr decodes + fill-pads the whole chunk
+            buf = arr.read_chunk({static_cast<std::uint64_t>(ci)});
             cached = ci;
         }
         return buf.data();
@@ -1107,8 +1099,8 @@ inline CscBlock read_csc_cols(const fs::path& field_group, const std::vector<int
         b.indptr[(size_t)(j + 1)] = b.indptr[(size_t)j] + (ip[cols[(size_t)j] + 1] - ip[cols[(size_t)j]]);
     const int64_t total = b.indptr.back();
     ChunkReader dr(field_group / "data"), ir(field_group / "indices");
-    b.data.dtype = read_json(field_group / "data" / ".zarray")["dtype"].get<std::string>();
-    b.indices.dtype = read_json(field_group / "indices" / ".zarray")["dtype"].get<std::string>();
+    b.data.dtype = dr.dtype;
+    b.indices.dtype = ir.dtype;
     b.data.shape = {total};
     b.indices.shape = {total};
     b.data.bytes.assign(static_cast<size_t>(total) * dr.dsz, 0);
