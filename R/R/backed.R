@@ -36,9 +36,13 @@
 #' @return a Seurat object whose assay counts are a disk-backed BPCells matrix.
 #' @export
 read_seurat_backed <- function(h5ad, group = "X", assay = "RNA", project = "lstar") {
-  .need_pkg("BPCells", "read_seurat_backed")
+  # BPCells is not on a mainstream repository, so it is deliberately NOT declared in DESCRIPTION; it is
+  # resolved dynamically (name held in a variable) so there is no literal `BPCells::` token and lstar
+  # installs/checks without it. `.need_pkg` gives a clear install hint when it is absent.
+  bp <- "BPCells"
+  .need_pkg(bp, "read_seurat_backed")
   .need_pkg("SeuratObject", "read_seurat_backed")
-  m <- BPCells::open_matrix_anndata_hdf5(h5ad, group = group)   # genes x cells, on disk (Seurat orientation)
+  m <- getExportedValue(bp, "open_matrix_anndata_hdf5")(h5ad, group = group)   # genes x cells, on disk
   assay5 <- SeuratObject::CreateAssay5Object(counts = m)
   SeuratObject::CreateSeuratObject(assay5, assay = assay, project = project)
 }

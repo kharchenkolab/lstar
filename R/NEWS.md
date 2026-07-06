@@ -1,4 +1,8 @@
-# lstar (development version)
+# lstar 0.1.6
+
+The R package version jumps 0.1.0 -> 0.1.6 to align with the companion Python package (`lstar-sc` on
+PyPI) and the shared on-disk format; the entries below cover everything the R package gained since the
+0.1.0 CRAN release.
 
 ## Seurat → viewer prep (the previously-untested seam)
 

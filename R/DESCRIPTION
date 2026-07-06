@@ -1,6 +1,7 @@
 Package: lstar
 Title: Uniform Data Model and 'Zarr' Interchange for Single-Cell Omics
-Version: 0.1.0
+Version: 0.1.6
+Date: 2026-07-06
 Authors@R:
     person("Peter", "Kharchenko", role = c("aut", "cre"),
            email = "pk.restricted@gmail.com")
@@ -17,10 +18,9 @@ BugReports: https://github.com/kharchenkolab/lstar/issues
 LinkingTo: cpp11
 Imports: Matrix, methods, stats, utils
 Suggests: SeuratObject, Seurat, SingleCellExperiment, SummarizedExperiment,
-    S4Vectors, GenomicRanges, igraph, conos, pagoda2, pagoda3, BPCells, HDF5Array,
+    S4Vectors, GenomicRanges, igraph, conos, pagoda2, HDF5Array,
     testthat (>= 3.0.0), knitr, rmarkdown
 VignetteBuilder: knitr
-Additional_repositories: https://bnprks.r-universe.dev
 SystemRequirements: C++17, zlib
 Roxygen: list(markdown = TRUE)
 Config/testthat/edition: 3

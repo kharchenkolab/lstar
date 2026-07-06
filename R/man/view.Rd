@@ -17,9 +17,10 @@ the viewer URL (invisibly), from \code{pagoda3::view()}.
 }
 \description{
 A convenience shim: interactive viewing lives in the separate \pkg{pagoda3} package. When it is
-installed this forwards to \code{pagoda3::view()}; otherwise it errors with an install hint.
-lstar only \emph{Suggests} pagoda3, so the dependency stays one-way (pagoda3 imports lstar, not
-the reverse) and a plain lstar install carries no viewer weight.
+installed this forwards to its \code{view()}; otherwise it errors with an install hint. The
+dependency stays one-way (pagoda3 imports lstar, not the reverse), and because pagoda3 is not on a
+mainstream repository it is resolved at run time rather than declared, so a plain lstar install
+carries no viewer weight.
 }
 \seealso{
 \code{\link{extend_for_viewer}} (the prep this shares), the \pkg{pagoda3} package.
