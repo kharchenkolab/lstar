@@ -13,10 +13,11 @@ add_library(lstar INTERFACE)
 target_include_directories(lstar INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 # zlib enables reading gzip/zlib-compressed chunks (ubiquitous; optional).
+# LIBZARR_HAS_ZLIB gates libzarr's gzip/zlib codec; LSTAR_HAVE_ZLIB is lstar's own guard.
 find_package(ZLIB)
 if(ZLIB_FOUND)
   target_link_libraries(lstar INTERFACE ZLIB::ZLIB)
-  target_compile_definitions(lstar INTERFACE LSTAR_HAVE_ZLIB)
+  target_compile_definitions(lstar INTERFACE LSTAR_HAVE_ZLIB LIBZARR_HAS_ZLIB)
 endif()
 
 # OpenMP for the translation primitives.
