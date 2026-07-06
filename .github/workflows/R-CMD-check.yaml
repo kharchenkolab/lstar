@@ -5,7 +5,7 @@ name: R-CMD-check
 
 on:
   push:
-    branches: [main]
+    branches: [main, v3]   # gate the long-lived v3 dev branch too (catch --as-cran issues before main)
   pull_request:
   workflow_dispatch:
 

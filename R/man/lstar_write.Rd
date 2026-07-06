@@ -9,7 +9,8 @@ lstar_write(
   path,
   chunk_elems = NULL,
   compression = c("none", "gzip", "zlib"),
-  level = 5L
+  level = 5L,
+  format = c("v2", "v3")
 )
 }
 \arguments{
@@ -27,6 +28,9 @@ a single chunk -- the portable, byte-identical-to-before default.}
 readable by the C++ core and zarr-python).}
 
 \item{level}{compression level 1-9 (default 5), used when \code{compression} is \code{"gzip"}/\code{"zlib"}.}
+
+\item{format}{on-disk Zarr format: \code{"v2"} (default) or \code{"v3"} (writes \code{zarr.json} +
+inline-consolidated metadata). Both are read by the C++/Python/JS cores; the default stays v2.}
 }
 \value{
 the output \code{path}, invisibly.

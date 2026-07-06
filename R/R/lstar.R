@@ -114,6 +114,8 @@ lstar_read <- function(path) {
 #' @param compression chunk codec: `"none"` (default), `"gzip"`, or `"zlib"` (numcodecs-compatible;
 #'   readable by the C++ core and zarr-python).
 #' @param level compression level 1-9 (default 5), used when `compression` is `"gzip"`/`"zlib"`.
+#' @param format on-disk Zarr format: `"v2"` (default) or `"v3"` (writes `zarr.json` +
+#'   inline-consolidated metadata). Both are read by the C++/Python/JS cores; the default stays v2.
 #' @return the output `path`, invisibly.
 #' @seealso [lstar_read()], [lstar_read_block()]
 #' @export
