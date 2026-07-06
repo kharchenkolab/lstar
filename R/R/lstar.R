@@ -118,8 +118,9 @@ lstar_read <- function(path) {
 #' @seealso [lstar_read()], [lstar_read_block()]
 #' @export
 lstar_write <- function(ds, path, chunk_elems = NULL, compression = c("none", "gzip", "zlib"),
-                        level = 5L) {
+                        level = 5L, format = c("v2", "v3")) {
   compression <- match.arg(compression)
+  format <- match.arg(format)                        # on-disk Zarr format; v2 default, v3 opt-in
   .check_writable(ds)                    # fail loudly on a malformed dataset, not with a C++ crash
   axes <- lapply(names(ds$axes), function(nm) {
     a <- ds$axes[[nm]]
@@ -189,7 +190,7 @@ lstar_write <- function(ds, path, chunk_elems = NULL, compression = c("none", "g
                   axes = axes, fields = fields, aux = ds$aux %||% list())  # passthrough, round-tripped verbatim
   lstar_cpp_write(payload, path.expand(path),
                   as.integer(if (is.null(chunk_elems)) 0L else chunk_elems),
-                  if (compression == "none") "" else compression, as.integer(level))
+                  if (compression == "none") "" else compression, as.integer(level), format)
   invisible(path)
 }
 

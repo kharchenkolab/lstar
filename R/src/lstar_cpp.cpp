@@ -374,12 +374,17 @@ list lstar_cpp_read(std::string path) {
 // into (data, indices, indptr) / dense vectors before calling this.
 [[cpp11::register]]
 void lstar_cpp_write(list ds, std::string path, int chunk_elems = 0,
-                     std::string compression = "", int level = 5) {
+                     std::string compression = "", int level = 5,
+                     std::string format = "v2") {
   lstar::json compressor = nullptr;                 // "" -> uncompressed; else numcodecs gzip/zlib codec
   if (compression == "gzip" || compression == "zlib")
     compressor = lstar::json{{"id", compression}, {"level", level}};
   else if (!compression.empty())
     throw std::runtime_error("unsupported compression: " + compression + " (use 'gzip', 'zlib', or '')");
+  zarr::ZarrFormat fmt;                             // on-disk format: "v2" (default) or "v3"
+  if (format == "v2") fmt = zarr::ZarrFormat::v2;
+  else if (format == "v3") fmt = zarr::ZarrFormat::v3;
+  else throw std::runtime_error("unsupported format: " + format + " (use 'v2' or 'v3')");
   lstar::Dataset out;
   out.kind = as_cpp<std::string>(ds["kind"]);
   out.spec_version = as_cpp<std::string>(ds["spec_version"]);
@@ -539,5 +544,5 @@ void lstar_cpp_write(list ds, std::string path, int chunk_elems = 0,
       }
     }
   }
-  lstar::write(out, path, (int64_t)chunk_elems, compressor);
+  lstar::write(out, path, (int64_t)chunk_elems, compressor, fmt);
 }
