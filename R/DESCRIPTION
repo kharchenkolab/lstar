@@ -1,6 +1,6 @@
 Package: lstar
 Title: Uniform Data Model and 'Zarr' Interchange for Single-Cell Omics
-Version: 0.1.6
+Version: 0.1.7
 Date: 2026-07-06
 Authors@R:
     person("Peter", "Kharchenko", role = c("aut", "cre"),

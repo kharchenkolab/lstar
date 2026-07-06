@@ -1,3 +1,16 @@
+# lstar 0.1.7
+
+## `extend_for_viewer()` auto-selects the count basis (no longer errors on normalized-only inputs)
+
+* `extend_for_viewer()` now auto-selects the basis for the viewer's counts instead of erroring when an
+  object kept only normalized values. It prefers **raw** counts (`log1p`-transformed); failing that it
+  falls back to a **log-normalized** measure (used as-is, with a warning that HVG / marker rankings are
+  then approximate); failing that it raises a clear error. A **scaled / z-scored** measure is never
+  chosen — previously a name-based fallback could pick a scaled `X`, corrupting the ranking statistics.
+  So a converted 'scanpy' object that dropped its raw layer now yields a working viewer store. The
+  selection contract is identical across R (`.viewer_counts_basis`), Python (`_select_counts_basis`) and
+  JS (`selectCountsBasis`), and is enforced by cross-surface parity tests.
+
 # lstar 0.1.6
 
 The R package version jumps 0.1.0 -> 0.1.6 to align with the companion Python package (`lstar-sc` on
