@@ -61,6 +61,7 @@ hr
 # --- (2) corpus sweeps (each tolerant: missing data -> the sweep SKIPs / prints "none cached") -------
 echo "[2] corpus sweeps -> /tmp/sweep_*.tsv  (FAIL/VALIDATE-ERR = profile bug; LOADERR/SKIP = data/pkg absent)"
 # Python sweeps: read cached testdata/ with lstar's own deps; subprocess-isolated internally where noted.
+want v3           && run "v3 format on real data (v2<->v3 across C++/Py/JS/R)"  "bash conformance/v3_corpus.sh"
 want anndata      && run "anndata (scanpy + local atlases + velocity + CITE)" "$PY conformance/sweep/sweep_anndata.py"
 want velocity     && run "velocity (scVelo spliced/unspliced)"               "$PY conformance/sweep/sweep_velocity.py"
 want mudata       && run "mudata (.h5mu: minipbcite + 10x CITE/multiome)"    "$PY conformance/sweep/sweep_mudata.py"
