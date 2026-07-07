@@ -41,6 +41,46 @@ assert "X_pca" in b.obsm and b.obsm["X_pca"].shape == (20, 3), "pca embedding lo
 print(f"  [py] h5ad -> store -> h5ad: shape {b.shape}, X intact, pca preserved")
 PY
 
+# L0b: the v3 CLI controls -- --zarr-format, --compression {gzip,zstd}, and viewer format-preservation.
+S3="$TMP/v3gz.lstar.zarr"; SZ="$TMP/v3zstd.lstar.zarr"
+python3 -m lstar convert "$H5AD" "$S3" --zarr-format v3 --compression gzip -q
+python3 -m lstar convert "$H5AD" "$SZ" --zarr-format v3 --compression zstd --chunk-elems 4 --shard-elems 16 -q
+python3 - "$S3" "$SZ" <<'PY'
+import sys, os, json, warnings; warnings.filterwarnings("ignore")
+import lstar
+def codecs(store, arr="fields/X/data"):                # X is sparse (csr) -> data array
+    p = os.path.join(store, arr, "zarr.json")
+    return [c["name"] for c in json.load(open(p))["codecs"]] if os.path.exists(p) else None
+g, z = codecs(sys.argv[1]), codecs(sys.argv[2])
+assert g and "gzip" in g, ("v3 gzip codecs", g)
+assert z and "sharding_indexed" in z, ("v3 zstd+shard codecs", z)   # zstd nested inside the shard
+for s in sys.argv[1:3]:                                # both read + validate clean
+    ds = lstar.read(s)
+    assert "X" in ds.fields and not [e for e in lstar.validate(ds) if e.startswith("ERROR")]
+print(f"  [py] CLI v3: --compression gzip={g}, zstd+shard={z}; both read + validate clean")
+PY
+# (capture first: under `set -o pipefail`, the erroring convert would poison a `... | grep` pipe)
+ZERR="$(python3 -m lstar convert "$H5AD" "$TMP/bad.lstar.zarr" --compression zstd 2>&1 || true)"
+echo "$ZERR" | grep -q "requires --zarr-format v3" \
+  && echo "  [py] CLI: --compression zstd without v3 rejected" || { echo "  FAIL: zstd/v2 not rejected"; exit 1; }
+# `lstar viewer` extends in place and must KEEP the store's format (was: silently rewrote v3 as v2). Build
+# a tiny RAW-counts v3 store (the h5ad X above is float -> lognorm, which viewer prep needs raw for).
+VR="$TMP/vraw.lstar.zarr"
+python3 - "$VR" <<'PY'
+import sys, warnings; warnings.filterwarnings("ignore")
+import numpy as np, scipy.sparse as sp, lstar
+ds = lstar.Dataset(kind="sample")
+ds.add_axis("cells", [f"c{i}" for i in range(30)]); ds.add_axis("genes", [f"g{i}" for i in range(10)])
+ds.add_field("counts", sp.random(30, 10, density=0.5, format="csc").astype("int32"),
+             role="measure", span=["cells", "genes"], state="raw")
+ds.add_field("leiden", np.array([str(i % 3) for i in range(30)]), role="label", span=["cells"])
+lstar.write(ds, sys.argv[1], format="v3")
+PY
+python3 -m lstar viewer "$VR" -q >/dev/null
+{ [ -f "$VR/zarr.json" ] && [ ! -f "$VR/.zmetadata" ]; } \
+  && echo "  [py] CLI viewer: v3 store stays v3 after extend (format preserved, not clobbered)" \
+  || { echo "  FAIL: viewer clobbered the v3 format"; exit 1; }
+
 # L1: the fidelity report (full text + machine-readable JSON)
 RJSON="$TMP/report.json"
 python3 -m lstar convert "$H5AD" "$STORE" --report --report-json "$RJSON" >/dev/null

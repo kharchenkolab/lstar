@@ -300,13 +300,34 @@ def _load_py(src: str, fmt: str, backend: str = "auto"):
     raise ConvertError(f"{fmt!r} is not a Python-side source format")
 
 
+def _make_compressor(name, level: int = 5):
+    """A numcodecs codec from a --compression NAME (or None for 'none'/unset); write() translates it to
+    the matching v2/v3 on-disk codec. zstd is a v3 codec (write() rejects it for v2)."""
+    if not name or name == "none":
+        return None
+    import numcodecs
+    if name == "gzip":
+        return numcodecs.GZip(level)
+    if name == "zstd":
+        return numcodecs.Zstd(level)
+    raise ConvertError(f"unknown --compression {name!r} (use none, gzip, or zstd)")
+
+
+def _detect_zarr_format(path) -> str:
+    """The on-disk Zarr format of an existing store: v3 if it has a root zarr.json, else v2. Lets the
+    `viewer` command extend a store in place WITHOUT silently changing its format."""
+    return "v3" if os.path.exists(os.path.join(str(path), "zarr.json")) else "v2"
+
+
 def _emit_py(ds, dst: str, fmt: str, backend: str = "auto", *,
-             zarr_format: str = "v2", chunk_elems=None, shard_elems=None) -> None:
+             zarr_format: str = "v2", chunk_elems=None, shard_elems=None, compressor=None) -> None:
     """Write an L* :class:`Dataset` out to a Python-side target. The Zarr `zarr_format`/`chunk_elems`/
-    `shard_elems` knobs apply only to a `store` target (a `.lstar.zarr`); non-store targets ignore them."""
+    `shard_elems`/`compressor` knobs apply only to a `store` target (a `.lstar.zarr`); non-store targets
+    ignore them."""
     import lstar
     if fmt == "store":
-        lstar.write(ds, dst, format=zarr_format, chunk_elems=chunk_elems, shard_elems=shard_elems)
+        lstar.write(ds, dst, format=zarr_format, chunk_elems=chunk_elems, shard_elems=shard_elems,
+                    compressor=compressor)
         return
     if _choose_backend(fmt, backend, "write") == "direct":
         _DIRECT_PY_WRITE[fmt](ds, dst)
@@ -360,7 +381,8 @@ def _read_dataset(src: str, ff: str, backend: str = "auto"):
 
 def convert(src: str, dst: str, from_fmt: str | None = None, to_fmt: str | None = None,
             backend: str = "auto", viewer: bool = False,
-            zarr_format: str = "v2", chunk_elems=None, shard_elems=None):
+            zarr_format: str = "v2", chunk_elems=None, shard_elems=None,
+            compression: str = "none", compression_level: int = 5):
     """Convert *src* → *dst*. Returns ``(ds, from_fmt, to_fmt)`` with the bridging L* dataset.
 
     Python-side ↔ Python-side runs in-process; any leg in R (Seurat/SCE) is bridged through a temporary
@@ -371,6 +393,9 @@ def convert(src: str, dst: str, from_fmt: str | None = None, to_fmt: str | None 
     import lstar
     ff = detect_format(src, from_fmt)
     tf = detect_format(dst, to_fmt)
+    if compression == "zstd" and zarr_format != "v3":
+        raise ConvertError("--compression zstd requires --zarr-format v3")
+    compressor = _make_compressor(compression, compression_level)   # None for 'none'; store targets only
     if tf == "rds":
         tf = "seurat"                              # a bare .rds *target* defaults to Seurat (use --to sce)
     if viewer and tf != "store":
@@ -380,7 +405,8 @@ def convert(src: str, dst: str, from_fmt: str | None = None, to_fmt: str | None 
         ds = _load_py(src, ff, backend)
         if viewer:
             lstar.extend_for_viewer(ds)
-        _emit_py(ds, dst, tf, backend, zarr_format=zarr_format, chunk_elems=chunk_elems, shard_elems=shard_elems)
+        _emit_py(ds, dst, tf, backend, zarr_format=zarr_format, chunk_elems=chunk_elems,
+                 shard_elems=shard_elems, compressor=compressor)
         return ds, ff, tf
     if not os.path.exists(src):
         raise ConvertError(f"source not found: {src}")
@@ -397,7 +423,8 @@ def convert(src: str, dst: str, from_fmt: str | None = None, to_fmt: str | None 
         else:
             if viewer:                              # R source -> store --viewer: extend before emit
                 lstar.extend_for_viewer(ds)
-            _emit_py(ds, dst, tf, backend, zarr_format=zarr_format, chunk_elems=chunk_elems, shard_elems=shard_elems)
+            _emit_py(ds, dst, tf, backend, zarr_format=zarr_format, chunk_elems=chunk_elems,
+                     shard_elems=shard_elems, compressor=compressor)
         return ds, ff, tf
     finally:
         shutil.rmtree(os.path.dirname(bridge), ignore_errors=True)
@@ -508,6 +535,10 @@ def main(argv=None) -> int:
                    help="native (domain package), direct (lstar's package-free codec), or auto [default]")
     c.add_argument("--zarr-format", dest="zarr_format", choices=("v2", "v3"), default="v2",
                    help="on-disk Zarr format for a store target: v2 [default] or v3")
+    c.add_argument("--compression", choices=("none", "gzip", "zstd"), default="none",
+                   help="compress store chunks: none [default], gzip, or zstd (zstd needs --zarr-format v3)")
+    c.add_argument("--compression-level", dest="compression_level", type=int, default=5,
+                   help="compression level 1-9 (default 5), for --compression gzip/zstd")
     c.add_argument("--chunk-elems", dest="chunk_elems", type=int, default=None,
                    help="chunk store arrays along axis 0 to ~this many elements per chunk")
     c.add_argument("--shard-elems", dest="shard_elems", type=int, default=None,
@@ -531,6 +562,19 @@ def main(argv=None) -> int:
     vw.add_argument("store", help="a *.lstar.zarr store to extend in place")
     vw.add_argument("--grouping", default=None, help="primary grouping label (default: auto-detect)")
     vw.add_argument("--also", nargs="*", default=[], help="additional grouping labels to summarize")
+    # the store is re-emitted; by default keep its on-disk format (auto), or convert it (v2/v3). Same
+    # write knobs as `convert`, so `lstar viewer store --zarr-format v3 --chunk-elems N --shard-elems M`
+    # prepares a hosted (sharded) viewer store in one step.
+    vw.add_argument("--zarr-format", dest="zarr_format", choices=("auto", "v2", "v3"), default="auto",
+                    help="on-disk Zarr format: auto [default: keep the store's current format] / v2 / v3")
+    vw.add_argument("--compression", choices=("none", "gzip", "zstd"), default="none",
+                    help="compress chunks: none [default], gzip, or zstd (zstd needs a v3 store)")
+    vw.add_argument("--compression-level", dest="compression_level", type=int, default=5,
+                    help="compression level 1-9 (default 5), for --compression gzip/zstd")
+    vw.add_argument("--chunk-elems", dest="chunk_elems", type=int, default=None,
+                    help="chunk store arrays along axis 0 to ~this many elements per chunk")
+    vw.add_argument("--shard-elems", dest="shard_elems", type=int, default=None,
+                    help="pack ~this many elements' worth of chunks into each shard object (needs v3 + --chunk-elems)")
     vw.add_argument("-q", "--quiet", action="store_true", help="suppress the summary")
 
     i = sub.add_parser("inspect", help="read SRC and report its L* structure (no write)")
@@ -548,7 +592,9 @@ def main(argv=None) -> int:
                                  viewer=getattr(args, "viewer", False),
                                  zarr_format=getattr(args, "zarr_format", "v2"),
                                  chunk_elems=getattr(args, "chunk_elems", None),
-                                 shard_elems=getattr(args, "shard_elems", None))
+                                 shard_elems=getattr(args, "shard_elems", None),
+                                 compression=getattr(args, "compression", "none"),
+                                 compression_level=getattr(args, "compression_level", 5))
             rep = build_report(ds, args.src, ff, args.dst, tf)
             nc = None
             if args.check:
@@ -571,7 +617,13 @@ def main(argv=None) -> int:
             ds = lstar.read(args.store)
             groupings = ([args.grouping] + list(args.also)) if args.grouping else (list(args.also) or None)
             lstar.extend_for_viewer(ds, groupings=groupings)
-            lstar.write(ds, args.store)
+            # re-emit in place, KEEPING the store's on-disk format by default (auto) instead of silently
+            # rewriting a v3 store as v2; --zarr-format v2/v3 forces a conversion.
+            zfmt = _detect_zarr_format(args.store) if args.zarr_format == "auto" else args.zarr_format
+            if args.compression == "zstd" and zfmt != "v3":
+                raise ConvertError("--compression zstd requires a v3 store (--zarr-format v3)")
+            lstar.write(ds, args.store, format=zfmt, chunk_elems=args.chunk_elems,
+                        shard_elems=args.shard_elems, compressor=_make_compressor(args.compression, args.compression_level))
             if not args.quiet:
                 added = [n for n in ds.fields if n.startswith(("stats_", "markers_", "counts_cellmajor", "od_score"))]
                 print("lstar viewer: %s — viewer@0.1 ready (%d navigator fields)"

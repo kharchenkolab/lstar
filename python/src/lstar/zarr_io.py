@@ -58,6 +58,10 @@ def write(ds, path, compressor=None, chunk_elems=None, stream=False, viewer=Fals
     if format not in ("v2", "v3"):
         raise ValueError(f"format must be 'v2' or 'v3', got {format!r}")
     zfmt = 3 if format == "v3" else 2
+    if compressor is not None and zfmt == 2:           # zstd is a v3 codec on the tested read path
+        import numcodecs
+        if isinstance(compressor, numcodecs.Zstd):
+            raise ValueError("zstd compression requires format='v3' (v2 lstar stores use gzip or none)")
     if zfmt == 3 and compressor is not None:
         # v3 arrays take a Zarr v3 codec, not a numcodecs compressor. Translate lstar's gzip (its writer
         # default) or zstd (zarr-python 3's own v3 default — so a zstd store is what "wild" v3 looks like)
