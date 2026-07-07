@@ -165,6 +165,12 @@ export class LstarDataset {
     return this;
   }
 
+  /** Release the dataset's native reader state (the WASM `Reader` + its byte cache). The shared WASM
+   * module stays alive for other datasets. Call this when done with a dataset in a long-lived session
+   * that opens many — otherwise each dataset's C++ `Reader` accumulates in the module heap. Idempotent;
+   * the dataset must not be read after disposing. A no-op for a source without `dispose` (e.g. a mock). */
+  dispose(): void { this.src?.dispose?.(); }
+
   axisNames(): string[] { return [...this.axes.keys()]; }
   fieldNames(): string[] { return [...this.fields.keys()]; }
   hasField(name: string): boolean { return this.fields.has(name); }

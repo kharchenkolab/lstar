@@ -59,10 +59,18 @@ struct JsStore : zarr::Store {
 // enumerate every chunk key of an array's shape/chunk grid, in the array's own format + separator, using
 // libzarr's own chunk_key -- so JS learns exactly what to prefetch without reimplementing key math.
 static void enumerate_chunks(const zarr::ArrayMeta& m, std::vector<std::string>& out) {
+    // The store objects to prefetch are the STORE-key grid, which for a sharded array is the OUTERMOST
+    // shard grid -- NOT the inner-chunk grid. ArrayMeta::chunk_shape is always the innermost (true) chunk
+    // shape; a sharded array packs many inner chunks into each shard object. Enumerating inner keys would
+    // name c/0..c/N when only the M<=N shard objects exist -> N-M spurious 404s per array (decode is
+    // correctness-safe -- it reads only the shards -- but the over-fetch defeats sharding's fewer-objects
+    // goal). Use the outermost shard_shape so keysFor names exactly the objects that exist.
+    const std::vector<std::uint64_t>& store_chunk =
+        m.shard_levels.empty() ? m.chunk_shape : m.shard_levels.front().shard_shape;
     std::vector<std::uint64_t> grid(m.shape.size());
     std::uint64_t total = 1;
     for (size_t d = 0; d < m.shape.size(); ++d) {
-        grid[d] = m.chunk_shape[d] ? (m.shape[d] + m.chunk_shape[d] - 1) / m.chunk_shape[d] : 0;
+        grid[d] = store_chunk[d] ? (m.shape[d] + store_chunk[d] - 1) / store_chunk[d] : 0;
         total *= grid[d];
     }
     if (m.shape.empty()) { out.push_back(m.format == zarr::ZarrFormat::v3 ? "c" : "0"); return; }  // 0-d

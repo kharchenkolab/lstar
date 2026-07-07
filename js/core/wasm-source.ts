@@ -7,6 +7,14 @@
 import createLstarIO from "../dist/lstar_io.mjs";
 import type { LstarStore } from "./reader.ts";
 
+// ONE shared Emscripten instance across every dataset. The module is stateless — pure chunk-key/shard/
+// codec functions plus a per-source `Reader` bound to that source's store callback — so there is nothing
+// to isolate per dataset. Instantiating `createLstarIO()` per open would allocate a fresh WASM heap each
+// time and a long session that loads many datasets would accumulate them until it aborts; a singleton
+// bounds it to one heap. Per-dataset native state (the `Reader`) is freed by `WasmSource.dispose()`.
+let _modPromise: Promise<any> | null = null;
+function ioModule(): Promise<any> { return (_modPromise ??= createLstarIO()); }
+
 const TD = new TextDecoder();
 const TE = new TextEncoder();
 
@@ -33,9 +41,18 @@ export class WasmSource {
   constructor(store: LstarStore) { this.store = store; }
 
   async init(): Promise<void> {
-    this.M = await createLstarIO();
+    this.M = await ioModule();
     this.reader = new this.M.Reader((key: string) => this.cache.get(key) ?? null);
     await this._loadConsolidated();
+  }
+
+  // Free this dataset's native state: the embind `Reader` object (a C++ allocation inside the shared
+  // module — NOT garbage-collected until deleted) and the prefetch byte cache. The shared WASM module
+  // itself stays alive for other datasets. Idempotent; the source must not be used after disposing.
+  dispose(): void {
+    try { this.reader?.delete?.(); } catch { /* already deleted */ }
+    this.reader = null;
+    this.cache.clear();
   }
 
   // Fetch one object into the cache (once). A miss is cached as null so libzarr's "missing chunk = fill"
