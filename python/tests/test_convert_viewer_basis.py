@@ -64,14 +64,30 @@ def test_raw_X_becomes_counts():
 
 # ---- the reported bug: no-counts file must fail CLEARLY, and be preppable via basis="lognorm" ----
 
-def test_no_counts_gives_clear_error():
+def test_auto_falls_back_to_lognorm():
+    # scaled .X + lognorm .raw, NO counts: the default (basis='auto') now falls back to the lognorm
+    # measure — with a warning — instead of erroring, so `--viewer` works on a scanpy .h5ad that kept
+    # only normalized values. (var-of-lognorm stats are approximate; the warning says so.)
     ds = lstar.read_anndata(_pbmc_like())
+    with pytest.warns(UserWarning, match="log-normalized"):
+        lstar.extend_for_viewer(ds, order="none")
+    assert "od_score" in ds.fields
+    assert ds.field("od_score").provenance.get("basis") == "lognorm-input"
+    assert ds.field("counts_cellmajor").state == "lognorm"
+
+
+def test_scaled_only_gives_clear_error():
+    # a store whose ONLY measure is scaled/z-scored (no raw, no lognorm) cannot be a viewer basis
+    # (log1p on negatives is meaningless) -> a clear error that lists what is present and says why.
+    rng = np.random.default_rng(0)
+    a = ad.AnnData(X=rng.normal(size=(120, 40)).astype("float32"))     # negatives -> scaled, named "X"
+    a.obs["leiden"] = np.array([str(i % 3) for i in range(120)])
+    ds = lstar.read_anndata(a)
     with pytest.raises(ValueError) as e:
         lstar.extend_for_viewer(ds)
     msg = str(e.value)
-    assert "no raw counts measure" in msg
-    assert "X[scaled]" in msg and "raw[lognorm]" in msg     # lists what IS present
-    assert "basis='lognorm'" in msg                         # and the actionable escape hatch
+    assert "no raw or log-normalized measure" in msg
+    assert "scaled" in msg                                             # explains why it cannot be used
 
 
 def test_lognorm_basis_fallback():
@@ -104,6 +120,26 @@ def test_basis_selected_by_state_not_name():
     ds.add_field("leiden", np.array([str(i % 3) for i in range(150)]), role="label", span=["cells"])
     lstar.extend_for_viewer(ds, order="none")
     assert "od_score" in ds.fields and "stats_leiden_sum" in ds.fields
+
+
+def test_scaled_field_named_counts_not_picked_as_raw():
+    # regression (the name-shortcut hole): a measure literally named "counts" that is SCALED must not be
+    # picked as raw and log1p'd -- the literal-"counts" fast path excludes scaled, like the lognorm name
+    # fallback. Exercises _select_counts_basis (the shared basis picker) directly.
+    from lstar.viewer import _select_counts_basis
+
+    def _ds(fields):
+        d = lstar.Dataset(kind="sample")
+        d.add_axis("cells", [f"c{i}" for i in range(60)])
+        d.add_axis("genes", [f"g{j}" for j in range(20)])
+        for name, state in fields:
+            d.add_field(name, _counts(60, 20, 5).tocsc(), role="measure", span=["cells", "genes"], state=state)
+        return d
+    # scaled "counts" + a real raw measure -> skip the scaled "counts", pick the raw one (log1p)
+    assert _select_counts_basis(_ds([("counts", "scaled"), ("X", "raw")])) == ("X", True)
+    # only a scaled "counts" -> clear error (a scaled measure is never a basis), not a silent log1p
+    with pytest.raises(ValueError, match="no raw or log-normalized measure"):
+        _select_counts_basis(_ds([("counts", "scaled")]))
 
 
 def test_mudata_seam():

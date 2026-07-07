@@ -86,11 +86,12 @@
 #'   waits on. Unlike ordering the groupings by hand, `primary` composes with auto-detect: `primary="cell_type"`
 #'   with `grouping=NULL` preps *every* detected grouping but keys the reorder on `cell_type` (the auto-detect
 #'   policy prefers clusterings, but the viewer may open on a cell-type annotation). `NULL` = current behavior.
-#' @param counts name of the count measure to use. Default `NULL` = auto-detect by state: a measure
-#'   named `counts`, else any measure with `state == "raw"`. An error (listing the present measures)
-#'   is raised if none is found.
-#' @param basis `NULL` (raw basis, `log1p`-transformed) or `"lognorm"` to prep -- approximately --
-#'   from an already log-normalized measure (values used as-is; stats are var-of-lognorm).
+#' @param counts force the count measure to build from (`log1p` unless it is already log-normalized).
+#'   `NULL` (default) lets `basis` choose.
+#' @param basis how to choose the measure by state (`NULL` == `"auto"`): `"auto"` prefers a raw measure
+#'   (`log1p`-transformed) and, when none is present, falls back to a log-normalized one (used as-is;
+#'   stats are var-of-lognorm, so HVG/markers are approximate -- a warning is emitted). `"raw"`/
+#'   `"lognorm"` force that state. A scaled/z-scored measure is never used.
 #' @param order `"hybrid"` (default) physically reorders `counts_cellmajor` (cluster-contiguous, then a
 #'   Hilbert curve over the embedding) and adds `counts_cellmajor_order`; `"none"` keeps rows in cell
 #'   order and omits the permutation.
@@ -102,6 +103,10 @@ extend_for_viewer <- function(ds, grouping = NULL, also = character(0), counts =
                               order = "hybrid", markers = TRUE, primary = NULL) {
   sel <- .viewer_counts_basis(ds, counts, basis)   # pick basis by state, not the literal name "counts"
   cf <- ds$fields[[sel$name]]; use_lognorm <- sel$log1p
+  if (!sel$log1p && is.null(counts) && (is.null(basis) || identical(basis, "auto")))
+    warning(sprintf(paste0("extend_for_viewer: no raw counts found; prepped from the log-normalized measure '%s'. ",
+                           "od_score (HVG) and markers are approximate (var-of-lognorm, not var-of-log1p(counts)). ",
+                           "Pass counts=<field> or basis='raw' if a raw measure is available."), sel$name), call. = FALSE)
   cnt <- methods::as(cf$values, "CsparseMatrix")                 # cells x genes (CSC)
   span <- if (!is.null(cf$span)) cf$span else c("cells", "genes")
   cell_axis <- span[1]; gene_axis <- span[2]
@@ -188,28 +193,51 @@ extend_for_viewer <- function(ds, grouping = NULL, also = character(0), counts =
 # named its raw matrix `X` or a modality is still preppable. A raw measure is preferred and log1p'd;
 # `counts=` forces a field; `basis="lognorm"` preps (approximately) from a log-normalized measure.
 .viewer_counts_basis <- function(ds, counts = NULL, basis = NULL) {
+  # Contract identical to Python's _select_counts_basis and JS's selectCountsBasis: basis 'auto'
+  # (default) prefers a raw measure (log1p) and falls back to a log-normalized one (as-is); 'raw'/
+  # 'lognorm' force one; a scaled/z-scored measure is never used. counts=<field> forces a measure.
   is_cxg <- function(f) identical(f$role, "measure") && !is.null(f$span) && length(f$span) == 2 &&
     grepl("^cells", as.character(f$span[[1]]))
   twod <- Filter(function(nm) is_cxg(ds$fields[[nm]]), names(ds$fields))
   st <- function(nm) { s <- ds$fields[[nm]]$state; if (is.null(s)) NA_character_ else s }
   present <- if (length(twod)) paste(vapply(twod, function(nm) sprintf("%s[%s]", nm, st(nm)), ""), collapse = ", ") else "(none)"
+  raw_pick <- function() {
+    # the literal "counts" shortcut EXCLUDES a scaled/z-scored measure (symmetric with lognorm_pick): a
+    # field named "counts" that is actually scaled must NOT be picked as raw + log1p'd -- fall through.
+    if ("counts" %in% twod && !identical(st("counts"), "scaled")) return("counts")
+    p <- twod[vapply(twod, function(nm) identical(st(nm), "raw"), logical(1))]
+    if (length(p)) p[1] else NULL
+  }
+  lognorm_pick <- function() {
+    p <- twod[vapply(twod, function(nm) identical(st(nm), "lognorm"), logical(1))]
+    if (!length(p))    # name fallback (FIELD order, match Py/JS), EXCLUDING a scaled measure -- a scaled X is not lognorm
+      p <- twod[vapply(twod, function(nm) (nm %in% .VIEWER_LOGNORM_NAMES) && !identical(st(nm), "scaled"), logical(1))]
+    if (length(p)) p[1] else NULL
+  }
   if (!is.null(counts)) {
     if (is.null(ds$fields[[counts]]))
       stop(sprintf("extend_for_viewer: counts='%s' is not a measure (present: %s)", counts, present), call. = FALSE)
-    return(list(name = counts, log1p = !identical(basis, "lognorm") && !identical(st(counts), "lognorm")))
+    return(list(name = counts, log1p = !identical(st(counts), "lognorm")))
   }
-  if (identical(basis, "lognorm")) {
-    pick <- twod[vapply(twod, function(nm) identical(st(nm), "lognorm"), logical(1))]
-    if (!length(pick)) pick <- twod[twod %in% .VIEWER_LOGNORM_NAMES]  # FIELD order (match Py/JS), not name-list order
-    if (!length(pick))
-      stop(sprintf("extend_for_viewer: basis='lognorm' but no log-normalized measure found (present: %s)", present), call. = FALSE)
-    return(list(name = pick[1], log1p = FALSE))
+  b <- if (is.null(basis)) "auto" else basis
+  if (identical(b, "raw")) {
+    p <- raw_pick()
+    if (is.null(p)) stop(sprintf("extend_for_viewer: basis='raw' but no raw counts measure found (present cells x genes measures: %s).", present), call. = FALSE)
+    return(list(name = p, log1p = TRUE))
   }
-  pick <- if ("counts" %in% twod) "counts" else twod[vapply(twod, function(nm) identical(st(nm), "raw"), logical(1))]
-  if (length(pick)) return(list(name = pick[1], log1p = TRUE))
-  stop(sprintf(paste0("extend_for_viewer: no raw counts measure found (present cells x genes measures: %s). ",
-                      "Pass counts=<field>, provide raw counts, or basis='lognorm' to prep from a log-normalized measure."),
-               present), call. = FALSE)
+  if (identical(b, "lognorm")) {
+    p <- lognorm_pick()
+    if (is.null(p)) stop(sprintf("extend_for_viewer: basis='lognorm' but no log-normalized measure found (present cells x genes measures: %s).", present), call. = FALSE)
+    return(list(name = p, log1p = FALSE))
+  }
+  if (identical(b, "auto")) {
+    p <- raw_pick();     if (!is.null(p)) return(list(name = p, log1p = TRUE))
+    p <- lognorm_pick(); if (!is.null(p)) return(list(name = p, log1p = FALSE))
+    stop(sprintf(paste0("extend_for_viewer: no raw or log-normalized measure found (present cells x genes measures: %s). ",
+                        "Viewer prep needs raw counts or log-normalized values; pass counts=<field> to force a measure. ",
+                        "(A scaled/z-scored measure cannot be used as a basis.)"), present), call. = FALSE)
+  }
+  stop(sprintf("extend_for_viewer: basis must be 'auto', 'raw', or 'lognorm' (or pass counts=<field>); got '%s'", b), call. = FALSE)
 }
 
 #' Extend an existing L* store in place with the viewer@0.1 navigator fields.

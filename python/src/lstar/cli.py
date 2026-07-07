@@ -380,7 +380,7 @@ def _read_dataset(src: str, ff: str, backend: str = "auto"):
 
 
 def convert(src: str, dst: str, from_fmt: str | None = None, to_fmt: str | None = None,
-            backend: str = "auto", viewer: bool = False,
+            backend: str = "auto", viewer: bool = False, basis: str = "auto", counts: str | None = None,
             zarr_format: str = "v3", chunk_elems=None, shard_elems=None,
             compression: str = "none", compression_level: int = 5):
     """Convert *src* → *dst*. Returns ``(ds, from_fmt, to_fmt)`` with the bridging L* dataset.
@@ -404,7 +404,7 @@ def convert(src: str, dst: str, from_fmt: str | None = None, to_fmt: str | None 
     if not src_r and not dst_r:                    # in-process Python path
         ds = _load_py(src, ff, backend)
         if viewer:
-            lstar.extend_for_viewer(ds)
+            lstar.extend_for_viewer(ds, basis=basis, counts=counts)
         _emit_py(ds, dst, tf, backend, zarr_format=zarr_format, chunk_elems=chunk_elems,
                  shard_elems=shard_elems, compressor=compressor)
         return ds, ff, tf
@@ -422,7 +422,7 @@ def convert(src: str, dst: str, from_fmt: str | None = None, to_fmt: str | None 
             _r_write_from_store(bridge, dst, tf, backend)
         else:
             if viewer:                              # R source -> store --viewer: extend before emit
-                lstar.extend_for_viewer(ds)
+                lstar.extend_for_viewer(ds, basis=basis, counts=counts)
             _emit_py(ds, dst, tf, backend, zarr_format=zarr_format, chunk_elems=chunk_elems,
                      shard_elems=shard_elems, compressor=compressor)
         return ds, ff, tf
@@ -547,6 +547,11 @@ def main(argv=None) -> int:
     c.add_argument("--viewer", action="store_true",
                    help="when the target is a store, extend it with the lstar-viewer precomputed "
                         "fields (counts_cellmajor, per-group stats + markers, od_score, hybrid order)")
+    c.add_argument("--basis", choices=("auto", "raw", "lognorm"), default="auto",
+                   help="viewer prep basis: auto [default] uses raw counts if present, else falls back "
+                        "to a log-normalized measure; raw/lognorm force one")
+    c.add_argument("--counts", default=None, metavar="FIELD",
+                   help="force the viewer count measure (else chosen by --basis)")
     c.add_argument("--report", action="store_true", help="print the full fidelity report")
     c.add_argument("--report-json", dest="report_json", metavar="FILE", default=None,
                    help="write the fidelity report as JSON to FILE")
@@ -562,6 +567,11 @@ def main(argv=None) -> int:
     vw.add_argument("store", help="a *.lstar.zarr store to extend in place")
     vw.add_argument("--grouping", default=None, help="primary grouping label (default: auto-detect)")
     vw.add_argument("--also", nargs="*", default=[], help="additional grouping labels to summarize")
+    vw.add_argument("--basis", choices=("auto", "raw", "lognorm"), default="auto",
+                    help="prep basis: auto [default] uses raw counts if present, else a log-normalized "
+                         "measure; raw/lognorm force one")
+    vw.add_argument("--counts", default=None, metavar="FIELD",
+                    help="force the count measure (else chosen by --basis)")
     # the store is re-emitted; by default keep its on-disk format (auto), or convert it (v2/v3). Same
     # write knobs as `convert`, so `lstar viewer store --zarr-format v3 --chunk-elems N --shard-elems M`
     # prepares a hosted (sharded) viewer store in one step.
@@ -590,7 +600,8 @@ def main(argv=None) -> int:
         if args.cmd == "convert":
             ds, ff, tf = convert(args.src, args.dst, args.from_fmt, args.to_fmt, args.backend,
                                  viewer=getattr(args, "viewer", False),
-                                 zarr_format=getattr(args, "zarr_format", "v2"),
+                                 basis=getattr(args, "basis", "auto"), counts=getattr(args, "counts", None),
+                                 zarr_format=getattr(args, "zarr_format", "v3"),
                                  chunk_elems=getattr(args, "chunk_elems", None),
                                  shard_elems=getattr(args, "shard_elems", None),
                                  compression=getattr(args, "compression", "none"),
@@ -616,7 +627,7 @@ def main(argv=None) -> int:
             import lstar
             ds = lstar.read(args.store)
             groupings = ([args.grouping] + list(args.also)) if args.grouping else (list(args.also) or None)
-            lstar.extend_for_viewer(ds, groupings=groupings)
+            lstar.extend_for_viewer(ds, groupings=groupings, basis=args.basis, counts=args.counts)
             # re-emit in place, KEEPING the store's on-disk format by default (auto) instead of silently
             # rewriting a v3 store as v2; --zarr-format v2/v3 forces a conversion.
             zfmt = _detect_zarr_format(args.store) if args.zarr_format == "auto" else args.zarr_format
@@ -624,6 +635,7 @@ def main(argv=None) -> int:
                 raise ConvertError("--compression zstd requires a v3 store (--zarr-format v3)")
             lstar.write(ds, args.store, format=zfmt, chunk_elems=args.chunk_elems,
                         shard_elems=args.shard_elems, compressor=_make_compressor(args.compression, args.compression_level))
+
             if not args.quiet:
                 added = [n for n in ds.fields if n.startswith(("stats_", "markers_", "counts_cellmajor", "od_score"))]
                 print("lstar viewer: %s — viewer@0.1 ready (%d navigator fields)"

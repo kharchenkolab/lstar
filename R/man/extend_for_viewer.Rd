@@ -22,12 +22,13 @@ extend_for_viewer(
 
 \item{also}{additional grouping labels to also summarize (e.g. \code{"cell_type"}).}
 
-\item{counts}{name of the count measure to use. Default \code{NULL} = auto-detect by state: a measure
-named \code{counts}, else any measure with \code{state == "raw"}. An error (listing the present measures)
-is raised if none is found.}
+\item{counts}{force the count measure to build from (\code{log1p} unless it is already log-normalized).
+\code{NULL} (default) lets \code{basis} choose.}
 
-\item{basis}{\code{NULL} (raw basis, \code{log1p}-transformed) or \code{"lognorm"} to prep -- approximately --
-from an already log-normalized measure (values used as-is; stats are var-of-lognorm).}
+\item{basis}{how to choose the measure by state (\code{NULL} == \code{"auto"}): \code{"auto"} prefers a raw measure
+(\code{log1p}-transformed) and, when none is present, falls back to a log-normalized one (used as-is;
+stats are var-of-lognorm, so HVG/markers are approximate -- a warning is emitted). \code{"raw"}/
+\code{"lognorm"} force that state. A scaled/z-scored measure is never used.}
 
 \item{order}{\code{"hybrid"} (default) physically reorders \code{counts_cellmajor} (cluster-contiguous, then a
 Hilbert curve over the embedding) and adds \code{counts_cellmajor_order}; \code{"none"} keeps rows in cell

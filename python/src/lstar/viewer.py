@@ -130,35 +130,66 @@ def _gene_axis(ds):
 def _select_counts_basis(ds, counts=None, basis=None):
     """Choose ``(field_name, apply_log1p)`` the viewer navigators are built from.
 
-    Selected by *content/state*, not a magic field name (a converter that named its raw matrix ``X``
-    or a modality is still viewer-preppable). A **raw** measure is preferred and the kernels apply
-    ``log1p`` to it. Pass ``counts=<field>`` to force a measure, or ``basis="lognorm"`` to prep
-    (approximately) from an already log-normalized measure -- then ``apply_log1p`` is False, so the
-    stats are var-of-lognorm rather than var-of-log1p(counts)."""
+    ``basis`` selects HOW to prep, by *content/state* (not a magic field name — a converter that named
+    its raw matrix ``X`` is still preppable):
+
+    * ``"auto"`` (default): prefer a **raw** measure (``log1p``-transformed); if there is none, fall
+      back to an already **log-normalized** measure (used as-is — stats are var-of-lognorm, not
+      var-of-log1p(counts)); if neither exists, raise. A **scaled/z-scored** measure is never used as a
+      basis (``log1p`` on negatives is meaningless).
+    * ``"raw"`` / ``"lognorm"``: force that state (raise if absent).
+
+    Pass ``counts=<field>`` to force a specific measure (``log1p`` unless it is already log-normalized).
+    The contract (preference order, error conditions) is identical across the Python, R and JS surfaces.
+    """
     twod = [n for n, f in ds.fields.items()
             if f.role == "measure" and f.span and len(f.span) == 2
             and (f.span[0] == "cells" or str(f.span[0]).startswith("cells"))]
     present = ", ".join("%s[%s]" % (n, ds.field(n).state) for n in twod) or "(none)"
+
+    def _raw_pick():        # raw measure: "counts" if present (and NOT scaled), else any raw-state measure
+        # the literal "counts" shortcut excludes a scaled/z-scored measure (symmetric with _lognorm_pick):
+        # a field named "counts" that is actually scaled must not be picked as raw + log1p'd -- fall through.
+        return ("counts" if "counts" in twod and ds.field("counts").state != "scaled" else None) \
+            or next((n for n in twod if ds.field(n).state == "raw"), None)
+
+    def _lognorm_pick():    # log-normalized measure: by state, else by conventional name (X/data/logcounts)
+        return next((n for n in twod if ds.field(n).state == "lognorm"), None) \
+            or next((n for n in twod if n in _LOGNORM_NAMES and ds.field(n).state != "scaled"), None)
+        # the name fallback must exclude a scaled/z-scored measure (e.g. a scaled `X`): it is not lognorm.
+
     if counts is not None:
         if counts not in ds.fields:
             raise ValueError("extend_for_viewer: counts=%r is not a measure (present cells x genes "
                              "measures: %s)" % (counts, present))
-        return counts, (basis != "lognorm" and ds.field(counts).state != "lognorm")
-    if basis == "lognorm":
-        pick = next((n for n in twod if ds.field(n).state == "lognorm"), None) \
-            or next((n for n in twod if n in _LOGNORM_NAMES), None)
+        return counts, (ds.field(counts).state != "lognorm")
+
+    b = basis or "auto"
+    if b == "raw":
+        pick = _raw_pick()
         if pick is None:
-            raise ValueError("extend_for_viewer: basis='lognorm' but no log-normalized measure "
-                             "found (present: %s)" % present)
-        return pick, False
-    pick = ("counts" if "counts" in twod else None) \
-        or next((n for n in twod if ds.field(n).state == "raw"), None)
-    if pick is not None:
+            raise ValueError("extend_for_viewer: basis='raw' but no raw counts measure found "
+                             "(present cells x genes measures: %s)." % present)
         return pick, True
-    raise ValueError(
-        "extend_for_viewer: no raw counts measure found (present cells x genes measures: %s). "
-        "Viewer prep needs raw counts; pass counts=<field>, provide a raw-counts measure, or pass "
-        "basis='lognorm' to prep (approximately) from a log-normalized measure." % present)
+    if b == "lognorm":
+        pick = _lognorm_pick()
+        if pick is None:
+            raise ValueError("extend_for_viewer: basis='lognorm' but no log-normalized measure found "
+                             "(present cells x genes measures: %s)." % present)
+        return pick, False
+    if b == "auto":
+        pick = _raw_pick()
+        if pick is not None:
+            return pick, True
+        pick = _lognorm_pick()
+        if pick is not None:
+            return pick, False
+        raise ValueError(
+            "extend_for_viewer: no raw or log-normalized measure found (present cells x genes measures: "
+            "%s). Viewer prep needs raw counts or log-normalized values; pass counts=<field> to force a "
+            "measure. (A scaled/z-scored measure cannot be used as a basis.)" % present)
+    raise ValueError("extend_for_viewer: basis must be 'auto', 'raw', or 'lognorm' (or pass "
+                     "counts=<field>); got %r" % basis)
 
 
 # ---------------------------------------------------------------------------------------------------
@@ -195,13 +226,13 @@ def extend_for_viewer(ds, groupings=None, order="hybrid", embedding=None, marker
     markers : bool
         Also compute the 1-vs-rest ``markers_<g>_{lfc,padj}`` tables (default ``True``).
     counts : str | None
-        Name of the count measure to build from. ``None`` (default) auto-detects by state: a measure
-        named ``counts``, else any measure with ``state == "raw"``. Raises a clear error listing the
-        present measures if none is found (e.g. a scaled ``X`` + lognorm ``raw`` with no counts).
-    basis : {None, "lognorm"}
-        ``None`` = raw basis (``log1p``-transformed). ``"lognorm"`` preps -- approximately -- from an
-        already log-normalized measure (values used as-is; stats are var-of-lognorm, not
-        var-of-log1p(counts)).
+        Force the count measure to build from (``log1p`` unless it is already log-normalized). ``None``
+        (default) lets ``basis`` choose.
+    basis : {"auto", "raw", "lognorm"}
+        How to choose the measure (``None`` == ``"auto"``). ``"auto"`` prefers a raw measure
+        (``log1p``-transformed) and, when none is present, **falls back** to a log-normalized measure
+        (used as-is; stats are var-of-lognorm, so HVG/markers are approximate — a warning is emitted).
+        ``"raw"`` / ``"lognorm"`` force that state. A scaled/z-scored measure is never used as a basis.
 
     Returns
     -------
@@ -212,6 +243,13 @@ def extend_for_viewer(ds, groupings=None, order="hybrid", embedding=None, marker
     # Select the count basis by content/state (not the literal name "counts"): a raw measure is
     # preferred and log1p'd; `counts=`/`basis=` override. Clear error if nothing usable.
     counts_field, use_lognorm = _select_counts_basis(ds, counts=counts, basis=basis)
+    if not use_lognorm and counts is None and (basis is None or basis == "auto"):
+        import warnings
+        warnings.warn(
+            "extend_for_viewer: no raw counts found; prepped from the log-normalized measure %r. "
+            "od_score (HVG) and markers are approximate (var-of-lognorm, not var-of-log1p(counts)). "
+            "Pass counts=<field> or basis='raw' if a raw measure is available." % counts_field,
+            stacklevel=2)
     basis_state = ds.field(counts_field).state
     cf_span = ds.field(counts_field).span
     cell_axis, gene_axis = cf_span[0], cf_span[1]

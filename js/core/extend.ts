@@ -22,8 +22,8 @@ export interface ExtendOptions {
                           // key + summarized first), and COMPOSES with auto-detect (the rest are still prepped) —
                           // which `groupings` alone can't express. Default: the first detected grouping is primary.
   markers?: boolean;      // also compute 1-vs-rest marker tables (default true)
-  counts?: string;        // force the count measure (else auto: a raw-state measure, name "counts" as fallback)
-  basis?: string;         // "lognorm" to prep (approximately) from an already log-normalized measure
+  counts?: string;        // force the count measure (log1p unless already log-normalized)
+  basis?: string;         // "auto" (default): raw (log1p) else fall back to lognorm (as-is); or "raw"/"lognorm"
   order?: string;         // "hybrid" (default) locality reorder + _order; "none" keeps rows in cell order
 }
 
@@ -111,9 +111,13 @@ function reorderCsrRows(csr: { data: any; indices: any; indptr: any }, perm: Int
 /** Add the `viewer@0.1` navigator fields to an existing store, in place. `store` must be read+write (e.g. NodeFSStore). */
 export async function extendForViewer(store: LstarWritableStore, opts: ExtendOptions = {}): Promise<void> {
   const ds = await openLstar(store as any);
-  // Select the count basis by content/state (raw preferred, log1p'd), not the literal name "counts";
-  // `counts=`/`basis=` override, and a clear error lists present measures when there's no raw basis.
+  // Select the count basis by content/state (basis="auto": raw preferred + log1p'd, else fall back to a
+  // log-normalized measure as-is, else a clear error); `counts=`/`basis=` override.
   const { field: counts, log1p } = selectCountsBasis(ds, { counts: opts.counts, basis: opts.basis });
+  if (!log1p && opts.counts == null && (opts.basis == null || opts.basis === "auto"))
+    console.warn(`extendForViewer: no raw counts found; prepped from the log-normalized measure "${counts}". ` +
+      `od_score (HVG) and markers are approximate (var-of-lognorm, not var-of-log1p(counts)). ` +
+      `Pass counts=<field> or basis="raw" if a raw measure is available.`);
   const [ncells, ngenes] = ds.field(counts)!.shape as number[];
   const [cellAxis, geneAxis] = ds.field(counts)!.span;
   const basisState = ds.field(counts)!.state ?? "raw";
