@@ -43,15 +43,24 @@ export interface DatasetSpec {
   aux?: Record<string, AuxSpec>;
 }
 
-/** A chunk compressor (dependency-injected so writer.ts never imports the WASM/zlib module — the caller
- * wires `compress`, e.g. the WASM `gzipCompress` or a pure-JS gzip). `id`/`level` go into `.zarray`'s
- * `compressor`; `compress` is applied per (padded) chunk. Only "gzip" (RFC1952) is decodable by all
- * readers unchanged. */
-export interface Compressor { id: "gzip"; level: number; compress: (raw: Uint8Array) => Uint8Array; }
-/** Write knobs: `chunkElems` splits arrays into multi-chunk along axis 0 (target elements/chunk);
- * `compressor` gzips each chunk. Both omitted -> a single uncompressed chunk per array (the default,
- * byte-identical to before). */
-export interface WriteOptions { chunkElems?: number; compressor?: Compressor | null; }
+/** A chunk compressor (dependency-injected so writer.ts never imports a WASM module — the caller wires
+ * `compress`, e.g. the WASM `gzipCompress` or a pure-JS gzip). `id`/`level` go into the codec metadata.
+ * With a `codec` (the WASM writer, below) `compress` is unused — `codec.encodeChunk` handles gzip AND
+ * zstd by `id`; without one, `compress` is applied per chunk (gzip only, the pre-WASM path). */
+export interface Compressor { id: "gzip" | "zstd"; level: number; compress?: (raw: Uint8Array) => Uint8Array; }
+/** The libzarr write-side pure functions (from the lstar_writer WASM module), dependency-injected so the
+ * drift-prone bytes stay in libzarr: `encodeChunk` runs a chunk through [bytes, gzip|zstd]; `packShard`
+ * assembles a shard object from slot-ordered encoded chunks (index + crc32c). Same core the reader
+ * decodes with, so a JS-written store is byte-consistent with the C++/Python writers. */
+export interface WriterCodec {
+  encodeChunk: (raw: Uint8Array, compressor: "none" | "gzip" | "zstd", level: number) => Uint8Array;
+  packShard: (entries: (Uint8Array | null)[], indexAtEnd: boolean) => Uint8Array;
+}
+/** Write knobs: `chunkElems` splits arrays multi-chunk along axis 0; `compressor` compresses each chunk;
+ * `shardElems` (v3 only, needs `codec`) packs ~that many elements' chunks into each shard object; `codec`
+ * is the injected WASM writer (enables zstd + sharding). All omitted -> a single uncompressed chunk per
+ * array (the default, byte-identical to before). */
+export interface WriteOptions { chunkElems?: number; compressor?: Compressor | null; shardElems?: number; codec?: WriterCodec; }
 
 const ENC = new TextEncoder();
 const TD = new TextDecoder();
@@ -104,20 +113,84 @@ function chunkShapeFor(shape: number[], chunkElems?: number): number[] {
   return rows >= shape[0] ? shape.slice() : [rows, ...shape.slice(1)];
 }
 
-// One Zarr v2 array, chunked along axis 0 and optionally gzip-compressed. Each chunk is padded to the
-// full chunk size with fill_value 0 BEFORE compression (v2 edge chunks are full-size); the reader trims
-// via `shape`. With no opts this writes a single uncompressed chunk -- byte-identical to the old writer.
+// Shard (outer) shape: pack k WHOLE inner chunks along axis 0 into one shard object (~shardElems elements).
+// Mirrors the C++ shard_shape_for / Python _shards_for. null (unsharded) for a 0-d/unchunked array or a
+// single-chunk one (nothing to pack).
+function shardShapeFor(shape: number[], chunks: number[], shardElems?: number): number[] | null {
+  if (!shardElems || shardElems <= 0 || !shape.length) return null;
+  const chunkRows = chunks[0];
+  if (!(chunkRows > 0) || chunkRows >= shape[0]) return null;    // single chunk -> nothing to shard
+  const inner = shape.slice(1).reduce((p, c) => p * c, 1);
+  const numChunks = Math.ceil(shape[0] / chunkRows);
+  const targetRows = Math.floor(shardElems / Math.max(1, inner));
+  const k = Math.max(1, Math.min(numChunks, Math.floor(targetRows / chunkRows)));
+  return [k * chunkRows, ...shape.slice(1)];
+}
+
+// One Zarr array, chunked along axis 0 and optionally compressed. Each chunk is padded to the full chunk
+// size with fill_value 0 BEFORE compression (edge chunks are full-size; the reader trims via `shape`). With
+// no opts this writes a single uncompressed chunk -- byte-identical to the old writer. v3 + `shardElems` +
+// an injected `codec` packs the inner chunks into shard objects (sharding_indexed). The drift-prone bytes
+// (compression, shard index + crc32c) go through the injected libzarr codec; JS owns layout + keys + meta.
 async function writeArray(store: LstarWritableStore, base: string, a: ArrayLike<number>, shape: number[],
                           opts?: WriteOptions, fmt: Fmt = "v2"): Promise<void> {
   const [dtype, isize, raw] = dtypeOf(a);
   const sh = shape.length ? shape : [a.length];
   const chunks = chunkShapeFor(sh, opts?.chunkElems).map((s) => Math.max(s, 1));
   const compressor = opts?.compressor ?? null;
+  const codec = opts?.codec;
+  // encode one (padded) chunk: via the injected WASM codec (gzip/zstd, same core the reader decodes with)
+  // if present, else the pre-WASM injected gzip `compress`, else raw bytes.
+  const enc = (block: Uint8Array): Uint8Array =>
+    codec ? codec.encodeChunk(block, compressor ? compressor.id : "none", compressor?.level ?? 5)
+    : compressor?.compress ? compressor.compress(block) : block;
+  const inner = chunks.slice(1).reduce((p, c) => p * c, 1);     // elements per axis-0 row (inner dims)
+  const chunkBytes = chunks[0] * inner * isize;
+  const nRows = sh[0] ?? 0;
+  const nChunks = nRows <= 0 ? 1 : Math.ceil(nRows / chunks[0]);
+  const chunkBlock = (ci: number): Uint8Array => {              // padded raw bytes of inner chunk `ci`
+    const block = new Uint8Array(chunkBytes);
+    block.set(raw.subarray(ci * chunkBytes, Math.min((ci + 1) * chunkBytes, raw.byteLength)));
+    return block;
+  };
+
+  // v3 SHARDED path: pack inner chunks into shard objects (fewer files, still range-readable via the index).
+  const shardShape = fmt === "v3" && codec ? shardShapeFor(sh, chunks, opts?.shardElems) : null;
+  if (shardShape) {
+    const innerCodecs: unknown[] = [{ name: "bytes", configuration: { endian: "little" } }];
+    if (compressor) innerCodecs.push({ name: compressor.id, configuration: { level: compressor.level } });
+    await store.set(base + "/zarr.json", j({
+      zarr_format: 3, node_type: "array", shape: sh, data_type: V3_DTYPE[dtype] ?? "uint8",
+      chunk_grid: { name: "regular", configuration: { chunk_shape: shardShape } },   // outer grid = shards
+      chunk_key_encoding: { name: "default", configuration: { separator: "/" } },
+      codecs: [{ name: "sharding_indexed", configuration: {
+        chunk_shape: chunks,                                    // inner chunk shape
+        codecs: innerCodecs,
+        index_codecs: [{ name: "bytes", configuration: { endian: "little" } }, { name: "crc32c" }],
+        index_location: "end",
+      } }],
+      fill_value: 0,
+    }));
+    const perShard = shardShape[0] / chunks[0];                 // inner chunks per shard (integer)
+    const nShards = Math.ceil(nChunks / perShard);
+    const stail = sh.slice(1).map(() => "0").join("/");         // outer key inner dims (only axis 0 sharded)
+    for (let s = 0; s < nShards; s++) {
+      const entries: (Uint8Array | null)[] = [];
+      for (let slot = 0; slot < perShard; slot++) {
+        const ci = s * perShard + slot;
+        entries.push(ci < nChunks ? enc(chunkBlock(ci)) : null);   // slots beyond the array are fill (missing)
+      }
+      const shardBytes = codec!.packShard(entries, /*indexAtEnd=*/true);
+      if (shardBytes.length) await store.set(base + "/c/" + (stail ? s + "/" + stail : String(s)), shardBytes);
+    }
+    return;
+  }
+
+  // UNSHARDED path (v2 or v3): one object per chunk. Chunk BYTES are the same as v2 for both formats
+  // (LE contiguous, optionally compressed) — only the metadata + chunk-key scheme differ.
   if (fmt === "v3") {
-    // v3: the `bytes` codec carries endian; gzip (if any) chains after it. The on-disk chunk BYTES are
-    // identical to v2 (LE contiguous, optionally gzipped) — only the metadata + chunk-key scheme differ.
     const codecs: unknown[] = [{ name: "bytes", configuration: { endian: "little" } }];
-    if (compressor) codecs.push({ name: "gzip", configuration: { level: compressor.level } });
+    if (compressor) codecs.push({ name: compressor.id, configuration: { level: compressor.level } });
     await store.set(base + "/zarr.json", j({
       zarr_format: 3, node_type: "array", shape: sh, data_type: V3_DTYPE[dtype] ?? "uint8",
       chunk_grid: { name: "regular", configuration: { chunk_shape: chunks } },
@@ -131,16 +204,10 @@ async function writeArray(store: LstarWritableStore, base: string, a: ArrayLike<
       fill_value: 0, order: "C", filters: null,
     }));
   }
-  const inner = chunks.slice(1).reduce((p, c) => p * c, 1);     // elements per axis-0 row (inner dims)
-  const chunkBytes = chunks[0] * inner * isize;
-  const nRows = sh[0] ?? 0;
-  const nChunks = nRows <= 0 ? 1 : Math.ceil(nRows / chunks[0]);
   const sep = fmt === "v3" ? "/" : ".";                         // v3 default key encoding uses "/" + a "c" prefix
   const tail = sh.slice(1).map(() => "0").join(sep);            // only axis 0 is chunked -> inner dims are 0
   for (let ci = 0; ci < nChunks; ci++) {
-    const block = new Uint8Array(chunkBytes);                   // zero-padded to full chunk size
-    block.set(raw.subarray(ci * chunkBytes, Math.min((ci + 1) * chunkBytes, raw.byteLength)));
-    const payload = compressor ? compressor.compress(block) : block;
+    const payload = enc(chunkBlock(ci));
     const leaf = tail ? ci + sep + tail : String(ci);
     await store.set(base + "/" + (fmt === "v3" ? "c/" + leaf : leaf), payload);
   }

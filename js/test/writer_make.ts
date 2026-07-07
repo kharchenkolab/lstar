@@ -1,18 +1,24 @@
-// Write a comprehensive L* store from JS -- chunked + gzip-compressed (via the WASM zlib kernel), with
-// EVERY encoding: CSC measure, dense embedding, categorical (induced factor axis), nullable mask,
-// partial coverage, and an aux passthrough. writer_crossread.py reads it back in Python (+ the C++
-// reader) and asserts validate-clean + value equality. Usage: node --experimental-strip-types
-// writer_make.ts <out-dir>. Pure-JS (no WASM) uncompressed mode if SkipWasm is set.
+// Write a comprehensive L* store from JS with EVERY encoding: CSC measure, dense embedding, categorical
+// (induced factor axis), nullable mask, partial coverage, and an aux passthrough. writer_crossread.py
+// reads it back in Python (+ the C++ reader) and asserts validate-clean + value equality. Compression +
+// sharding go through the libzarr WASM writer codec (lstar_writer), so a JS-written store is byte-consistent
+// with the C++/Python writers. Usage: writer_make.ts <out-dir> [v2|v3] [none|gzip|zstd] [shardElems].
 import { NodeFSStore } from "../core/node-store.ts";
-import { writeStore, type Compressor } from "../core/writer.ts";
+import { writeStore, type WriterCodec } from "../core/writer.ts";
 
-import createLstarKernels from "../dist/lstar_kernels.mjs";
+import createLstarWriter from "../dist/lstar_writer.mjs";
 
 const OUT = process.argv[2] || "/tmp/lstar-writer-cross.lstar.zarr";
-const FORMAT = (process.argv[3] as "v2" | "v3") || "v2";   // on-disk Zarr format (default v2)
+const FORMAT = (process.argv[3] as "v2" | "v3") || "v2";                 // on-disk Zarr format (default v2)
+const COMPRESSION = (process.argv[4] as "none" | "gzip" | "zstd") || "gzip";
+const SHARD = parseInt(process.argv[5] || "0", 10);                       // shard_elems (0 = unsharded)
 
-const k = await createLstarKernels();
-const compressor: Compressor = { id: "gzip", level: 1, compress: (raw) => new Uint8Array(k.gzipCompress(raw, 1)) };
+const w = await createLstarWriter();
+const codec: WriterCodec = {                                             // libzarr encode + shard-pack
+  encodeChunk: (raw, comp, level) => w.encodeChunk(raw, comp, level),
+  packShard: (entries, atEnd) => w.packShard(entries, atEnd),
+};
+const compressor = COMPRESSION === "none" ? null : { id: COMPRESSION, level: 1 };
 
 // CSC counts, 10 cells x 6 genes (column-major over genes)
 const counts = {
@@ -53,6 +59,6 @@ await writeStore(new NodeFSStore(OUT), {
       ],
     },
   },
-}, { chunkElems: 4, compressor }, FORMAT);   // chunkElems=4 forces multi-chunk; gzip via WASM
+}, { chunkElems: 4, compressor, shardElems: SHARD || undefined, codec }, FORMAT);   // chunkElems=4 -> multi-chunk
 
-console.log(`wrote chunked+gzip ${FORMAT} store ->`, OUT);
+console.log(`wrote ${FORMAT} store (compression=${COMPRESSION}${SHARD ? `, shard_elems=${SHARD}` : ""}) ->`, OUT);

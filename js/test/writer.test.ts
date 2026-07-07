@@ -7,8 +7,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import { NodeFSStore } from "../core/node-store.ts";
-import { writeStore, addToStore } from "../core/writer.ts";
+import { writeStore, addToStore, type WriterCodec } from "../core/writer.ts";
 import { openLstar } from "../core/reader.ts";
+import createLstarWriter from "../dist/lstar_writer.mjs";
 
 const OUT = process.env.WRITER_OUT || path.join(os.tmpdir(), "lstar-writer-test.lstar.zarr");
 
@@ -77,9 +78,47 @@ async function run(format: "v2" | "v3", out: string): Promise<void> {
   console.log(`writer.test [${format}]: OK -> ${out}`);
 }
 
+// JS writes a SHARDED v3 store (inner chunks encoded + the shard object assembled through the libzarr WASM
+// writer: encodeChunk + shard::pack), then the WASM reader reads it back — including a byte-range column
+// read that must resolve THROUGH the shard index. Guards the JS-write-sharded -> WASM-read path in CI.
+async function runSharded(out: string): Promise<void> {
+  fs.rmSync(out, { recursive: true, force: true });
+  const store = new NodeFSStore(out);
+  const w = await createLstarWriter();
+  const codec: WriterCodec = {
+    encodeChunk: (raw, comp, level) => w.encodeChunk(raw, comp, level),
+    packShard: (entries, atEnd) => w.packShard(entries, atEnd),
+  };
+  // 3 cells x 4 genes CSC; chunkElems=2 -> multi-chunk data (5 nnz -> 3 chunks), shardElems=4 -> packed shards
+  const counts = { data: new Int32Array([1, 2, 3, 4, 5]), indices: new Int32Array([0, 2, 1, 0, 2]),
+                   indptr: new Int32Array([0, 2, 3, 4, 5]) };
+  await writeStore(store, {
+    kind: "sample", profiles: ["shard@0.1"],
+    axes: { cells: { labels: ["c0", "c1", "c2"], role: "observation" },
+            genes: { labels: ["g0", "g1", "g2", "g3"], role: "feature" } },
+    fields: { counts: { role: "measure", span: ["cells", "genes"], encoding: "csc", state: "raw",
+                        shape: [3, 4], data: counts.data, indices: counts.indices, indptr: counts.indptr } },
+  }, { chunkElems: 2, compressor: { id: "gzip", level: 5 }, shardElems: 4, codec }, "v3");
+
+  // genuinely sharded on disk? (sharding_indexed codec on the multi-chunk data array)
+  const zj = JSON.parse(fs.readFileSync(path.join(out, "fields/counts/data/zarr.json"), "utf8"));
+  assert.strictEqual(zj.codecs[0].name, "sharding_indexed", "counts/data must be sharding_indexed");
+
+  // WASM reader reads it back value-equal, and cscColumn resolves a chunk THROUGH the shard index
+  const ds = await openLstar(store);
+  const sp = await ds.fieldSparse("counts");
+  assert.deepStrictEqual([...sp.data], [1, 2, 3, 4, 5]);
+  assert.deepStrictEqual([...sp.indptr], [0, 2, 3, 4, 5]);
+  const col = await ds.cscColumn("counts", 0);             // gene 0 -> cells {0:1, 2:2}
+  assert.deepStrictEqual([...col.rows], [0, 2]);
+  assert.deepStrictEqual([...col.vals], [1, 2]);
+  console.log(`writer.test [v3+shard]: OK -> ${out}`);
+}
+
 async function main() {
   await run("v2", OUT);                      // OUT left for the Python cross-read leg (writer_crossread.py)
   await run("v3", OUT + ".v3");
+  await runSharded(OUT + ".v3shard");        // JS-write-sharded -> WASM-read (byte-range through shard index)
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

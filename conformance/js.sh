@@ -83,6 +83,23 @@ WX3=/tmp/lstar_js_writer_cross_v3.lstar.zarr; rm -rf "$WX3"
   || { echo "  FAIL: JS writer_make v3"; exit 1; }
 PYTHONPATH="$ROOT/python/src" python3 "$ROOT/js/test/writer_crossread.py" "$WX3" \
   || { echo "  FAIL: writer_crossread v3"; exit 1; }
+# full JS writer parity: SHARDED v3 with a ZSTD inner codec (both via the libzarr WASM writer -- shard::pack
+# + CodecPipeline encode). Python reads every encoding back value-equal, and the store is genuinely
+# sharding_indexed with zstd inside the shard.
+echo "  -- writer x-read v3 SHARDED+zstd (JS-write -> Python read+validate) --"
+WXS=/tmp/lstar_js_writer_cross_v3shard.lstar.zarr; rm -rf "$WXS"
+"$NODE" --experimental-strip-types "$ROOT/js/test/writer_make.ts" "$WXS" v3 zstd 16 2>/dev/null \
+  || { echo "  FAIL: JS writer_make v3 sharded+zstd"; exit 1; }
+PYTHONPATH="$ROOT/python/src" python3 "$ROOT/js/test/writer_crossread.py" "$WXS" \
+  || { echo "  FAIL: writer_crossread v3 sharded"; exit 1; }
+python3 - "$WXS" <<'PY' || { echo "  FAIL: JS sharded store not sharding_indexed+zstd"; exit 1; }
+import sys, json
+c = json.load(open(sys.argv[1] + "/fields/counts/data/zarr.json"))["codecs"][0]
+assert c["name"] == "sharding_indexed", c
+inner = [x["name"] for x in c["configuration"]["codecs"]]
+assert "zstd" in inner, inner
+print("  [py] JS-written v3 store: sharding_indexed with a zstd inner codec, reads == unsharded")
+PY
 
 # 5) reverse leg: JS addToStore appends a derived field to a PYTHON-written store -> Python re-reads it
 echo "  -- writer extend (Python-write -> JS addToStore -> Python read) --"

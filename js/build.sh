@@ -58,3 +58,19 @@ echo "built $JS/dist/lstar_kernels.mjs (+ lstar_kernels.wasm)"
   -sEXPORT_NAME=createLstarIO \
   -o "$JS/dist/lstar_io.mjs"
 echo "built $JS/dist/lstar_io.mjs (+ lstar_io.wasm)"
+
+# The WRITER module: the write-side pure functions from libzarr — chunk codec ENCODE (gzip/zstd) and
+# shard-object assembly (shard::pack). Loaded only when WRITING (the pagoda3 prep / a store producer), so
+# it's separate from the lean decode-only reader: it links the FULL zstd amalgamation (js/third_party/zstd/
+# zstd.c, LIBZARR_HAS_ZSTD *without* DECODE_ONLY) so encode covers zstd. The drift-prone bytes (codec
+# encode, shard index + crc32c) stay in libzarr; JS owns chunking + store writes + metadata.
+"${EMCC[@]}" -c "$JS/third_party/zstd/zstd.c" -O3 -o "$JS/dist/zstd_full.o"
+"${EMCC[@]}" "$JS/wasm/lstar_writer.cpp" "$JS/dist/zstd_full.o" \
+  -I"$ROOT/core/include" -I"$JS/third_party/zstd" \
+  -std=c++17 -O3 -lembind \
+  -sUSE_ZLIB=1 -DLSTAR_HAVE_ZLIB -DLIBZARR_HAS_ZLIB -DLIBZARR_HAS_ZSTD \
+  -sMODULARIZE=1 -sEXPORT_ES6=1 -sENVIRONMENT=node,web \
+  -sALLOW_MEMORY_GROWTH=1 \
+  -sEXPORT_NAME=createLstarWriter \
+  -o "$JS/dist/lstar_writer.mjs"
+echo "built $JS/dist/lstar_writer.mjs (+ lstar_writer.wasm)"

@@ -9,7 +9,7 @@ export { colStats, overdispersionScore, overdispersionFromStats, groupSufficient
 export type { CscMeasure } from "./compute.ts";
 export { writeStore, addToStore } from "./writer.ts";
 export type { LstarWritableStore, AxisSpec, FieldSpec, DatasetSpec,
-  Compressor, WriteOptions, AuxSpec, AuxArraySpec, Fmt } from "./writer.ts";
+  Compressor, WriterCodec, WriteOptions, AuxSpec, AuxArraySpec, Fmt } from "./writer.ts";
 // viewer@0.1 optimization (JS twin of Python extend_for_viewer): precompute the viewer navigators into a store.
 export { extendForViewer } from "./extend.ts";
 export type { ExtendOptions } from "./extend.ts";
