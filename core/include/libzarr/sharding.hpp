@@ -157,6 +157,54 @@ inline std::vector<IndexEntry> decode_index(const CodecPipeline& pipeline,
   return entries;
 }
 
+/// Assembles one shard object from its slot-ordered inner chunks: concatenated
+/// chunk bodies plus the encoded [offset, nbytes] index (sentinels for absent
+/// slots), laid out per `index_at_end`. Returns empty if every slot is absent
+/// (an all-fill shard is not stored). Shared by ShardStore::flush_assembly and
+/// the shard::pack façade — the inverse of decode_index.
+inline Bytes assemble_shard(const std::vector<std::optional<Bytes>>& entries,
+                            const std::vector<CodecSpec>& index_codecs, bool index_at_end,
+                            const std::string& ctx) {
+  bool any = false;
+  for (const auto& entry : entries) {
+    any = any || entry.has_value();
+  }
+  if (!any) {
+    return {};  // all-fill shard: nothing to store
+  }
+  const std::uint64_t entry_count = entries.size();
+  const std::uint64_t index_size = index_encoded_size(index_codecs, entry_count, ctx);
+  const CodecPipeline index_pipeline =
+      CodecPipeline::resolve(index_array_meta(entry_count, index_codecs));
+
+  Bytes body;
+  std::vector<std::uint64_t> raw_index(entries.size() * 2, kSentinel);
+  const std::uint64_t base = index_at_end ? 0 : index_size;  // chunks follow a leading index
+  for (std::size_t i = 0; i < entries.size(); ++i) {
+    const std::optional<Bytes>& entry = entries[i];
+    if (!entry) {
+      continue;
+    }
+    raw_index[i * 2] = base + body.size();
+    raw_index[i * 2 + 1] = entry->size();
+    body.insert(body.end(), entry->begin(), entry->end());
+  }
+  Bytes index_bytes(raw_index.size() * 8);
+  std::memcpy(index_bytes.data(), raw_index.data(), index_bytes.size());
+  index_bytes = index_pipeline.encode(std::move(index_bytes));
+
+  Bytes shard;
+  shard.reserve(body.size() + index_bytes.size());
+  if (index_at_end) {
+    shard = std::move(body);
+    shard.insert(shard.end(), index_bytes.begin(), index_bytes.end());
+  } else {
+    shard = std::move(index_bytes);
+    shard.insert(shard.end(), body.begin(), body.end());
+  }
+  return shard;
+}
+
 /// Store adapter presenting the inner chunks of a sharded array as ordinary
 /// keys. Reads cost one index fetch per shard (cached, one suffix/prefix
 /// range request) plus one range request per inner chunk. Writes assemble
@@ -408,47 +456,19 @@ class ShardStore final : public Store {
     if (!assembly_) {
       return;
     }
-    Assembly assembly = *std::move(assembly_);
+    const Assembly assembly = *std::move(assembly_);
     assembly_.reset();
     if (!assembly.dirty) {
       return;
     }
     drop_cached(assembly.shard_key);
-    bool any = false;
-    for (const auto& entry : assembly.entries) {
-      any = any || entry.has_value();
-    }
-    if (!any) {
+    Bytes shard = assemble_shard(assembly.entries, params_.index_codecs, params_.index_at_end,
+                                 assembly.shard_key);
+    if (shard.empty()) {
       source_->erase(assembly.shard_key);  // all-fill shards are not stored
-      return;
-    }
-
-    Bytes body;
-    std::vector<std::uint64_t> raw_index(assembly.entries.size() * 2, detail_shard::kSentinel);
-    const std::uint64_t base = params_.index_at_end ? 0 : index_size_;
-    for (std::size_t i = 0; i < assembly.entries.size(); ++i) {
-      const std::optional<Bytes>& entry = assembly.entries[i];
-      if (!entry) {
-        continue;
-      }
-      raw_index[i * 2] = base + body.size();
-      raw_index[i * 2 + 1] = entry->size();
-      body.insert(body.end(), entry->begin(), entry->end());
-    }
-    Bytes index_bytes(raw_index.size() * 8);
-    std::memcpy(index_bytes.data(), raw_index.data(), index_bytes.size());
-    index_bytes = index_pipeline_.encode(std::move(index_bytes));
-
-    Bytes shard;
-    shard.reserve(body.size() + index_bytes.size());
-    if (params_.index_at_end) {
-      shard = std::move(body);
-      shard.insert(shard.end(), index_bytes.begin(), index_bytes.end());
     } else {
-      shard = std::move(index_bytes);
-      shard.insert(shard.end(), body.begin(), body.end());
+      source_->write(assembly.shard_key, std::move(shard));
     }
-    source_->write(assembly.shard_key, std::move(shard));
   }
 
   void drop_cached(const std::string& shard_key) {
@@ -567,6 +587,32 @@ struct Extent {
     out.nbytes = e.nbytes;
   }
   return out;
+}
+
+/// Assembles the shard object for shard `level` (0 = outermost) from its
+/// slot-ordered inner chunks. `entries[i]` is the ENCODED bytes of the chunk at
+/// C-order slot i, or std::nullopt for a fill slot (whose index entry becomes
+/// the sentinel). Returns the shard bytes — concatenated chunk bodies plus the
+/// checksummed [offset, nbytes] index, laid out per the level's index_location
+/// — or an empty buffer if every slot is absent (an all-fill shard is not
+/// written; the caller simply skips or erases that key). Pure: no I/O. The
+/// inverse of extent(): pack() then extent() round-trips each slot's extent.
+/// Throws if `level` is not a shard level or `entries.size()` != the shard's
+/// slot count.
+[[nodiscard]] inline Bytes pack(const ArrayMeta& meta,
+                                const std::vector<std::optional<Bytes>>& entries,
+                                std::size_t level = 0) {
+  if (level >= meta.shard_levels.size()) {
+    throw error("zarr::shard::pack: level " + std::to_string(level) + " is not a shard level");
+  }
+  const detail_shard::ShardParams params = detail_shard::params_for_level(meta, level, "");
+  const std::uint64_t entry_count = detail::checked_product(params.per_shard, "shard grid");
+  if (entries.size() != entry_count) {
+    throw error("zarr::shard::pack: got " + std::to_string(entries.size()) +
+                " entries but shard has " + std::to_string(entry_count) + " slots");
+  }
+  return detail_shard::assemble_shard(entries, params.index_codecs, params.index_at_end,
+                                      "sharding_indexed");
 }
 
 }  // namespace zarr::shard
