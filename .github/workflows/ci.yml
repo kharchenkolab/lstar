@@ -127,6 +127,8 @@ jobs:
         run: bash conformance/v3_r.sh
       - name: Zstd read parity on the R surface (R reads zarr-python's default zstd v3 store; needs libzstd)
         run: bash conformance/zstd_r.sh
+      - name: Sharded v3 writes on the R surface (R lstar_write(shard_elems=) == unsharded; sharding_indexed)
+        run: bash conformance/shard_r.sh
       - name: single-file .lstar.zarr.zip parity (R <-> Python via the C++ core .zip dispatch)
         run: bash conformance/zip_r.sh
       - name: partial-coverage conformance (partial index over a derived union axis survives the R path)

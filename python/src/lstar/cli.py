@@ -300,11 +300,13 @@ def _load_py(src: str, fmt: str, backend: str = "auto"):
     raise ConvertError(f"{fmt!r} is not a Python-side source format")
 
 
-def _emit_py(ds, dst: str, fmt: str, backend: str = "auto") -> None:
-    """Write an L* :class:`Dataset` out to a Python-side target."""
+def _emit_py(ds, dst: str, fmt: str, backend: str = "auto", *,
+             zarr_format: str = "v2", chunk_elems=None, shard_elems=None) -> None:
+    """Write an L* :class:`Dataset` out to a Python-side target. The Zarr `zarr_format`/`chunk_elems`/
+    `shard_elems` knobs apply only to a `store` target (a `.lstar.zarr`); non-store targets ignore them."""
     import lstar
     if fmt == "store":
-        lstar.write(ds, dst)
+        lstar.write(ds, dst, format=zarr_format, chunk_elems=chunk_elems, shard_elems=shard_elems)
         return
     if _choose_backend(fmt, backend, "write") == "direct":
         _DIRECT_PY_WRITE[fmt](ds, dst)
@@ -357,7 +359,8 @@ def _read_dataset(src: str, ff: str, backend: str = "auto"):
 
 
 def convert(src: str, dst: str, from_fmt: str | None = None, to_fmt: str | None = None,
-            backend: str = "auto", viewer: bool = False):
+            backend: str = "auto", viewer: bool = False,
+            zarr_format: str = "v2", chunk_elems=None, shard_elems=None):
     """Convert *src* → *dst*. Returns ``(ds, from_fmt, to_fmt)`` with the bridging L* dataset.
 
     Python-side ↔ Python-side runs in-process; any leg in R (Seurat/SCE) is bridged through a temporary
@@ -377,7 +380,7 @@ def convert(src: str, dst: str, from_fmt: str | None = None, to_fmt: str | None 
         ds = _load_py(src, ff, backend)
         if viewer:
             lstar.extend_for_viewer(ds)
-        _emit_py(ds, dst, tf, backend)
+        _emit_py(ds, dst, tf, backend, zarr_format=zarr_format, chunk_elems=chunk_elems, shard_elems=shard_elems)
         return ds, ff, tf
     if not os.path.exists(src):
         raise ConvertError(f"source not found: {src}")
@@ -394,7 +397,7 @@ def convert(src: str, dst: str, from_fmt: str | None = None, to_fmt: str | None 
         else:
             if viewer:                              # R source -> store --viewer: extend before emit
                 lstar.extend_for_viewer(ds)
-            _emit_py(ds, dst, tf, backend)
+            _emit_py(ds, dst, tf, backend, zarr_format=zarr_format, chunk_elems=chunk_elems, shard_elems=shard_elems)
         return ds, ff, tf
     finally:
         shutil.rmtree(os.path.dirname(bridge), ignore_errors=True)
@@ -503,6 +506,13 @@ def main(argv=None) -> int:
     c.add_argument("--to", dest="to_fmt", default=None, help="override the target format")
     c.add_argument("--backend", choices=("auto", "native", "direct"), default="auto",
                    help="native (domain package), direct (lstar's package-free codec), or auto [default]")
+    c.add_argument("--zarr-format", dest="zarr_format", choices=("v2", "v3"), default="v2",
+                   help="on-disk Zarr format for a store target: v2 [default] or v3")
+    c.add_argument("--chunk-elems", dest="chunk_elems", type=int, default=None,
+                   help="chunk store arrays along axis 0 to ~this many elements per chunk")
+    c.add_argument("--shard-elems", dest="shard_elems", type=int, default=None,
+                   help="pack ~this many elements' worth of chunks into each shard object (a v3 hosting "
+                        "optimization: fewer files, still byte-range-readable). Needs --zarr-format v3 + --chunk-elems")
     c.add_argument("--viewer", action="store_true",
                    help="when the target is a store, extend it with the lstar-viewer precomputed "
                         "fields (counts_cellmajor, per-group stats + markers, od_score, hybrid order)")
@@ -535,7 +545,10 @@ def main(argv=None) -> int:
     try:
         if args.cmd == "convert":
             ds, ff, tf = convert(args.src, args.dst, args.from_fmt, args.to_fmt, args.backend,
-                                 viewer=getattr(args, "viewer", False))
+                                 viewer=getattr(args, "viewer", False),
+                                 zarr_format=getattr(args, "zarr_format", "v2"),
+                                 chunk_elems=getattr(args, "chunk_elems", None),
+                                 shard_elems=getattr(args, "shard_elems", None))
             rep = build_report(ds, args.src, ff, args.dst, tf)
             nc = None
             if args.check:

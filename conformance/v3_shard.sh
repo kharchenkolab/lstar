@@ -23,6 +23,14 @@ python3 "$ROOT/conformance/v3_gen.py" "$SEED" | sed 's/^/  [py] /'
 "$BIN" shard "$SEED" "$SH"                                       # 1. C++ chunked+sharded v3 self round-trip
 python3 "$ROOT/conformance/v3_verify.py" shardcheck "$SH" "$SEED"  # 2. sharding_indexed + zarr-python == seed
 
+# 2b. the WRITE side is exposed on the Python + CLI surfaces (not just the C++ core internals): both
+#     produce a genuine sharded v3 store that zarr-python confirms + reads == the unsharded seed.
+PYSH="/tmp/v3sh_py.lstar.zarr"; CLISH="/tmp/v3sh_cli.lstar.zarr"; rm -rf "$PYSH" "$CLISH"
+python3 -c "import sys,lstar; lstar.write(lstar.read('$SEED'), '$PYSH', format='v3', chunk_elems=1000, shard_elems=4000)"
+python3 "$ROOT/conformance/v3_verify.py" shardcheck "$PYSH" "$SEED" | sed 's/^/  [py-write] /'
+python3 -m lstar convert "$SEED" "$CLISH" --zarr-format v3 --chunk-elems 1000 --shard-elems 4000 >/dev/null
+python3 "$ROOT/conformance/v3_verify.py" shardcheck "$CLISH" "$SEED" | sed 's/^/  [cli-write] /'
+
 # 3. the WASM reader reads the sharded arrays == zarr-python (skips cleanly without emsdk/node).
 EMSDK="${EMSDK:-$HOME/emsdk}"
 NODE="$(ls -d "$EMSDK"/node/*/bin/node 2>/dev/null | head -1)"; NODE="${NODE:-$(command -v node || true)}"

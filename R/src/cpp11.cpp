@@ -76,10 +76,10 @@ extern "C" SEXP _lstar_lstar_cpp_read(SEXP path) {
   END_CPP11
 }
 // lstar_cpp.cpp
-void lstar_cpp_write(list ds, std::string path, int chunk_elems, std::string compression, int level, std::string format);
-extern "C" SEXP _lstar_lstar_cpp_write(SEXP ds, SEXP path, SEXP chunk_elems, SEXP compression, SEXP level, SEXP format) {
+void lstar_cpp_write(list ds, std::string path, int chunk_elems, std::string compression, int level, std::string format, int shard_elems);
+extern "C" SEXP _lstar_lstar_cpp_write(SEXP ds, SEXP path, SEXP chunk_elems, SEXP compression, SEXP level, SEXP format, SEXP shard_elems) {
   BEGIN_CPP11
-    lstar_cpp_write(cpp11::as_cpp<cpp11::decay_t<list>>(ds), cpp11::as_cpp<cpp11::decay_t<std::string>>(path), cpp11::as_cpp<cpp11::decay_t<int>>(chunk_elems), cpp11::as_cpp<cpp11::decay_t<std::string>>(compression), cpp11::as_cpp<cpp11::decay_t<int>>(level), cpp11::as_cpp<cpp11::decay_t<std::string>>(format));
+    lstar_cpp_write(cpp11::as_cpp<cpp11::decay_t<list>>(ds), cpp11::as_cpp<cpp11::decay_t<std::string>>(path), cpp11::as_cpp<cpp11::decay_t<int>>(chunk_elems), cpp11::as_cpp<cpp11::decay_t<std::string>>(compression), cpp11::as_cpp<cpp11::decay_t<int>>(level), cpp11::as_cpp<cpp11::decay_t<std::string>>(format), cpp11::as_cpp<cpp11::decay_t<int>>(shard_elems));
     return R_NilValue;
   END_CPP11
 }
@@ -96,7 +96,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_lstar_lstar_cpp_stream_col_sum_by_group", (DL_FUNC) &_lstar_lstar_cpp_stream_col_sum_by_group, 9},
     {"_lstar_lstar_cpp_subsample_de_rank",       (DL_FUNC) &_lstar_lstar_cpp_subsample_de_rank,       7},
     {"_lstar_lstar_cpp_viewer_cell_order",       (DL_FUNC) &_lstar_lstar_cpp_viewer_cell_order,       4},
-    {"_lstar_lstar_cpp_write",                   (DL_FUNC) &_lstar_lstar_cpp_write,                   6},
+    {"_lstar_lstar_cpp_write",                   (DL_FUNC) &_lstar_lstar_cpp_write,                   7},
     {NULL, NULL, 0}
 };
 }

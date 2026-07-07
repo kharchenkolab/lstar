@@ -24,7 +24,8 @@ LSTAR = "lstar"
 SPEC_VERSION = "0.1"
 
 
-def write(ds, path, compressor=None, chunk_elems=None, stream=False, viewer=False, format="v2"):
+def write(ds, path, compressor=None, chunk_elems=None, stream=False, viewer=False, format="v2",
+          shard_elems=None):
     """Serialize an L* Dataset to a Zarr store at `path`.
 
     compressor=None (default) writes uncompressed chunks; pass a numcodecs codec (e.g.
@@ -47,6 +48,12 @@ def write(ds, path, compressor=None, chunk_elems=None, stream=False, viewer=Fals
     inline-consolidated metadata). Both are read by the C++/R/JS libzarr cores and by zarr-python; the
     default stays v2 until the whole stack flips. (Library != format: the writer always uses the
     zarr-python 3 *library*, whichever on-disk *format* is requested.)
+
+    shard_elems (Zarr v3 only) packs ~this many elements' worth of inner chunks into each shard OBJECT
+    (the `sharding_indexed` codec): many small chunks collapse into a few objects -- a hosting
+    optimization (fewer files on object storage/CDN) that keeps every chunk byte-range-readable via the
+    shard index. Requires chunk_elems (a shard packs multiple chunks). Streamed sparse fields stay
+    unsharded. Read by all surfaces (transparent + JS byte-range).
     """
     if format not in ("v2", "v3"):
         raise ValueError(f"format must be 'v2' or 'v3', got {format!r}")
@@ -73,6 +80,11 @@ def write(ds, path, compressor=None, chunk_elems=None, stream=False, viewer=Fals
         extend_for_viewer(ds)
     if stream and chunk_elems is None:
         chunk_elems = 1_000_000
+    if shard_elems is not None:                        # sharding is v3-only and packs whole chunks
+        if zfmt != 3:
+            raise ValueError("shard_elems requires format='v3' (sharding is a Zarr v3 feature)")
+        if chunk_elems is None:
+            raise ValueError("shard_elems requires chunk_elems (a shard packs multiple chunks)")
     is_zip = str(path).endswith(".zip")
     _zip_target = None
     if is_zip:                                         # single-file .lstar.zarr.zip: write a dir, pack STORED
@@ -86,7 +98,7 @@ def write(ds, path, compressor=None, chunk_elems=None, stream=False, viewer=Fals
 
     for name, ax in ds.axes.items():
         g = axg.create_group(name)
-        _write_strings(g, "labels", ax.labels, compressor, chunk_elems)
+        _write_strings(g, "labels", ax.labels, compressor, chunk_elems, shard_elems)
         g.attrs[LSTAR] = {"kind": "axis", "origin": ax.origin, "role": ax.role,
                           "induced_by": ax.induced_by, "provenance": ax.provenance}
 
@@ -96,12 +108,12 @@ def write(ds, path, compressor=None, chunk_elems=None, stream=False, viewer=Fals
                 "encoding": fl.encoding, "coverage": fl.coverage, "directed": fl.directed,
                 "weighted": fl.weighted, "subtype": fl.subtype, "uncertainty": fl.uncertainty,
                 "provenance": fl.provenance}
-        _write_values(g, fl, meta, compressor, chunk_elems)
+        _write_values(g, fl, meta, compressor, chunk_elems, shard_elems)
         if fl.mask is not None:                        # nullable Int/bool/string: an explicit validity mask
-            _ds(g, "mask", np.asarray(fl.mask, dtype=np.uint8), compressor, chunk_elems)
+            _ds(g, "mask", np.asarray(fl.mask, dtype=np.uint8), compressor, chunk_elems, shard_elems)
             meta["nullable"] = True
         if getattr(fl, "index", None) is not None:     # partial coverage: int positions into index_axis
-            _ds(g, "index", np.asarray(fl.index, dtype=np.int64), compressor, chunk_elems)
+            _ds(g, "index", np.asarray(fl.index, dtype=np.int64), compressor, chunk_elems, shard_elems)
             meta["coverage"] = "partial"
             meta["index_axis"] = fl.index_axis
         g.attrs[LSTAR] = meta
@@ -116,9 +128,9 @@ def write(ds, path, compressor=None, chunk_elems=None, stream=False, viewer=Fals
             manifest = []
             for a in leaves:
                 if a["kind"] == "utf8":
-                    _write_strings(g, a["id"], np.asarray(a["data"], dtype=str), compressor, chunk_elems)
+                    _write_strings(g, a["id"], np.asarray(a["data"], dtype=str), compressor, chunk_elems, shard_elems)
                 else:
-                    _ds(g, a["id"], np.asarray(a["data"]), compressor, chunk_elems)
+                    _ds(g, a["id"], np.asarray(a["data"]), compressor, chunk_elems, shard_elems)
                 manifest.append({"id": a["id"], "kind": a["kind"]})
             # tree is stored as an opaque JSON *string*: zarr sorts attribute object keys, which would
             # scramble the passthrough's dict order; a string is preserved verbatim (and lets the
@@ -267,10 +279,33 @@ def _chunks_for(shape, chunk_elems):
     return (rows,) + shape[1:]
 
 
-def _ds(g, name, arr, compressor, chunk_elems):
+def _shards_for(shape, chunks, shard_elems):
+    """A shard shape packing ~shard_elems elements into one shard object -- a Zarr v3 hosting
+    optimization: many inner chunks collapse into fewer shard OBJECTS, each chunk still byte-range-
+    readable via the shard index. Mirrors the C++ `shard_shape_for`: packs k WHOLE chunks along the
+    first axis (inner dims stay a single chunk). Returns None (unsharded) when shard_elems is falsy,
+    the array is 0-d/unchunked, or it is already a single chunk (nothing to pack)."""
+    if not shard_elems or int(shard_elems) <= 0 or len(shape) == 0:
+        return None
+    shape = tuple(int(s) for s in shape)
+    chunks = tuple(int(c) for c in chunks)
+    chunk_rows = chunks[0]
+    if chunk_rows <= 0 or chunk_rows >= shape[0]:
+        return None                                    # single chunk -> nothing to shard
+    inner = 1
+    for s in shape[1:]:
+        inner *= s
+    num_chunks = (shape[0] + chunk_rows - 1) // chunk_rows
+    target_rows = int(shard_elems) // max(1, inner)
+    k = max(1, min(num_chunks, target_rows // chunk_rows))
+    return (k * chunk_rows,) + shape[1:]
+
+
+def _ds(g, name, arr, compressor, chunk_elems, shard_elems=None):
     arr = np.asarray(arr)
-    g.create_array(name, data=arr, compressor=compressor,
-                     chunks=_chunks_for(arr.shape, chunk_elems))
+    chunks = _chunks_for(arr.shape, chunk_elems)
+    g.create_array(name, data=arr, compressor=compressor, chunks=chunks,
+                     shards=_shards_for(arr.shape, chunks, shard_elems))
 
 
 def _write_sparse_streaming(g, source, meta, compressor, chunk_elems):
@@ -303,39 +338,39 @@ def _write_sparse_streaming(g, source, meta, compressor, chunk_elems):
     meta["shape"] = [int(x) for x in source.shape]
 
 
-def _write_values(g, fl, meta, compressor, chunk_elems=None):
+def _write_values(g, fl, meta, compressor, chunk_elems=None, shard_elems=None):
     enc = fl.encoding
     if _is_stream_source(fl.values):                   # backed/lazy sparse -> stream block-by-block
-        _write_sparse_streaming(g, fl.values, meta, compressor, chunk_elems)
+        _write_sparse_streaming(g, fl.values, meta, compressor, chunk_elems)   # streamed arrays stay unsharded
     elif enc in ("csr", "csc"):
         m = fl.values.tocsr() if enc == "csr" else fl.values.tocsc()
-        _ds(g, "data", m.data, compressor, chunk_elems)
-        _ds(g, "indices", m.indices, compressor, chunk_elems)
-        _ds(g, "indptr", m.indptr, compressor, chunk_elems)
+        _ds(g, "data", m.data, compressor, chunk_elems, shard_elems)
+        _ds(g, "indices", m.indices, compressor, chunk_elems, shard_elems)
+        _ds(g, "indptr", m.indptr, compressor, chunk_elems, shard_elems)
         meta["shape"] = [int(x) for x in m.shape]
     elif enc == "coo":                                 # coo is a Python-only on-disk form (C++/R/JS have no
         m = fl.values.tocsc()                          # coo reader) -> normalize to csc so every surface reads it
-        _ds(g, "data", m.data, compressor, chunk_elems)
-        _ds(g, "indices", m.indices, compressor, chunk_elems)
-        _ds(g, "indptr", m.indptr, compressor, chunk_elems)
+        _ds(g, "data", m.data, compressor, chunk_elems, shard_elems)
+        _ds(g, "indices", m.indices, compressor, chunk_elems, shard_elems)
+        _ds(g, "indptr", m.indptr, compressor, chunk_elems, shard_elems)
         meta["encoding"] = "csc"
         meta["shape"] = [int(x) for x in m.shape]
     elif enc == "categorical" or _is_categorical(fl.values):
         cat = as_categorical(fl.values)                # codes (-1 = missing) + categories + ordered
-        _ds(g, "codes", cat.codes.astype(np.int32), compressor, chunk_elems)
+        _ds(g, "codes", cat.codes.astype(np.int32), compressor, chunk_elems, shard_elems)
         if meta.get("categories") is None:             # inline categories (P1); an axis ref (P2) skips this
-            _write_strings(g, "categories", cat.categories, compressor, chunk_elems)
+            _write_strings(g, "categories", cat.categories, compressor, chunk_elems, shard_elems)
         meta["encoding"] = "categorical"
         meta["ordered"] = bool(cat.ordered)
         meta["shape"] = [int(len(cat))]
     else:
         arr = np.asarray(fl.values)
         if arr.dtype.kind in ("U", "S", "O"):          # string field -> utf8 + offsets
-            _write_strings(g, "values", arr, compressor, chunk_elems)
+            _write_strings(g, "values", arr, compressor, chunk_elems, shard_elems)
             meta["encoding"] = "utf8"
             meta["shape"] = [int(arr.shape[0])]
         else:
-            _ds(g, "values", arr, compressor, chunk_elems)
+            _ds(g, "values", arr, compressor, chunk_elems, shard_elems)
             meta["encoding"] = "dense"
             meta["shape"] = [int(x) for x in arr.shape]   # dense: shape in the manifest too (parity with sparse)
 
@@ -373,7 +408,7 @@ def _lazy_values(g, m):
 
 # ---- string encoding (utf8 bytes + offsets) ----
 
-def _write_strings(g, name, values, compressor, chunk_elems=None):
+def _write_strings(g, name, values, compressor, chunk_elems=None, shard_elems=None):
     arr = np.asarray(values)
     bs = [str(x).encode("utf-8") for x in arr.tolist()]
     offs = np.zeros(len(bs) + 1, dtype=np.int64)
@@ -381,8 +416,8 @@ def _write_strings(g, name, values, compressor, chunk_elems=None):
         offs[i + 1] = offs[i] + len(b)
     data = (np.frombuffer(b"".join(bs), dtype=np.uint8).copy()
             if bs else np.zeros(0, dtype=np.uint8))
-    _ds(g, name, data, compressor, chunk_elems)
-    _ds(g, name + "_offsets", offs, compressor, chunk_elems)
+    _ds(g, name, data, compressor, chunk_elems, shard_elems)
+    _ds(g, name + "_offsets", offs, compressor, chunk_elems, shard_elems)
 
 
 def _read_strings(g, name):

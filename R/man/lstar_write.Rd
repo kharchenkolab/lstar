@@ -10,7 +10,8 @@ lstar_write(
   chunk_elems = NULL,
   compression = c("none", "gzip", "zlib"),
   level = 5L,
-  format = c("v2", "v3")
+  format = c("v2", "v3"),
+  shard_elems = NULL
 )
 }
 \arguments{
@@ -31,6 +32,11 @@ readable by the C++ core and zarr-python).}
 
 \item{format}{on-disk Zarr format: \code{"v2"} (default) or \code{"v3"} (writes \code{zarr.json} +
 inline-consolidated metadata). Both are read by the C++/Python/JS cores; the default stays v2.}
+
+\item{shard_elems}{(Zarr v3 only) pack ~this many elements' worth of inner chunks into each shard
+OBJECT -- a hosting optimization (many small chunks collapse into fewer files, each still
+byte-range-readable via the shard index). Requires \code{format = "v3"} and \code{chunk_elems}. \code{NULL}
+(default) writes unsharded.}
 }
 \value{
 the output \code{path}, invisibly.

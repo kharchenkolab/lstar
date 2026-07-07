@@ -375,7 +375,7 @@ list lstar_cpp_read(std::string path) {
 [[cpp11::register]]
 void lstar_cpp_write(list ds, std::string path, int chunk_elems = 0,
                      std::string compression = "", int level = 5,
-                     std::string format = "v2") {
+                     std::string format = "v2", int shard_elems = 0) {
   lstar::json compressor = nullptr;                 // "" -> uncompressed; else numcodecs gzip/zlib codec
   if (compression == "gzip" || compression == "zlib")
     compressor = lstar::json{{"id", compression}, {"level", level}};
@@ -544,5 +544,5 @@ void lstar_cpp_write(list ds, std::string path, int chunk_elems = 0,
       }
     }
   }
-  lstar::write(out, path, (int64_t)chunk_elems, compressor, fmt);
+  lstar::write(out, path, (int64_t)chunk_elems, compressor, fmt, (int64_t)shard_elems);
 }

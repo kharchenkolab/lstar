@@ -116,13 +116,23 @@ lstar_read <- function(path) {
 #' @param level compression level 1-9 (default 5), used when `compression` is `"gzip"`/`"zlib"`.
 #' @param format on-disk Zarr format: `"v2"` (default) or `"v3"` (writes `zarr.json` +
 #'   inline-consolidated metadata). Both are read by the C++/Python/JS cores; the default stays v2.
+#' @param shard_elems (Zarr v3 only) pack ~this many elements' worth of inner chunks into each shard
+#'   OBJECT -- a hosting optimization (many small chunks collapse into fewer files, each still
+#'   byte-range-readable via the shard index). Requires `format = "v3"` and `chunk_elems`. `NULL`
+#'   (default) writes unsharded.
 #' @return the output `path`, invisibly.
 #' @seealso [lstar_read()], [lstar_read_block()]
 #' @export
 lstar_write <- function(ds, path, chunk_elems = NULL, compression = c("none", "gzip", "zlib"),
-                        level = 5L, format = c("v2", "v3")) {
+                        level = 5L, format = c("v2", "v3"), shard_elems = NULL) {
   compression <- match.arg(compression)
   format <- match.arg(format)                        # on-disk Zarr format; v2 default, v3 opt-in
+  if (!is.null(shard_elems)) {                        # sharding is v3-only and packs whole chunks
+    if (!identical(format, "v3"))
+      stop("lstar_write: shard_elems requires format='v3' (sharding is a Zarr v3 feature)", call. = FALSE)
+    if (is.null(chunk_elems))
+      stop("lstar_write: shard_elems requires chunk_elems (a shard packs multiple chunks)", call. = FALSE)
+  }
   .check_writable(ds)                    # fail loudly on a malformed dataset, not with a C++ crash
   axes <- lapply(names(ds$axes), function(nm) {
     a <- ds$axes[[nm]]
@@ -192,7 +202,8 @@ lstar_write <- function(ds, path, chunk_elems = NULL, compression = c("none", "g
                   axes = axes, fields = fields, aux = ds$aux %||% list())  # passthrough, round-tripped verbatim
   lstar_cpp_write(payload, path.expand(path),
                   as.integer(if (is.null(chunk_elems)) 0L else chunk_elems),
-                  if (compression == "none") "" else compression, as.integer(level), format)
+                  if (compression == "none") "" else compression, as.integer(level), format,
+                  as.integer(if (is.null(shard_elems)) 0L else shard_elems))
   invisible(path)
 }
 
