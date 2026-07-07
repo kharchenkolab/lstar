@@ -214,10 +214,13 @@ class CodecPipeline {
         throw error("codec requires blosc but LIBZARR_HAS_BLOSC is not defined");
 #endif
       case ByteStage::Kind::zstd:
-#ifdef LIBZARR_HAS_ZSTD
-        return detail::zstd_compress_bytes(data, stage.zstd_level, stage.zstd_checksum, "encode");
-#else
+#if !defined(LIBZARR_HAS_ZSTD)
         throw error("codec requires zstd but LIBZARR_HAS_ZSTD is not defined");
+#elif defined(LIBZARR_ZSTD_DECODE_ONLY)
+        // Decode-only build: the compress side is not compiled in.
+        throw error("zstd encode is not compiled in (LIBZARR_ZSTD_DECODE_ONLY)");
+#else
+        return detail::zstd_compress_bytes(data, stage.zstd_level, stage.zstd_checksum, "encode");
 #endif
       case ByteStage::Kind::shuffle:
         return detail::shuffle_bytes(data, stage.shuffle_elementsize);

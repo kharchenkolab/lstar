@@ -23,6 +23,11 @@
 
 namespace zarr::detail {
 
+// LIBZARR_ZSTD_DECODE_ONLY omits the compress side so a read-only consumer (a
+// WASM viewer) can link zstd's decompress-only amalgamation (zstddeclib.c)
+// instead of the full library. The decode path stays unconditional; encoding a
+// zstd chunk throws a clear error at the one call site (codecs.hpp).
+#ifndef LIBZARR_ZSTD_DECODE_ONLY
 class ZstdCctxGuard {
  public:
   ZstdCctxGuard() : cctx_(ZSTD_createCCtx()) {}
@@ -36,6 +41,7 @@ class ZstdCctxGuard {
  private:
   ZSTD_CCtx* cctx_;
 };
+#endif  // LIBZARR_ZSTD_DECODE_ONLY
 
 class ZstdDctxGuard {
  public:
@@ -51,6 +57,7 @@ class ZstdDctxGuard {
   ZSTD_DCtx* dctx_;
 };
 
+#ifndef LIBZARR_ZSTD_DECODE_ONLY
 /// Compresses `src` at `level` (0 = zstd default). The frame records the
 /// content size; `checksum` appends the xxhash frame checksum.
 inline Bytes zstd_compress_bytes(const Bytes& src, int level, bool checksum, const char* what) {
@@ -68,6 +75,7 @@ inline Bytes zstd_compress_bytes(const Bytes& src, int level, bool checksum, con
   out.resize(n);
   return out;
 }
+#endif  // LIBZARR_ZSTD_DECODE_ONLY
 
 /// Decompresses `src`. Frames carrying a content size are validated against
 /// `expected` (the decompression-bomb guard); frames without one fall back

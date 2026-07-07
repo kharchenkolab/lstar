@@ -201,6 +201,8 @@ jobs:
       # alongside zarr>=3.1; the python-cpp job's v3_shard run skips the WASM legs (no node there).
       - name: Zarr v3 sharding — WASM byte-range streaming (shard-index resolve + suffix reads)
         run: bash conformance/v3_shard.sh
+      - name: Zstd read on the WASM reader (decode-only build reads zarr-python's default zstd v3 store)
+        run: bash conformance/zstd_js.sh
       - name: viewer@0.1 grouping-policy linter (Python + JS lists match the canonical)
         run: python conformance/policy_linter.py
       - name: JS viewer@0.1 parity (lstar's own extend-viewer.ts == Python prep; CSC + CSR counts)

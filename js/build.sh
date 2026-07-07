@@ -41,12 +41,18 @@ mkdir -p "$JS/dist"
 echo "built $JS/dist/lstar_kernels.mjs (+ lstar_kernels.wasm)"
 
 # The I/O module: the libzarr-backed reader (retires the zarrita reimplementation). Needs libzarr's
-# gzip codec (-DLIBZARR_HAS_ZLIB) atop the zlib port. Kept a separate module from the kernels for now
-# (the kernels stay I/O-free and dead-code-stripped); the viewer loads both.
-"${EMCC[@]}" "$JS/wasm/lstar_reader.cpp" \
-  -I"$ROOT/core/include" \
+# gzip codec (-DLIBZARR_HAS_ZLIB) atop the zlib port, AND its zstd codec (-DLIBZARR_HAS_ZSTD) — zarr-python
+# 3's DEFAULT v3 compressor, so a hosted v3 store may be zstd-encoded. Emscripten has no zstd port, so we
+# compile a vendored zstd DECODER: with -DLIBZARR_ZSTD_DECODE_ONLY libzarr omits the zstd compress side
+# (the reader never encodes), so the small DECOMPRESS-ONLY amalgamation (js/third_party/zstd/zstddeclib.c)
+# links — no ZSTD_compress* references. Both defines are required (decode-only is additive on HAS_ZSTD).
+# A .c source can't share the .cpp's -std=c++17, so compile it to an object first, then link it in.
+# Kept a separate module from the kernels for now (the kernels stay I/O-free); the viewer loads both.
+"${EMCC[@]}" -c "$JS/third_party/zstd/zstddeclib.c" -O3 -o "$JS/dist/zstddeclib.o"
+"${EMCC[@]}" "$JS/wasm/lstar_reader.cpp" "$JS/dist/zstddeclib.o" \
+  -I"$ROOT/core/include" -I"$JS/third_party/zstd" \
   -std=c++17 -O3 -lembind \
-  -sUSE_ZLIB=1 -DLSTAR_HAVE_ZLIB -DLIBZARR_HAS_ZLIB \
+  -sUSE_ZLIB=1 -DLSTAR_HAVE_ZLIB -DLIBZARR_HAS_ZLIB -DLIBZARR_HAS_ZSTD -DLIBZARR_ZSTD_DECODE_ONLY \
   -sMODULARIZE=1 -sEXPORT_ES6=1 -sENVIRONMENT=node,web \
   -sALLOW_MEMORY_GROWTH=1 \
   -sEXPORT_NAME=createLstarIO \
