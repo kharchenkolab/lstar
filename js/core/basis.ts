@@ -22,7 +22,12 @@ export function selectCountsBasis(ds: DatasetLike, opts: { counts?: string; basi
     return !!f && f.role === "measure" && Array.isArray(f.span) && f.span.length === 2 && String(f.span[0]).startsWith("cells");
   });
   const present = twod.map((n) => `${n}[${ds.field(n)!.state ?? "?"}]`).join(", ") || "(none)";
-  const rawPick = () => (twod.includes("counts") ? "counts" : twod.find((n) => ds.field(n)!.state === "raw"));
+  // the literal-"counts" shortcut EXCLUDES a scaled/z-scored measure (symmetric with lognormPick): a
+  // field named "counts" that is actually scaled must NOT be picked as raw and log1p'd — fall through to a
+  // real raw-state measure (else none, and auto drops to lognorm / errors). "counts" with no/other state
+  // is still treated as raw counts.
+  const rawPick = () => (twod.includes("counts") && ds.field("counts")!.state !== "scaled"
+    ? "counts" : twod.find((n) => ds.field(n)!.state === "raw"));
   // name fallback EXCLUDES a scaled/z-scored measure (a scaled `X` is not lognorm).
   const lognormPick = () => twod.find((n) => ds.field(n)!.state === "lognorm")
     ?? twod.find((n) => LOGNORM_NAMES.includes(n) && ds.field(n)!.state !== "scaled");

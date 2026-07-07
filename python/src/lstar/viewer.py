@@ -147,8 +147,10 @@ def _select_counts_basis(ds, counts=None, basis=None):
             and (f.span[0] == "cells" or str(f.span[0]).startswith("cells"))]
     present = ", ".join("%s[%s]" % (n, ds.field(n).state) for n in twod) or "(none)"
 
-    def _raw_pick():        # raw measure: the field literally named "counts" if present, else any raw state
-        return ("counts" if "counts" in twod else None) \
+    def _raw_pick():        # raw measure: "counts" if present (and NOT scaled), else any raw-state measure
+        # the literal "counts" shortcut excludes a scaled/z-scored measure (symmetric with _lognorm_pick):
+        # a field named "counts" that is actually scaled must not be picked as raw + log1p'd -- fall through.
+        return ("counts" if "counts" in twod and ds.field("counts").state != "scaled" else None) \
             or next((n for n in twod if ds.field(n).state == "raw"), None)
 
     def _lognorm_pick():    # log-normalized measure: by state, else by conventional name (X/data/logcounts)

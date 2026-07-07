@@ -90,6 +90,18 @@ test_that("extend_for_viewer selects basis by state (not the name 'counts')", {
   expect_equal(d3$fields[["counts_cellmajor"]]$state, "lognorm")
 })
 
+test_that(".viewer_counts_basis: a measure NAMED 'counts' that is scaled is not picked as raw", {
+  # regression (the name-shortcut hole): the literal-"counts" fast path must exclude a scaled measure,
+  # symmetric with the lognorm name fallback -- else a scaled "counts" would be picked as raw and log1p'd.
+  mkds <- function(fl) structure(list(fields = fl), class = "lstar_dataset")
+  mkf <- function(state) list(role = "measure", span = c("cells", "genes"), state = state)
+  # scaled "counts" + a real raw measure -> skip the scaled "counts", pick the raw one (log1p)
+  b <- lstar:::.viewer_counts_basis(mkds(list(counts = mkf("scaled"), X = mkf("raw"))))
+  expect_equal(b$name, "X"); expect_true(b$log1p)
+  # only a scaled "counts" -> clear error (a scaled measure is never a basis), not a silent log1p
+  expect_error(lstar:::.viewer_counts_basis(mkds(list(counts = mkf("scaled")))), "no raw or log-normalized measure")
+})
+
 # A1 contract: extend_for_viewer output is identical whether counts arrive CSC (CsparseMatrix) or CSR
 # (RsparseMatrix) -- R normalizes on input like Python, so encoding must not change any navigator field.
 test_that("extend_for_viewer is invariant to the counts encoding (CSC vs CSR)", {

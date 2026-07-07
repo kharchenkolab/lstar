@@ -122,6 +122,26 @@ def test_basis_selected_by_state_not_name():
     assert "od_score" in ds.fields and "stats_leiden_sum" in ds.fields
 
 
+def test_scaled_field_named_counts_not_picked_as_raw():
+    # regression (the name-shortcut hole): a measure literally named "counts" that is SCALED must not be
+    # picked as raw and log1p'd -- the literal-"counts" fast path excludes scaled, like the lognorm name
+    # fallback. Exercises _select_counts_basis (the shared basis picker) directly.
+    from lstar.viewer import _select_counts_basis
+
+    def _ds(fields):
+        d = lstar.Dataset(kind="sample")
+        d.add_axis("cells", [f"c{i}" for i in range(60)])
+        d.add_axis("genes", [f"g{j}" for j in range(20)])
+        for name, state in fields:
+            d.add_field(name, _counts(60, 20, 5).tocsc(), role="measure", span=["cells", "genes"], state=state)
+        return d
+    # scaled "counts" + a real raw measure -> skip the scaled "counts", pick the raw one (log1p)
+    assert _select_counts_basis(_ds([("counts", "scaled"), ("X", "raw")])) == ("X", True)
+    # only a scaled "counts" -> clear error (a scaled measure is never a basis), not a silent log1p
+    with pytest.raises(ValueError, match="no raw or log-normalized measure"):
+        _select_counts_basis(_ds([("counts", "scaled")]))
+
+
 def test_mudata_seam():
     mudata = pytest.importorskip("mudata")
     rna = ad.AnnData(X=_counts(140, 45, 4))

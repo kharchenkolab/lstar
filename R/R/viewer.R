@@ -202,7 +202,9 @@ extend_for_viewer <- function(ds, grouping = NULL, also = character(0), counts =
   st <- function(nm) { s <- ds$fields[[nm]]$state; if (is.null(s)) NA_character_ else s }
   present <- if (length(twod)) paste(vapply(twod, function(nm) sprintf("%s[%s]", nm, st(nm)), ""), collapse = ", ") else "(none)"
   raw_pick <- function() {
-    if ("counts" %in% twod) return("counts")
+    # the literal "counts" shortcut EXCLUDES a scaled/z-scored measure (symmetric with lognorm_pick): a
+    # field named "counts" that is actually scaled must NOT be picked as raw + log1p'd -- fall through.
+    if ("counts" %in% twod && !identical(st("counts"), "scaled")) return("counts")
     p <- twod[vapply(twod, function(nm) identical(st(nm), "raw"), logical(1))]
     if (length(p)) p[1] else NULL
   }
