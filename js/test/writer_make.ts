@@ -9,6 +9,7 @@ import { writeStore, type Compressor } from "../core/writer.ts";
 import createLstarKernels from "../dist/lstar_kernels.mjs";
 
 const OUT = process.argv[2] || "/tmp/lstar-writer-cross.lstar.zarr";
+const FORMAT = (process.argv[3] as "v2" | "v3") || "v2";   // on-disk Zarr format (default v2)
 
 const k = await createLstarKernels();
 const compressor: Compressor = { id: "gzip", level: 1, compress: (raw) => new Uint8Array(k.gzipCompress(raw, 1)) };
@@ -52,6 +53,6 @@ await writeStore(new NodeFSStore(OUT), {
       ],
     },
   },
-}, { chunkElems: 4, compressor });   // chunkElems=4 forces multi-chunk; gzip via WASM
+}, { chunkElems: 4, compressor }, FORMAT);   // chunkElems=4 forces multi-chunk; gzip via WASM
 
-console.log("wrote chunked+gzip store ->", OUT);
+console.log(`wrote chunked+gzip ${FORMAT} store ->`, OUT);

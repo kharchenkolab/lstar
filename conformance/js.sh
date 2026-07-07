@@ -75,6 +75,14 @@ WX=/tmp/lstar_js_writer_cross.lstar.zarr; rm -rf "$WX"
   || { echo "  FAIL: JS writer_make"; exit 1; }
 PYTHONPATH="$ROOT/python/src" python3 "$ROOT/js/test/writer_crossread.py" "$WX" \
   || { echo "  FAIL: writer_crossread"; exit 1; }
+# same, but the JS writer emits Zarr v3 (per-node zarr.json + inline consolidated + c/ chunk keys) --
+# proves the JS v3 emitter is interoperable with zarr-python (the flip prerequisite).
+echo "  -- writer x-read v3 (JS-write v3 -> Python read+validate) --"
+WX3=/tmp/lstar_js_writer_cross_v3.lstar.zarr; rm -rf "$WX3"
+"$NODE" --experimental-strip-types "$ROOT/js/test/writer_make.ts" "$WX3" v3 2>/dev/null \
+  || { echo "  FAIL: JS writer_make v3"; exit 1; }
+PYTHONPATH="$ROOT/python/src" python3 "$ROOT/js/test/writer_crossread.py" "$WX3" \
+  || { echo "  FAIL: writer_crossread v3"; exit 1; }
 
 # 5) reverse leg: JS addToStore appends a derived field to a PYTHON-written store -> Python re-reads it
 echo "  -- writer extend (Python-write -> JS addToStore -> Python read) --"
@@ -88,5 +96,22 @@ assert "od_score" in ds.fields and "counts" in ds.fields, list(ds.fields)   # de
 assert ds.axis("od_groups").origin == "derived" and "derived@0.1" in ds.profiles
 assert not [e for e in lstar.validate(ds) if e.startswith("ERROR")]
 print("  [py] JS addToStore on a Python store re-reads clean (derived field + axis + profile)")
+PY
+# same, but the base store is Zarr v3 -- addToStore must AUTO-DETECT v3 and append v3 nodes (never mix
+# formats). This is the exact pagoda3-prep scenario once the default flips to v3.
+echo "  -- writer extend v3 (Python-write v3 -> JS addToStore auto-detect -> Python read) --"
+WE3=/tmp/lstar_js_writer_extend_v3.lstar.zarr; rm -rf "$WE3"
+PYTHONPATH="$ROOT/python/src" python3 -c "import lstar; lstar.write(lstar.read('$ROOT/js/test/data/sample.lstar.zarr'), '$WE3', format='v3')" \
+  || { echo "  FAIL: v3 base write"; exit 1; }
+"$NODE" --experimental-strip-types "$ROOT/js/test/writer_extend.ts" "$WE3" 2>/dev/null \
+  || { echo "  FAIL: JS writer_extend v3"; exit 1; }
+[ -f "$WE3/.zmetadata" ] && { echo "  FAIL: addToStore mixed formats (v3 base gained .zmetadata)"; exit 1; }
+PYTHONPATH="$ROOT/python/src" python3 - "$WE3" <<'PY' || { echo "  FAIL: extend v3 re-read"; exit 1; }
+import sys, lstar
+ds = lstar.read(sys.argv[1])
+assert "od_score" in ds.fields and "counts" in ds.fields, list(ds.fields)
+assert ds.axis("od_groups").origin == "derived" and "derived@0.1" in ds.profiles
+assert not [e for e in lstar.validate(ds) if e.startswith("ERROR")]
+print("  [py] JS addToStore on a v3 Python store re-reads clean (v3 preserved, no format mixing)")
 PY
 echo "JS/WASM conformance PASSED."
