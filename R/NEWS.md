@@ -1,5 +1,13 @@
 # lstar (development version)
 
+## Default on-disk format is now Zarr v3
+
+* `lstar_write()` now defaults to `format = "v3"` (was `"v2"`): stores are written with a per-node
+  `zarr.json` + inline consolidated metadata. The legacy Zarr v2 layout (`.zarray`/`.zgroup`/`.zattrs`
+  + a consolidated `.zmetadata`) remains available via `format = "v2"`. `lstar_read()` reads both
+  formats transparently, so this is invisible to readers; only newly *written* stores change layout.
+  All four surfaces (C++/Python/R/JS) match this default.
+
 ## Seurat → viewer prep (the previously-untested seam)
 
 * A Seurat object converted with `read_seurat()` then run through `extend_for_viewer()` now yields a

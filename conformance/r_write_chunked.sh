@@ -20,8 +20,11 @@ ds <- structure(list(kind = "sample", spec_version = "0.1", profiles = character
               genes = list(labels = paste0("g", 1:400), origin = "observed", role = "feature")),
   fields = list(counts = list(role = "measure", span = c("cells", "genes"), encoding = "csc",
                               state = "raw", values = X))), class = "lstar_dataset")
-lstar_write(ds, "'"$DEF"'")                                       # default: single chunk, uncompressed
-lstar_write(ds, "'"$GZ"'", chunk_elems = 4000, compression = "gzip", level = 5)
+# format="v2" pins the on-disk layout this test inspects (.zarray / numeric chunk keys); the v3 default
+# R writer is covered by v3_r.sh + shard_r.sh. The chunk_elems/compression defaults (single uncompressed
+# chunk) are unchanged by the format flip, which is what this test guards.
+lstar_write(ds, "'"$DEF"'", format = "v2")                        # default chunking: single chunk, uncompressed
+lstar_write(ds, "'"$GZ"'", chunk_elems = 4000, compression = "gzip", level = 5, format = "v2")
 za0 <- jsonlite::fromJSON(readLines(file.path("'"$DEF"'", "fields/counts/data/.zarray"), warn = FALSE))
 za  <- jsonlite::fromJSON(readLines(file.path("'"$GZ"'",  "fields/counts/data/.zarray"), warn = FALSE))
 nch <- length(list.files(file.path("'"$GZ"'", "fields/counts/data"), pattern = "^[0-9]"))

@@ -113,9 +113,11 @@ try {
     assert.deepEqual(got, ref, `VALUE MISMATCH through openLstar: ${label} != FS dir (silent data collapse?)`);
     console.log(`  [js] values-through-reader equal: ${label} == FS dir`);
   }
-  // belt-and-suspenders: ZipStore must tolerate a leading-slash key (the reader forms them)
+  // belt-and-suspenders: ZipStore must tolerate a leading-slash key (the reader forms them). Chunk keys
+  // differ by format: v3 (default) `.../values/c/0`, v2 `.../values/0` — probe whichever the store has.
   const zs = await ZipStore.open(nodeFileSource(zip), zip);
-  const key = "fields/leiden/values/0";
+  const base = "fields/leiden/values";
+  const key = (await zs.get(`${base}/c/0`)) ? `${base}/c/0` : `${base}/0`;
   const a = await zs.get(key), b = await zs.get("/" + key);
   assert(a && b && a.length === b.length && a.every((x, i) => x === b[i]),
     "ZipStore.get('/' + key) must equal ZipStore.get(key) — leading-slash tolerance");

@@ -1,6 +1,6 @@
 // Cross-impl test for the upgraded reader: read a *chunked, gzip-compressed* store written by
 // Python, check the heavy fields decode correctly, exercise the csc<->csr transpose primitive,
-// and write the store back (now with a consolidated .zmetadata) for Python to re-open.
+// and write the store back (consolidated; v3 by default) for Python to re-open.
 //
 //   usage: test_chunked <in.lstar.zarr> <out.lstar.zarr> <expected_nnz> <expected_sum>
 #include <chrono>
@@ -74,6 +74,6 @@ int main(int argc, char** argv) {
     if (rc != 0) return rc;
 
     lstar::write(ds, out);
-    std::cout << "  [c++] wrote " << out << " (+ consolidated .zmetadata)\n";
+    std::cout << "  [c++] wrote " << out << " (consolidated; v3 default)\n";
     return 0;
 }

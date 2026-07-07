@@ -22,7 +22,9 @@ fi
 EMSDK="${EMSDK:-$HOME/emsdk}"
 NODE="$(ls -d "$EMSDK"/node/*/bin/node 2>/dev/null | head -1)"; NODE="${NODE:-$(command -v node || true)}"
 HAVE_JS=0
-if [ -n "$NODE" ] && [ -d "$ROOT/js/node_modules/zarrita" ]; then
+# The JS surface is the WASM/libzarr reader (zarrita retired) — needs only node + a successful build; the
+# emcc build itself guards on emsdk/python. LSTAR_EMCC_PYTHON points emcc at a >=3.10 interpreter if needed.
+if [ -n "$NODE" ]; then
   if EMSDK="$EMSDK" bash "$ROOT/js/build.sh" >/tmp/v3c_wasm.log 2>&1; then HAVE_JS=1; else echo "  [skip] wasm build failed — JS surface skipped"; fi
 fi
 HAVE_R=0

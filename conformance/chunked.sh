@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Chunked + compressed cross-impl conformance: the C++ core must read a multi-chunk,
-# gzip-compressed store written by Python, and its output (with a consolidated .zmetadata) must
-# re-open in Python. Also exercises the csc<->csr transpose primitive. This is the portability
-# path that the single-chunk-uncompressed MVP could not handle.
+# gzip-compressed store written by Python, and its output (consolidated) must re-open in Python.
+# Format-agnostic (default is v3): v3 consolidates inline in the root zarr.json, v2 writes .zmetadata.
+# Also exercises the csc<->csr transpose primitive. This is the portability path that the
+# single-chunk-uncompressed MVP could not handle.
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 IN=/tmp/conf_chunked.lstar.zarr
@@ -30,9 +31,15 @@ echo "  [py] wrote chunked+gzip store (nnz=$NNZ)"
 "$ROOT/core/build/test_chunked" "$IN" "$OUT" "$NNZ" "$SUM"
 
 PYTHONPATH="$ROOT/python/src" python3 - "$IN" "$OUT" <<'PY'
-import sys, os, warnings; warnings.filterwarnings("ignore")
+import sys, os, json, warnings; warnings.filterwarnings("ignore")
 import numpy as np, zarr, lstar
-assert os.path.exists(sys.argv[2] + "/.zmetadata"), "C++ did not write .zmetadata"
+# C++ must have consolidated the store it wrote (default format is v3). Format-agnostic: v3 carries
+# consolidated metadata INLINE in the root zarr.json; v2 writes a separate .zmetadata document.
+root_v3 = os.path.join(sys.argv[2], "zarr.json")
+if os.path.exists(root_v3):
+    assert "consolidated_metadata" in json.load(open(root_v3)), "C++ v3 output not consolidated"
+else:
+    assert os.path.exists(sys.argv[2] + "/.zmetadata"), "C++ did not write .zmetadata"
 zarr.open_consolidated(sys.argv[2], mode="r")
 a, b = lstar.read(sys.argv[1]), lstar.read(sys.argv[2])
 assert (a.fields["counts"].values != b.fields["counts"].values).nnz == 0

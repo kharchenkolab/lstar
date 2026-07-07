@@ -114,8 +114,9 @@ lstar_read <- function(path) {
 #' @param compression chunk codec: `"none"` (default), `"gzip"`, or `"zlib"` (numcodecs-compatible;
 #'   readable by the C++ core and zarr-python).
 #' @param level compression level 1-9 (default 5), used when `compression` is `"gzip"`/`"zlib"`.
-#' @param format on-disk Zarr format: `"v2"` (default) or `"v3"` (writes `zarr.json` +
-#'   inline-consolidated metadata). Both are read by the C++/Python/JS cores; the default stays v2.
+#' @param format on-disk Zarr format: `"v3"` (default; writes `zarr.json` + inline-consolidated
+#'   metadata) or `"v2"` (legacy `.zarray`/`.zgroup`/`.zattrs` + a consolidated `.zmetadata`). Both
+#'   are read by the C++/Python/JS cores.
 #' @param shard_elems (Zarr v3 only) pack ~this many elements' worth of inner chunks into each shard
 #'   OBJECT -- a hosting optimization (many small chunks collapse into fewer files, each still
 #'   byte-range-readable via the shard index). Requires `format = "v3"` and `chunk_elems`. `NULL`
@@ -124,7 +125,7 @@ lstar_read <- function(path) {
 #' @seealso [lstar_read()], [lstar_read_block()]
 #' @export
 lstar_write <- function(ds, path, chunk_elems = NULL, compression = c("none", "gzip", "zlib"),
-                        level = 5L, format = c("v2", "v3"), shard_elems = NULL) {
+                        level = 5L, format = c("v3", "v2"), shard_elems = NULL) {
   compression <- match.arg(compression)
   format <- match.arg(format)                        # on-disk Zarr format; v2 default, v3 opt-in
   if (!is.null(shard_elems)) {                        # sharding is v3-only and packs whole chunks

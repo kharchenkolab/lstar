@@ -50,7 +50,7 @@ await writeStore(new NodeFSStore(dir), {
                  shape: [NR, NC], data: csr.data, indices: csr.indices, indptr: csr.indptr,
                  write: { compressor: gzip } },
   },
-} as any);
+} as any, undefined, "v2");   // this test inspects v2 .zarray per-field compressors
 
 // ---- on-disk compressors are asymmetric ----
 const za = (p: string) => JSON.parse(fs.readFileSync(path.join(dir, p, ".zarray"), "utf8"));

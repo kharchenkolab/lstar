@@ -320,7 +320,7 @@ def _detect_zarr_format(path) -> str:
 
 
 def _emit_py(ds, dst: str, fmt: str, backend: str = "auto", *,
-             zarr_format: str = "v2", chunk_elems=None, shard_elems=None, compressor=None) -> None:
+             zarr_format: str = "v3", chunk_elems=None, shard_elems=None, compressor=None) -> None:
     """Write an L* :class:`Dataset` out to a Python-side target. The Zarr `zarr_format`/`chunk_elems`/
     `shard_elems`/`compressor` knobs apply only to a `store` target (a `.lstar.zarr`); non-store targets
     ignore them."""
@@ -381,7 +381,7 @@ def _read_dataset(src: str, ff: str, backend: str = "auto"):
 
 def convert(src: str, dst: str, from_fmt: str | None = None, to_fmt: str | None = None,
             backend: str = "auto", viewer: bool = False,
-            zarr_format: str = "v2", chunk_elems=None, shard_elems=None,
+            zarr_format: str = "v3", chunk_elems=None, shard_elems=None,
             compression: str = "none", compression_level: int = 5):
     """Convert *src* → *dst*. Returns ``(ds, from_fmt, to_fmt)`` with the bridging L* dataset.
 
@@ -533,8 +533,8 @@ def main(argv=None) -> int:
     c.add_argument("--to", dest="to_fmt", default=None, help="override the target format")
     c.add_argument("--backend", choices=("auto", "native", "direct"), default="auto",
                    help="native (domain package), direct (lstar's package-free codec), or auto [default]")
-    c.add_argument("--zarr-format", dest="zarr_format", choices=("v2", "v3"), default="v2",
-                   help="on-disk Zarr format for a store target: v2 [default] or v3")
+    c.add_argument("--zarr-format", dest="zarr_format", choices=("v2", "v3"), default="v3",
+                   help="on-disk Zarr format for a store target: v3 [default] or v2")
     c.add_argument("--compression", choices=("none", "gzip", "zstd"), default="none",
                    help="compress store chunks: none [default], gzip, or zstd (zstd needs --zarr-format v3)")
     c.add_argument("--compression-level", dest="compression_level", type=int, default=5,

@@ -29,6 +29,6 @@ ds.add_field("adt", rng.standard_normal(n // 2).astype("float32"), role="measure
 ds.aux["anndata.uns"] = {"params": {"n_pca": 10, "method": "leiden"},
                          "scores": np.arange(5.0), "names": ["a", "b", "c"]}  # aux tree + leaves
 ds = extend_for_viewer(ds)                                                   # od_score, stats_*, markers_*, factor axes
-lstar.write(ds, out, compressor=numcodecs.GZip(5))
+lstar.write(ds, out, compressor=numcodecs.GZip(5), format="v2")             # explicit v2 seed (re-emitted to v3 downstream)
 man = __import__("json").load(open(out + "/.zattrs"))["lstar"]
 print("seed:", len(man["fields"]), "fields,", len(man["axes"]), "axes ->", out)

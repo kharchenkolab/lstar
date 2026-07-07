@@ -24,7 +24,7 @@ LSTAR = "lstar"
 SPEC_VERSION = "0.1"
 
 
-def write(ds, path, compressor=None, chunk_elems=None, stream=False, viewer=False, format="v2",
+def write(ds, path, compressor=None, chunk_elems=None, stream=False, viewer=False, format="v3",
           shard_elems=None):
     """Serialize an L* Dataset to a Zarr store at `path`.
 
@@ -44,10 +44,10 @@ def write(ds, path, compressor=None, chunk_elems=None, stream=False, viewer=Fals
     (counts_cellmajor, per-group stats + marker tables, od_score, and a hybrid cell order) so the
     resulting store is ready for fast differential-expression / variable-gene / dotplot browsing.
 
-    format="v2" (default) writes the Zarr v2 on-disk format; format="v3" writes Zarr v3 (zarr.json +
-    inline-consolidated metadata). Both are read by the C++/R/JS libzarr cores and by zarr-python; the
-    default stays v2 until the whole stack flips. (Library != format: the writer always uses the
-    zarr-python 3 *library*, whichever on-disk *format* is requested.)
+    format="v3" (default) writes the Zarr v3 on-disk format (zarr.json + inline-consolidated metadata);
+    format="v2" writes the legacy Zarr v2 format (.zarray/.zgroup/.zattrs + a consolidated .zmetadata).
+    Both are read by the C++/R/JS libzarr cores and by zarr-python. (Library != format: the writer always
+    uses the zarr-python 3 *library*, whichever on-disk *format* is requested.)
 
     shard_elems (Zarr v3 only) packs ~this many elements' worth of inner chunks into each shard OBJECT
     (the `sharding_indexed` codec): many small chunks collapse into a few objects -- a hosting

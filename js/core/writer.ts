@@ -133,7 +133,7 @@ function shardShapeFor(shape: number[], chunks: number[], shardElems?: number): 
 // an injected `codec` packs the inner chunks into shard objects (sharding_indexed). The drift-prone bytes
 // (compression, shard index + crc32c) go through the injected libzarr codec; JS owns layout + keys + meta.
 async function writeArray(store: LstarWritableStore, base: string, a: ArrayLike<number>, shape: number[],
-                          opts?: WriteOptions, fmt: Fmt = "v2"): Promise<void> {
+                          opts?: WriteOptions, fmt: Fmt = "v3"): Promise<void> {
   const [dtype, isize, raw] = dtypeOf(a);
   const sh = shape.length ? shape : [a.length];
   const chunks = chunkShapeFor(sh, opts?.chunkElems).map((s) => Math.max(s, 1));
@@ -216,7 +216,7 @@ async function writeArray(store: LstarWritableStore, base: string, a: ArrayLike<
 // A group node: v2 writes a bare `.zgroup` (+ `.zattrs` carrying the L* attrs when `lstar` is given);
 // v3 writes a single `zarr.json` (node_type group, L* attrs inline). `lstar === undefined` is a bare
 // container group (axes/, fields/, models/, passthrough/) with no L* attributes.
-async function writeGroup(store: LstarWritableStore, base: string, lstar: unknown, fmt: Fmt = "v2"): Promise<void> {
+async function writeGroup(store: LstarWritableStore, base: string, lstar: unknown, fmt: Fmt = "v3"): Promise<void> {
   const p = base ? base + "/" : "";
   if (fmt === "v3") {
     await store.set(p + "zarr.json", j({ zarr_format: 3, node_type: "group",
@@ -229,7 +229,7 @@ async function writeGroup(store: LstarWritableStore, base: string, lstar: unknow
 
 // A utf8 string array -> a concatenated `|u1` byte array + an `<i8` offsets array (length n+1).
 async function writeStrings(store: LstarWritableStore, base: string, valuesKey: string, offsetsKey: string,
-                            strings: (string | number)[], opts?: WriteOptions, fmt: Fmt = "v2"): Promise<void> {
+                            strings: (string | number)[], opts?: WriteOptions, fmt: Fmt = "v3"): Promise<void> {
   const parts = strings.map((s) => ENC.encode(String(s)));
   const total = parts.reduce((n, p) => n + p.length, 0);
   // offsets are `<i8` (int64) -- the cross-language contract (Python/C++ readers expect int64); the JS
@@ -241,12 +241,12 @@ async function writeStrings(store: LstarWritableStore, base: string, valuesKey: 
   await writeArray(store, base + "/" + offsetsKey, offs, [strings.length + 1], opts, fmt);
 }
 
-async function writeAxis(store: LstarWritableStore, name: string, ax: AxisSpec, opts?: WriteOptions, fmt: Fmt = "v2"): Promise<void> {
+async function writeAxis(store: LstarWritableStore, name: string, ax: AxisSpec, opts?: WriteOptions, fmt: Fmt = "v3"): Promise<void> {
   await writeGroup(store, "axes/" + name, { kind: "axis", origin: ax.origin ?? "observed", role: ax.role ?? "", induced_by: ax.inducedBy ?? null, provenance: {} }, fmt);
   await writeStrings(store, "axes/" + name, "labels", "labels_offsets", ax.labels, opts, fmt);
 }
 
-async function writeField(store: LstarWritableStore, name: string, f: FieldSpec, opts?: WriteOptions, fmt: Fmt = "v2"): Promise<void> {
+async function writeField(store: LstarWritableStore, name: string, f: FieldSpec, opts?: WriteOptions, fmt: Fmt = "v3"): Promise<void> {
   const enc = f.encoding ?? "dense";
   const base = "fields/" + name;
   const partial = f.index != null;
@@ -279,7 +279,7 @@ async function writeField(store: LstarWritableStore, name: string, f: FieldSpec,
 }
 
 // The `passthrough/<ns>` lossless passthrough: the opaque `tree` (stored as a string) + the array leaves.
-async function writeAux(store: LstarWritableStore, ns: string, aux: AuxSpec, opts?: WriteOptions, fmt: Fmt = "v2"): Promise<void> {
+async function writeAux(store: LstarWritableStore, ns: string, aux: AuxSpec, opts?: WriteOptions, fmt: Fmt = "v3"): Promise<void> {
   const base = "passthrough/" + ns;
   await writeGroup(store, base, { kind: "passthrough", tree: JSON.stringify(aux.tree), arrays: aux.arrays.map((a) => ({ id: a.id, kind: a.kind })) }, fmt);
   for (const a of aux.arrays) {
@@ -303,9 +303,10 @@ function recordMeta(meta: Record<string, unknown>, key: string, value: Uint8Arra
 }
 
 /** Write a complete L* store (root manifest + axes + fields + aux + consolidated metadata). `format`
- * is the on-disk Zarr format: "v2" (default, byte-identical to before) or "v3" (per-node zarr.json +
- * a root zarr.json carrying the manifest and an inline consolidated_metadata map). */
-export async function writeStore(store: LstarWritableStore, ds: DatasetSpec, opts?: WriteOptions, format: Fmt = "v2"): Promise<void> {
+ * is the on-disk Zarr format: "v3" (default; per-node zarr.json + a root zarr.json carrying the manifest
+ * and an inline consolidated_metadata map) or "v2" (legacy .zarray/.zgroup/.zattrs + a consolidated
+ * .zmetadata). */
+export async function writeStore(store: LstarWritableStore, ds: DatasetSpec, opts?: WriteOptions, format: Fmt = "v3"): Promise<void> {
   // Transparently record every node's metadata as it's written, so we can emit the consolidated map at
   // the end (one-read opens; strict readers). Readers also fall back to per-node metadata.
   const meta: Record<string, unknown> = {};

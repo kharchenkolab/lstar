@@ -393,7 +393,7 @@ inline std::vector<int64_t> shard_shape_for(const std::vector<int64_t>& shape,
 // fill-padded per the v2 spec.
 inline void write_array(const fs::path& dir, const NdArray& a,
                         int64_t chunk_elems = 0, const json& compressor = json(nullptr),
-                        zarr::ZarrFormat fmt = zarr::ZarrFormat::v2, int64_t shard_elems = 0) {
+                        zarr::ZarrFormat fmt = zarr::ZarrFormat::v3, int64_t shard_elems = 0) {
     // libzarr writes the array metadata + chunks in `fmt` (v2 .zarray, or v3 zarr.json).
     // chunk_shape_for keeps lstar's first-axis-only chunking and single-chunk default; fill 0 matches
     // lstar's layout. For v3, libzarr prepends the required `bytes` codec and uses the 'default' chunk-key
@@ -438,7 +438,7 @@ inline std::vector<std::string> read_strings(const fs::path& gdir, const std::st
 inline void write_strings(const fs::path& gdir, const std::string& name,
                           const std::vector<std::string>& strs,
                           int64_t chunk_elems = 0, const json& compressor = json(nullptr),
-                          zarr::ZarrFormat fmt = zarr::ZarrFormat::v2, int64_t shard_elems = 0) {
+                          zarr::ZarrFormat fmt = zarr::ZarrFormat::v3, int64_t shard_elems = 0) {
     std::vector<int64_t> off(strs.size() + 1, 0);
     std::string buf;
     for (size_t i = 0; i < strs.size(); ++i) {
@@ -461,9 +461,9 @@ inline void write_strings(const fs::path& gdir, const std::string& name,
 // ------------------------------------------------------------ group IO ------
 
 inline void write_group(const fs::path& dir, const json& attrs,
-                        zarr::ZarrFormat fmt = zarr::ZarrFormat::v2) {
+                        zarr::ZarrFormat fmt = zarr::ZarrFormat::v3) {
     fs::create_directories(dir);
-    if (fmt == zarr::ZarrFormat::v2) {                    // v2: hand-write .zgroup + .zattrs (proven default path)
+    if (fmt == zarr::ZarrFormat::v2) {                    // v2: hand-write .zgroup + .zattrs (legacy on-disk path)
         write_text(dir / ".zgroup", json{{"zarr_format", 2}}.dump());
         write_text(dir / ".zattrs", attrs.dump());
     } else {                                              // v3: libzarr emits zarr.json (node_type + attributes)
@@ -475,7 +475,7 @@ inline void write_group(const fs::path& dir, const json& attrs,
 
 // Walk a finished store and emit consolidated metadata (so a reader gets the tree in one read instead
 // of many small stats): v2 -> a `.zmetadata` document; v3 -> the inline convention in root zarr.json.
-inline void consolidate_metadata(const fs::path& root, zarr::ZarrFormat fmt = zarr::ZarrFormat::v2) {
+inline void consolidate_metadata(const fs::path& root, zarr::ZarrFormat fmt = zarr::ZarrFormat::v3) {
     // libzarr emits deterministically, parent-before-child. (The old fs-walk order was a latent hazard
     // for strict consolidated readers -- the class of bug we hit on the JS writer side.)
     zarr::FilesystemStore store(root, /*create=*/false);
@@ -817,7 +817,7 @@ inline Dataset read(const fs::path& root) {
 
 inline void write(const Dataset& ds, const fs::path& root,
                   int64_t chunk_elems = 0, const json& compressor = json(nullptr),
-                  zarr::ZarrFormat fmt = zarr::ZarrFormat::v2, int64_t shard_elems = 0) {
+                  zarr::ZarrFormat fmt = zarr::ZarrFormat::v3, int64_t shard_elems = 0) {
     if (root.extension() == ".zip") {                 // single-file .lstar.zarr.zip: write a dir, pack STORED
         fs::path tmp = unique_temp_dir("lstar_zip_");
         try {

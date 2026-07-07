@@ -10,7 +10,7 @@ lstar_write(
   chunk_elems = NULL,
   compression = c("none", "gzip", "zlib"),
   level = 5L,
-  format = c("v2", "v3"),
+  format = c("v3", "v2"),
   shard_elems = NULL
 )
 }
@@ -30,8 +30,9 @@ readable by the C++ core and zarr-python).}
 
 \item{level}{compression level 1-9 (default 5), used when \code{compression} is \code{"gzip"}/\code{"zlib"}.}
 
-\item{format}{on-disk Zarr format: \code{"v2"} (default) or \code{"v3"} (writes \code{zarr.json} +
-inline-consolidated metadata). Both are read by the C++/Python/JS cores; the default stays v2.}
+\item{format}{on-disk Zarr format: \code{"v3"} (default; writes \code{zarr.json} + inline-consolidated
+metadata) or \code{"v2"} (legacy \code{.zarray}/\code{.zgroup}/\code{.zattrs} + a consolidated
+\code{.zmetadata}). Both are read by the C++/Python/JS cores.}
 
 \item{shard_elems}{(Zarr v3 only) pack ~this many elements' worth of inner chunks into each shard
 OBJECT -- a hosting optimization (many small chunks collapse into fewer files, each still

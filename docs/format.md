@@ -11,12 +11,14 @@ is *also* a plain Zarr group that scanpy/Vitessce/zarrita can open and read the 
 > so the format is self-describing; reaching **1.0** is what turns that version line into a compatibility
 > commitment. Until then, regenerate stores from source rather than relying on them for long-term archival.
 
-> **Implemented today.** The Python and C++ writers emit the tree below in **Zarr v2** with a
-> consolidated `.zmetadata`; the C++/R/Python readers all read it (chunked + gzip included). A nullable
-> validity `mask` and **partial coverage** (`coverage="partial"` + an `index` into `index_axis`) are
-> written and read by all three. The spec targets **Zarr v3 + sharding** (the request-economy path for
-> million-cell remote stores); that and the `recipe`/`ragged`/`raster` encodings and `models/` are not
-> yet written.
+> **Implemented today.** The Python, C++, R, and JS writers emit the tree below in **Zarr v3 by
+> default** (`zarr.json` per node + inline consolidated metadata); legacy **Zarr v2** (`.zarray`/
+> `.zgroup`/`.zattrs` + a consolidated `.zmetadata`) is still available as an opt-in (`format="v2"`).
+> All four surfaces read *both* formats (chunked + gzip + zstd included), and **v3 sharding** (the
+> `sharding_indexed` codec — the request-economy path for million-cell remote stores) is written and
+> read across surfaces. A nullable validity `mask` and **partial coverage** (`coverage="partial"` + an
+> `index` into `index_axis`) are written and read everywhere. The `recipe`/`ragged`/`raster` encodings
+> and `models/` are not yet written.
 
 ## The tree
 

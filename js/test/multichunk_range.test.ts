@@ -122,8 +122,8 @@ async function checkStore(label: string, store: any, rangeKeys?: string[]) {
   });
 
   // confirm the MULTI-chunk fast path actually fired (a range read into a non-zero chunk index), not that
-  // everything silently fell back to zarrita (which would also pass parity but wouldn't test the new math).
-  if (rangeKeys) assert(rangeKeys.some((k) => /\/(data|indices)\/[12]$/.test(k)),
+  // everything silently fell back. Chunk keys differ by format: v2 `.../data/1`, v3 `.../data/c/1` (default).
+  if (rangeKeys) assert(rangeKeys.some((k) => /\/(data|indices)\/(?:c\/)?[12]$/.test(k)),
     `${label}: expected a byte-range read into chunk 1 or 2 (multi-chunk fast path) — saw: ${[...new Set(rangeKeys)].join(", ")}`);
 
   console.log(`  [js] multi-chunk range parity OK: ${label}`);

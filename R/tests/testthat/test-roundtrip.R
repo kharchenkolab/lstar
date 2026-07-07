@@ -29,9 +29,15 @@ test_that("only state=raw integer data narrows to i4; non-raw float layers stay 
       lognorm = list(role = "measure", span = c("cells", "genes"), state = "lognorm", encoding = "csc", values = m))),
     class = "lstar_dataset")
   p <- tempfile(fileext = ".lstar.zarr"); lstar_write(ds, p)
-  zarray <- function(field) paste(readLines(file.path(p, "fields", field, "data", ".zarray"), warn = FALSE), collapse = "")
-  expect_match(zarray("counts"), "<i4", fixed = TRUE)    # raw integer counts -> i4 (de-widened)
-  expect_match(zarray("lognorm"), "<f8", fixed = TRUE)   # SAME integer values but state!=raw -> stays f8
+  # dtype is inspected on-disk; the default format is v3 (zarr.json, data_type "int32"/"float64"), but a
+  # v2 store (.zarray, dtype "<i4"/"<f8") is still supported -- read whichever the writer emitted.
+  is_v3 <- file.exists(file.path(p, "fields", "counts", "data", "zarr.json"))
+  dtype <- function(field) {
+    d <- file.path(p, "fields", field, "data")
+    paste(readLines(file.path(d, if (is_v3) "zarr.json" else ".zarray"), warn = FALSE), collapse = "")
+  }
+  expect_match(dtype("counts"), if (is_v3) "int32" else "<i4")     # raw integer counts -> int32 (de-widened)
+  expect_match(dtype("lognorm"), if (is_v3) "float64" else "<f8")  # SAME integer values but state!=raw -> stays float64
   ds2 <- lstar_read(p)                                   # values round-trip regardless of dtype
   expect_equal(as.numeric(sum(field_value(ds2, "counts"))), sum(m))
   expect_equal(as.numeric(sum(field_value(ds2, "lognorm"))), sum(m))

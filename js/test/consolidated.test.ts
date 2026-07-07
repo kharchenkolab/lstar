@@ -46,7 +46,7 @@ const spec = {
 };
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lstar-consol-"));
-await writeStore(new NodeFSStore(dir), spec as any);
+await writeStore(new NodeFSStore(dir), spec as any, undefined, "v2");   // this test exercises the v2 .zmetadata consolidated-read path
 
 // ---- consolidated open: zero metadata objects fetched from the underlying store ----
 {

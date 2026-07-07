@@ -59,10 +59,12 @@ for s in sys.argv[1:3]:                                # both read + validate cl
     assert "X" in ds.fields and not [e for e in lstar.validate(ds) if e.startswith("ERROR")]
 print(f"  [py] CLI v3: --compression gzip={g}, zstd+shard={z}; both read + validate clean")
 PY
-# (capture first: under `set -o pipefail`, the erroring convert would poison a `... | grep` pipe)
-ZERR="$(python3 -m lstar convert "$H5AD" "$TMP/bad.lstar.zarr" --compression zstd 2>&1 || true)"
+# zstd is a v3-only codec: requesting it with --zarr-format v2 must be rejected. (Must pass v2 explicitly
+# now that the default is v3, which accepts zstd.) Capture first: under `set -o pipefail`, the erroring
+# convert would poison a `... | grep` pipe.
+ZERR="$(python3 -m lstar convert "$H5AD" "$TMP/bad.lstar.zarr" --zarr-format v2 --compression zstd 2>&1 || true)"
 echo "$ZERR" | grep -q "requires --zarr-format v3" \
-  && echo "  [py] CLI: --compression zstd without v3 rejected" || { echo "  FAIL: zstd/v2 not rejected"; exit 1; }
+  && echo "  [py] CLI: --compression zstd with v2 rejected" || { echo "  FAIL: zstd/v2 not rejected"; exit 1; }
 # `lstar viewer` extends in place and must KEEP the store's format (was: silently rewrote v3 as v2). Build
 # a tiny RAW-counts v3 store (the h5ad X above is float -> lognorm, which viewer prep needs raw for).
 VR="$TMP/vraw.lstar.zarr"
