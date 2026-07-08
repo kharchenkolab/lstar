@@ -169,6 +169,22 @@ class Reader {
         return out;
     }
 
+    // Decode ONE chunk's STORED bytes -> {dtype, bytes: Uint8Array (native, C-order)} via the array's
+    // INNER codec pipeline — the read-twin of the writer's encodeChunk (CodecPipeline::resolve(meta).
+    // decode). meta.codecs is the inner chain (sharding_indexed is lowered into shard_levels, never left
+    // in codecs), so this decodes ONE inner chunk for BOTH sharded and unsharded arrays. Lets the JS range
+    // path sub-range a COMPRESSED array at CHUNK granularity: fetch the covering chunk's stored bytes,
+    // decode here, slice in JS — O(chunk), not O(array). Edge (partial-last) chunks are fill-padded, so
+    // the decoded buffer is always chunk_shape elements and the JS slice is in-bounds.
+    val decodeChunk(const std::string& path, val bytes_js) {
+        zarr::Array a = zarr::Array::open(store_, path);
+        Bytes raw = zarr::CodecPipeline::resolve(a.meta()).decode(to_bytes(bytes_js));
+        val out = val::object();
+        out.set("dtype", zarr::v2::emit_data_type(a.meta().dtype, /*big_endian=*/false));
+        out.set("bytes", to_u8(raw));
+        return out;
+    }
+
     // a whole array -> {dtype: "<f4"|..., shape: number[], bytes: Uint8Array (C-order, native)}.
     val array(const std::string& path) {
         zarr::Array a = zarr::Array::open(store_, path);
@@ -214,6 +230,7 @@ EMSCRIPTEN_BINDINGS(lstar_io) {
         .function("chunkKey", &Reader::chunkKey)
         .function("shardLocate", &Reader::shardLocate)
         .function("shardEntry", &Reader::shardEntry)
+        .function("decodeChunk", &Reader::decodeChunk)
         .function("array", &Reader::array)
         .function("keysFor", &Reader::keysFor)
         .function("version", &Reader::version);

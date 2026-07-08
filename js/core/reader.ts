@@ -319,44 +319,73 @@ export class LstarDataset {
   }
 
   /**
-   * Read elements [lo, hi) of a 1-D array as a typed array. Fast path: when the store supports byte
-   * ranges AND the array stores raw (uncompressed) element bytes AND [lo, hi) lands WITHIN a single
-   * chunk, issue ONE `getRange` over the exact bytes of that chunk — a gene/cell is a few KB instead of
-   * the whole chunk. Works on BOTH v2 and v3: libzarr (`arrayInfo`) reports dtype/chunk-shape/raw-ness
-   * from either metadata format, and (`chunkKey`) forms the chunk key in the array's own encoding
-   * (v2 `0`, v3 `c/0`) — the fetch loop stays in JS, the Zarr interpretation stays in libzarr. The chunk
-   * index is `floor(lo/chunkLen)` and the byte offset is relative to that chunk's start, so a chunked
-   * array keeps the fast path. A span that CROSSES a chunk boundary, a compressed array, or a store with
-   * no `getRange` falls through to a whole-array read + slice via libzarr (decompresses / stitches
-   * correctly). Edge (partial last) chunks are stored full-size + fill-padded, so the sub-range is always
-   * in-bounds within the chunk. Equivalent results either way.
+   * Read elements [lo, hi) of a 1-D array as a typed array. Two chunk-granular fast paths, both on v2+v3
+   * (libzarr `arrayInfo` reports dtype/chunk-shape/raw-ness/sharded from either format; the fetch loop
+   * stays in JS, the Zarr interpretation in libzarr):
+   *   • UNCOMPRESSED + `getRange` + single covering chunk → ONE exact byte-range read of that chunk (no
+   *     decode) — a gene/cell is a few KB. Sharded: resolved through the shard index (`_readShardedChunkRange`).
+   *   • COMPRESSED → fetch + decode only the chunk(s) covering [lo,hi) (`_readCompressedRange`) — O(chunk),
+   *     not O(array). Removes the old "compressed ⇒ whole-array" cliff, so a compressed (+sharded) store
+   *     stays byte-range-readable; decoded chunks are cached (viewer chunk-locality).
+   * Anything without a fast path (0-d, a fill/missing chunk, an unrangeable sharded store) falls through to
+   * a whole-array read + slice via libzarr. Edge (partial last) chunks are stored full-size + fill-padded,
+   * so a sub-range is always in-bounds within the chunk. Equivalent results either way.
    */
   private async _readRange(arrPath: string, lo: number, hi: number): Promise<any> {
-    if (typeof this.store.getRange === "function" && hi > lo) {
+    if (hi > lo) {
       const info = await this.src.arrayInfo(arrPath);      // {dtype, itemsize, chunkShape, uncompressed, sharded} — v2 or v3
       const dt = DTYPE[info.dtype];
       const oneD = info.chunkShape.length === 1 && info.chunkShape[0] > 0;
-      if (dt && oneD && info.uncompressed) {
+      if (dt && oneD) {
         const [ctor, isize] = dt;
         const chunkLen = info.chunkShape[0];
         const ci = Math.floor(lo / chunkLen);
-        if (hi <= (ci + 1) * chunkLen) {                   // [lo,hi) within one chunk -> exact byte range of chunk `ci`
-          const off = lo - ci * chunkLen;
-          if (!info.sharded) {
-            const key = this.src.chunkKey(arrPath, [ci]);  // v2 "arrPath/0" form via join below; libzarr gives the leaf key
-            const bytes = await this.store.getRange(arrPath + "/" + key, off * isize, (off + (hi - lo)) * isize);
-            if (bytes) return decodeTyped(bytes, ctor, isize);
-          } else {
-            // a sharded array's chunk lives INSIDE a shard object — resolve it through the shard index
-            // (suffix-read the index, then range-read the chunk's own bytes); undefined -> fall back.
-            const got = await this._readShardedChunkRange(arrPath, ci, off, hi - lo, ctor, isize);
-            if (got) return got;
+        if (info.uncompressed) {
+          // exact byte range of the covering chunk (no decode) — needs getRange + a single covering chunk
+          if (typeof this.store.getRange === "function" && hi <= (ci + 1) * chunkLen) {
+            const off = lo - ci * chunkLen;
+            if (!info.sharded) {
+              const key = this.src.chunkKey(arrPath, [ci]);  // libzarr gives the leaf key; join under arrPath
+              const bytes = await this.store.getRange(arrPath + "/" + key, off * isize, (off + (hi - lo)) * isize);
+              if (bytes) return decodeTyped(bytes, ctor, isize);
+            } else {
+              const got = await this._readShardedChunkRange(arrPath, ci, off, hi - lo, ctor, isize);
+              if (got) return got;
+            }
           }
+        } else {
+          const got = await this._readCompressedRange(arrPath, lo, hi, ci, chunkLen, ctor, info.sharded);
+          if (got) return got;
         }
       }
     }
-    const whole = (await this.src.array(arrPath)).data;    // spans chunks / compressed / no getRange -> libzarr whole-array + slice
+    const whole = (await this.src.array(arrPath)).data;    // no fast path (fill chunk, 0-d, decode miss) -> whole-array + slice
     return (whole as any).slice(lo, hi);
+  }
+
+  /**
+   * Compressed byte-range: decode the chunk(s) covering [lo,hi) via `readChunkDecoded` (which fetches only
+   * the covering chunk object / the chunk's bytes inside its shard, and caches the decoded chunk) and
+   * return exactly [lo,hi). One covering chunk is the hot case; a span crossing chunk boundaries decodes
+   * each covered chunk and concatenates — still O(covered chunks), never the whole array. Returns undefined
+   * (→ whole-array fallback) if any covering chunk is a fill/missing chunk or the store can't range-read it.
+   */
+  private async _readCompressedRange(arrPath: string, lo: number, hi: number, ci: number, chunkLen: number,
+                                     ctor: any, sharded: boolean): Promise<any | undefined> {
+    const cj = Math.floor((hi - 1) / chunkLen);
+    if (ci === cj) {
+      const chunk = await this.src.readChunkDecoded(arrPath, ci, sharded);
+      return chunk ? chunk.slice(lo - ci * chunkLen, hi - ci * chunkLen) : undefined;
+    }
+    const out = new ctor(hi - lo);
+    for (let c = ci; c <= cj; c++) {
+      const chunk = await this.src.readChunkDecoded(arrPath, c, sharded);
+      if (!chunk) return undefined;                        // fill/missing or unrangeable -> whole-array fallback
+      const cStart = c * chunkLen;
+      const a = Math.max(lo, cStart), b = Math.min(hi, cStart + chunkLen);
+      out.set(chunk.subarray(a - cStart, b - cStart), a - lo);
+    }
+    return out;
   }
 
   /**

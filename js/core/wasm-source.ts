@@ -37,6 +37,12 @@ export class WasmSource {
   private reader: any;
   private cache = new Map<string, Uint8Array | null>();
   private haveConsolidated = false;      // true once .zmetadata / inline-v3 md is expanded into the cache
+  // Per-chunk decode caches for the COMPRESSED byte-range path (readChunkDecoded). The viewer's cell-major
+  // reorder gives strong chunk locality, so caching a decoded chunk turns the many column reads that land
+  // in it into ONE fetch+decode; the shard index (small, shared by every chunk in a shard) is cached too.
+  // Bounded insertion-order LRUs (JS Map keeps insertion order → the oldest key evicts first).
+  private chunkCache = new Map<string, any>();            // `${arrPath}\n${ci}` -> full decoded chunk (typed array)
+  private shardIndexCache = new Map<string, Uint8Array>();  // shardKey -> shard index bytes
 
   constructor(store: LstarStore) { this.store = store; }
 
@@ -53,6 +59,64 @@ export class WasmSource {
     try { this.reader?.delete?.(); } catch { /* already deleted */ }
     this.reader = null;
     this.cache.clear();
+    this.chunkCache.clear();
+    this.shardIndexCache.clear();
+  }
+
+  private _lruGet<T>(m: Map<string, T>, k: string): T | undefined {
+    const v = m.get(k);
+    if (v !== undefined) { m.delete(k); m.set(k, v); }     // move to newest
+    return v;
+  }
+  private _lruPut<T>(m: Map<string, T>, k: string, v: T, cap: number): void {
+    m.delete(k); m.set(k, v);
+    while (m.size > cap) m.delete(m.keys().next().value as string);   // evict oldest
+  }
+
+  // Decode one chunk's STORED bytes -> a full-chunk typed array, via libzarr's inner codec pipeline
+  // (reader.decodeChunk = the read-twin of the writer's encodeChunk).
+  decodeChunk(path: string, comp: Uint8Array): any {
+    const d = this.reader.decodeChunk(path, comp);         // { dtype, bytes }
+    const [ctor, isize] = DTYPE[d.dtype] ?? [Uint8Array, 1];
+    return decodeTyped(d.bytes, ctor, isize);
+  }
+
+  // Read + decode inner chunk `ci` of a COMPRESSED 1-D array -> the full decoded chunk (typed array), or
+  // undefined so the caller falls back to a whole-array read (a fill/missing chunk, or a store that can't
+  // range-read a shard). Cached by (path, ci). Unsharded: the chunk object IS the compressed blob (one
+  // get). Sharded: resolve the chunk's [offset,nbytes) inside the shard through the (cached) shard index,
+  // then range-read just that chunk. O(chunk) work, never O(array).
+  async readChunkDecoded(path: string, ci: number, sharded: boolean): Promise<any | undefined> {
+    const ck = path + "\n" + ci;
+    const hit = this._lruGet(this.chunkCache, ck);
+    if (hit !== undefined) return hit;
+    let comp: Uint8Array | undefined;
+    if (!sharded) {
+      comp = (await this.store.get(path + "/" + this.reader.chunkKey(path, [ci]))) ?? undefined;
+    } else {
+      const loc = this.reader.shardLocate(path, [ci]);
+      const shardKey = path + "/" + loc.shardKey;
+      let idx = this._lruGet(this.shardIndexCache, shardKey);
+      if (idx === undefined) {
+        if (loc.indexAtEnd) {
+          if (typeof this.store.getSuffix !== "function") return undefined;
+          idx = await this.store.getSuffix(shardKey, loc.indexSize);
+        } else {
+          if (typeof this.store.getRange !== "function") return undefined;
+          idx = await this.store.getRange(shardKey, 0, loc.indexSize);
+        }
+        if (!idx || idx.byteLength < loc.indexSize) return undefined;
+        this._lruPut(this.shardIndexCache, shardKey, idx, 32);
+      }
+      const e = this.reader.shardEntry(path, idx, loc.intra);
+      if (e.missing) return undefined;
+      if (typeof this.store.getRange !== "function") return undefined;
+      comp = (await this.store.getRange(shardKey, e.offset, e.offset + e.nbytes)) ?? undefined;
+    }
+    if (!comp) return undefined;
+    const chunk = this.decodeChunk(path, comp);
+    this._lruPut(this.chunkCache, ck, chunk, 64);
+    return chunk;
   }
 
   // Fetch one object into the cache (once). A miss is cached as null so libzarr's "missing chunk = fill"
