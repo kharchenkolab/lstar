@@ -45,6 +45,27 @@ _PREFERRED_GROUPINGS = ("leiden", "cluster", "clusters", "cell_type", "celltype"
 _MIN_GROUPS, _MAX_GROUPS = 2, 60                       # single-sourced with viewer_policy.json (policy_linter)
 _LOGNORM_NAMES = ("X", "data", "logcounts")            # lognorm measure-name fallback (no state=="lognorm" match)
 _PREFERRED_EMBEDDINGS = ("umap",)
+# Per-field viewer compression layout (pagoda3-measured; single-sourced with viewer_policy.json).
+_VIEWER_CODEC, _VIEWER_LEVEL = "zstd", 3
+_VIEWER_CHUNK_ELEMS, _VIEWER_SHARD_ELEMS = 16384, 131072
+
+
+def _viewer_field_layout(name, basis_name, compress, compress_primary):
+    """The write-opts dict to tag on a field's `.write` for the viewer layout (or None = call-level default).
+    gene-major raw-counts basis: raw single-chunk (hero gene-color = exact-byte reads) unless
+    compress_primary (then zstd@chunk_elems, still range-readable via per-chunk decompress); counts_cellmajor:
+    zstd chunked+sharded (chunk-granular subset reads); everything else: zstd single-chunk (read whole).
+    compress=False disables the layout entirely (all-raw / call-level default)."""
+    if not compress:
+        return None
+    import numcodecs
+    zstd = numcodecs.Zstd(_VIEWER_LEVEL)
+    if name == basis_name:
+        return {"compressor": zstd, "chunk_elems": _VIEWER_CHUNK_ELEMS, "shard_elems": None} if compress_primary \
+            else {"compressor": None, "chunk_elems": None, "shard_elems": None}   # raw single-chunk
+    if name == "counts_cellmajor":
+        return {"compressor": zstd, "chunk_elems": _VIEWER_CHUNK_ELEMS, "shard_elems": _VIEWER_SHARD_ELEMS}
+    return {"compressor": zstd, "chunk_elems": None, "shard_elems": None}         # zstd single-chunk
 
 
 def _label_codes(ds, name):
@@ -197,7 +218,7 @@ def _select_counts_basis(ds, counts=None, basis=None):
 # ---------------------------------------------------------------------------------------------------
 
 def extend_for_viewer(ds, groupings=None, order="hybrid", embedding=None, markers=True,
-                      counts=None, basis=None, primary=None):
+                      counts=None, basis=None, primary=None, compress=True, compress_primary=False):
     """Add the viewer's precomputed fields to ``ds`` in place (and return it).
 
     Parameters
@@ -333,6 +354,14 @@ def extend_for_viewer(ds, groupings=None, order="hybrid", embedding=None, marker
 
     if VIEWER_PROFILE not in ds.profiles:
         ds.profiles.append(VIEWER_PROFILE)
+
+    # Tag each field's per-field write layout (unless it already carries an explicit one). Deterministic
+    # from field identity + the count basis, so a viewer store is compressed-by-default: gene-major counts
+    # raw (hero gene-color), counts_cellmajor zstd+chunked+sharded, everything else zstd single-chunk.
+    if compress:
+        for nm, f in ds.fields.items():
+            if f.write is None:
+                f.write = _viewer_field_layout(nm, counts_field, compress, compress_primary)
     return ds
 
 

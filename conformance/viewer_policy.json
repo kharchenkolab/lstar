@@ -5,5 +5,12 @@
   "max_groups": 60,
   "lognorm_name_fallback": ["X", "data", "logcounts"],
   "preferred_embeddings": ["umap"],
-  "hilbert_grid": 1024
+  "hilbert_grid": 1024,
+  "compression": {
+    "_comment": "Per-field viewer layout (pagoda3-measured on pbmc3k). The prep tags each field's write opts: gene-major raw-counts basis -> raw single-chunk (hero gene-color = exact-byte reads) unless compress_primary; counts_cellmajor -> zstd chunked+sharded (chunk-granular subset reads via per-chunk decompress); every other array -> zstd single-chunk (read whole -> best ratio, no read penalty). chunk_elems=16384 sits in the compression knee.",
+    "codec": "zstd",
+    "level": 3,
+    "chunk_elems": 16384,
+    "shard_elems": 131072
+  }
 }

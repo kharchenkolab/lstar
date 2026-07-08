@@ -9,8 +9,21 @@
 // `viewer@0.1` profile. Pure Node — no Python / numpy. Kernels: ../wasm/lstar_wasm.cpp.
 import * as compute from "./compute.ts";
 import { openLstar, type LstarDataset } from "./reader.ts";
-import { addToStore, type FieldSpec, type AxisSpec, type LstarWritableStore } from "./writer.ts";
+import { addToStore, type FieldSpec, type AxisSpec, type LstarWritableStore, type WriterCodec, type WriteOptions } from "./writer.ts";
 import { selectCountsBasis } from "./basis.ts";
+import { VIEWER_CODEC, VIEWER_LEVEL, VIEWER_CHUNK_ELEMS, VIEWER_SHARD_ELEMS } from "./policy.ts";
+
+// The per-field viewer compression layout (single-sourced with viewer_policy.json / Python / R). Returns
+// the write opts to tag on an appended field: counts_cellmajor -> zstd chunked+sharded (chunk-granular
+// subset reads via per-chunk decompress); every other appended navigator -> zstd single-chunk (read whole).
+// The gene-major counts basis is NOT appended here (it lives in the base store), so its raw-vs-compressed
+// layout is set at base-store creation (lstar convert), not by this append. Needs an injected `codec`.
+function viewerFieldLayout(name: string, codec: WriterCodec): WriteOptions {
+  const compressor = { id: VIEWER_CODEC as "zstd", level: VIEWER_LEVEL };
+  if (name === "counts_cellmajor")
+    return { compressor, chunkElems: VIEWER_CHUNK_ELEMS, shardElems: VIEWER_SHARD_ELEMS, codec };
+  return { compressor, codec };                          // zstd single-chunk
+}
 import { MIN_GROUPS, MAX_GROUPS, groupingRank, embeddingRank, HILBERT_GRID } from "./policy.ts";
 import createLstarKernels from "../dist/lstar_kernels.mjs";
 
@@ -25,6 +38,10 @@ export interface ExtendOptions {
   counts?: string;        // force the count measure (log1p unless already log-normalized)
   basis?: string;         // "auto" (default): raw (log1p) else fall back to lognorm (as-is); or "raw"/"lognorm"
   order?: string;         // "hybrid" (default) locality reorder + _order; "none" keeps rows in cell order
+  codec?: WriterCodec;    // injected libzarr WASM writer (encodeChunk/packShard). With it + compress!==false,
+                          // appended navigators get the compressed viewer layout (counts_cellmajor zstd+
+                          // chunked+sharded, dense zstd single-chunk). Without it, they're written raw.
+  compress?: boolean;     // default true: apply the compressed layout when a `codec` is injected. false = raw.
 }
 
 // Per-cell label codes + category names, from EITHER a categorical-encoded field (codes stored) or a utf8 label
@@ -192,6 +209,11 @@ export async function extendForViewer(store: LstarWritableStore, opts: ExtendOpt
     csr = M.cscToCsr(cscData, cscIndices, cscIndptr, ncells, ngenes);   // no reorder, no _order field
   }
   fields["counts_cellmajor"] = { role: "measure", span: [cellAxis, geneAxis], encoding: "csr", state: basisState, shape: [ncells, ngenes], data: csr.data, indices: csr.indices, indptr: csr.indptr, provenance: prov };
+
+  // Tag each appended field's per-field write layout (compressed viewer store) when a codec is injected:
+  // counts_cellmajor zstd+chunked+sharded, the rest zstd single-chunk. addToStore honors FieldSpec.write.
+  if (opts.codec && opts.compress !== false)
+    for (const [nm, f] of Object.entries(fields)) if (f.write == null) f.write = viewerFieldLayout(nm, opts.codec);
 
   await addToStore(store, { axes, fields, profiles: [VIEWER_PROFILE] });
 }

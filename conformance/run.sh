@@ -89,6 +89,11 @@ bash conformance/viewer_seurat.sh >/tmp/lstar_viewer_seurat.log 2>&1 \
   && pass "Seurat -> viewer prep (real SeuratData + synthetic)" \
   || { echo "  FAIL viewer seurat"; tail -20 /tmp/lstar_viewer_seurat.log; exit 1; }
 
+echo "== viewer-prep per-field compression layout (gene-major raw, cell-major zstd+sharded, dense zstd single-chunk; Py + JS) =="
+bash conformance/viewer_compression.sh >/tmp/lstar_viewer_comp.log 2>&1 \
+  && pass "viewer-prep per-field compression layout (Py + JS)" \
+  || { echo "  FAIL viewer compression"; tail -20 /tmp/lstar_viewer_comp.log; exit 1; }
+
 echo "== multimodal cross-format consistency (CITE-seq via Seurat == via MuData -> same feature axes) =="
 bash conformance/multimodal_xformat.sh >/tmp/lstar_xfmt.log 2>&1 \
   && pass "Seurat/MuData multimodal land on the same canonical axes" \

@@ -25,6 +25,14 @@ export const LOGNORM_NAMES = ["X", "data", "logcounts"];   // lognorm measure-na
 export const PREFERRED_EMBEDDINGS = ["umap"];
 export const HILBERT_GRID = 1024;
 
+// Per-field viewer compression layout (pagoda3-measured on pbmc3k; mirrors viewer_policy.json.compression).
+// The prep tags each field's write opts: gene-major raw-counts basis -> raw single-chunk (unless
+// compress_primary); counts_cellmajor -> zstd chunked+sharded; every other array -> zstd single-chunk.
+export const VIEWER_CODEC = "zstd";
+export const VIEWER_LEVEL = 3;
+export const VIEWER_CHUNK_ELEMS = 16384;
+export const VIEWER_SHARD_ELEMS = 131072;
+
 // Preference rank of an embedding name (mirrors groupingRank): index of the first preferred term that is
 // a substring of the lowercased name; non-matches rank last. Ties broken by the caller (alphabetical).
 export function embeddingRank(name: string): number {

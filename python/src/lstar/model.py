@@ -93,6 +93,10 @@ class Field:
     index: Any = None                    # partial coverage: int positions into `index_axis` (one per value row)
     index_axis: Optional[str] = None     # which span axis `index` keys into (the partially-covered axis)
     provenance: dict = _dcfield(default_factory=dict)
+    write: Optional[dict] = None         # per-field write override (xarray-`encoding`-style):
+                                         # {compressor, chunk_elems, shard_elems}; else the write()-level
+                                         # default. The viewer prep sets this to give hot vs bulk arrays
+                                         # different layouts (raw gene-major counts, zstd-chunked cell-major).
 
 
 class Dataset:

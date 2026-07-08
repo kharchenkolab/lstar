@@ -24,8 +24,30 @@ LSTAR = "lstar"
 SPEC_VERSION = "0.1"
 
 
+def _resolve_codec(compressor, zfmt):
+    """Normalize a compressor for the target on-disk format. None -> None (uncompressed). For v2, reject
+    zstd (a v3-only codec on the tested read path) and pass a numcodecs codec through. For v3, translate a
+    numcodecs GZip/Zstd to the matching Zarr v3 codec (an already-v3 codec passes through). Shared by the
+    call-level compressor and per-field `Field.write` overrides."""
+    if compressor is None:
+        return None
+    import numcodecs
+    if zfmt == 2:
+        if isinstance(compressor, numcodecs.Zstd):
+            raise ValueError("zstd compression requires format='v3' (v2 lstar stores use gzip or none)")
+        return compressor
+    from zarr.codecs import GzipCodec, ZstdCodec
+    if isinstance(compressor, numcodecs.GZip):
+        return GzipCodec(level=compressor.level)
+    if isinstance(compressor, numcodecs.Zstd):
+        return ZstdCodec(level=compressor.level)
+    if isinstance(compressor, (GzipCodec, ZstdCodec)):
+        return compressor                                 # already a v3 codec — use as-is
+    raise ValueError(f"format='v3' supports gzip, zstd, or no compression; got {type(compressor).__name__}")
+
+
 def write(ds, path, compressor=None, chunk_elems=None, stream=False, viewer=False, format="v3",
-          shard_elems=None):
+          shard_elems=None, compress_primary=False):
     """Serialize an L* Dataset to a Zarr store at `path`.
 
     compressor=None (default) writes uncompressed chunks; pass a numcodecs codec (e.g.
@@ -58,30 +80,10 @@ def write(ds, path, compressor=None, chunk_elems=None, stream=False, viewer=Fals
     if format not in ("v2", "v3"):
         raise ValueError(f"format must be 'v2' or 'v3', got {format!r}")
     zfmt = 3 if format == "v3" else 2
-    if compressor is not None and zfmt == 2:           # zstd is a v3 codec on the tested read path
-        import numcodecs
-        if isinstance(compressor, numcodecs.Zstd):
-            raise ValueError("zstd compression requires format='v3' (v2 lstar stores use gzip or none)")
-    if zfmt == 3 and compressor is not None:
-        # v3 arrays take a Zarr v3 codec, not a numcodecs compressor. Translate lstar's gzip (its writer
-        # default) or zstd (zarr-python 3's own v3 default — so a zstd store is what "wild" v3 looks like)
-        # to the matching v3 codec; an already-v3 codec passes through. The rest of the writer passes
-        # `compressor=` through unchanged. gzip + zstd are both read by the C++/R/JS libzarr cores.
-        import numcodecs
-        from zarr.codecs import GzipCodec, ZstdCodec
-        if isinstance(compressor, numcodecs.GZip):
-            compressor = GzipCodec(level=compressor.level)
-        elif isinstance(compressor, numcodecs.Zstd):
-            compressor = ZstdCodec(level=compressor.level)
-        elif isinstance(compressor, (GzipCodec, ZstdCodec)):
-            pass                                          # already a v3 codec — use as-is
-        else:
-            raise ValueError(
-                f"format='v3' supports gzip, zstd, or no compression; "
-                f"got {type(compressor).__name__}")
+    compressor = _resolve_codec(compressor, zfmt)      # v2-guard + numcodecs->v3 codec translation (shared)
     if viewer:
         from .viewer import extend_for_viewer
-        extend_for_viewer(ds)
+        extend_for_viewer(ds, compress_primary=compress_primary)   # tags per-field viewer layout (zstd/raw)
     if stream and chunk_elems is None:
         chunk_elems = 1_000_000
     if shard_elems is not None:                        # sharding is v3-only and packs whole chunks
@@ -112,12 +114,26 @@ def write(ds, path, compressor=None, chunk_elems=None, stream=False, viewer=Fals
                 "encoding": fl.encoding, "coverage": fl.coverage, "directed": fl.directed,
                 "weighted": fl.weighted, "subtype": fl.subtype, "uncertainty": fl.uncertainty,
                 "provenance": fl.provenance}
-        _write_values(g, fl, meta, compressor, chunk_elems, shard_elems)
+        # per-field write override (xarray-`encoding`-style; the viewer prep sets it) -> this field's arrays
+        # get their own codec/chunking/sharding; unset keys fall back to the call-level default.
+        fcomp, fchunk, fshard = compressor, chunk_elems, shard_elems
+        fw = getattr(fl, "write", None)
+        if fw:
+            fc = fw.get("compressor", compressor)
+            if zfmt == 2 and fc is not None:               # per-field tags are a v3 optimization; on v2 the
+                import numcodecs                           # intent "compress this field" degrades to gzip
+                if isinstance(fc, numcodecs.Zstd): fc = numcodecs.GZip(fc.level)   # (v2 has no zstd) and
+            fcomp = _resolve_codec(fc, zfmt)
+            if "chunk_elems" in fw: fchunk = fw["chunk_elems"]
+            fshard = fw.get("shard_elems", shard_elems) if zfmt == 3 else None     # sharding is v3-only
+            if fshard is not None and not fchunk:
+                raise ValueError(f"field {name!r}: shard_elems requires chunk_elems")
+        _write_values(g, fl, meta, fcomp, fchunk, fshard)
         if fl.mask is not None:                        # nullable Int/bool/string: an explicit validity mask
-            _ds(g, "mask", np.asarray(fl.mask, dtype=np.uint8), compressor, chunk_elems, shard_elems)
+            _ds(g, "mask", np.asarray(fl.mask, dtype=np.uint8), fcomp, fchunk, fshard)
             meta["nullable"] = True
         if getattr(fl, "index", None) is not None:     # partial coverage: int positions into index_axis
-            _ds(g, "index", np.asarray(fl.index, dtype=np.int64), compressor, chunk_elems, shard_elems)
+            _ds(g, "index", np.asarray(fl.index, dtype=np.int64), fcomp, fchunk, fshard)
             meta["coverage"] = "partial"
             meta["index_axis"] = fl.index_axis
         g.attrs[LSTAR] = meta
