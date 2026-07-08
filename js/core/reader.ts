@@ -64,14 +64,17 @@ function csrToCscArrays(data: ArrayLike<number>, indices: ArrayLike<number>, ind
 
 /** Dense (flat, C-order, nrows x ncols) -> CSC arrays, dropping zeros — matches scipy's `csc_matrix(dense)`,
  * so a dense primary measure yields identical stats to a native-sparse one. Column-major: one CSC column per gene. */
-function denseToCscArrays(dense: ArrayLike<number>, nrows: number, ncols: number): { data: Float64Array; indices: Int32Array; indptr: Int32Array } {
+function denseToCscArrays(dense: ArrayLike<number | bigint>, nrows: number, ncols: number): { data: Float64Array; indices: Int32Array; indptr: Int32Array } {
+  // `Number(...)` coerces an int64/uint64 dense field (a BigInt typed array) to number: assigning a BigInt
+  // into the Float64 `data`, or comparing it to the number `0`, would otherwise throw / miscount zeros
+  // (`0n !== 0` is true). No-op for a numeric source; matches the Float64 target either way.
   const indptr = new Int32Array(ncols + 1);
-  for (let c = 0; c < ncols; c++) { let cnt = 0; for (let r = 0; r < nrows; r++) if (dense[r * ncols + c] !== 0) cnt++; indptr[c + 1] = indptr[c] + cnt; }
+  for (let c = 0; c < ncols; c++) { let cnt = 0; for (let r = 0; r < nrows; r++) if (Number(dense[r * ncols + c]) !== 0) cnt++; indptr[c + 1] = indptr[c] + cnt; }
   const nnz = indptr[ncols];
   const data = new Float64Array(nnz), indices = new Int32Array(nnz);
   let w = 0;
   for (let c = 0; c < ncols; c++)
-    for (let r = 0; r < nrows; r++) { const v = dense[r * ncols + c]; if (v !== 0) { data[w] = v; indices[w] = r; w++; } }
+    for (let r = 0; r < nrows; r++) { const v = Number(dense[r * ncols + c]); if (v !== 0) { data[w] = v; indices[w] = r; w++; } }
   return { data, indices, indptr };
 }
 
