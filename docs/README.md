@@ -1,8 +1,9 @@
 # lstar documentation
 
 **L★** is a uniform data model and a [Zarr](https://zarr.dev) interchange format for single-cell and
-spatial omics, with bindings in **Python**, **R**, and **C++** (a shared core, `libstar`) and
-bidirectional converters for **AnnData, Seurat, SingleCellExperiment, Conos, and pagoda2**. It is
+spatial omics, with bindings in **Python**, **R**, **C++**, and the **browser (JS/WebAssembly)** (a shared
+core, `libstar`) and bidirectional converters for **AnnData, Seurat, SingleCellExperiment, Conos, and
+pagoda2**. It is
 meant to be the lightweight, fast *glue* between formats and languages — not another monolithic
 container.
 

@@ -1,7 +1,8 @@
 # Principles
 
 L★ exists to make single-cell/spatial data **move** — between formats (AnnData, Seurat,
-SingleCellExperiment, Conos, pagoda2) and between languages (Python, R, C++) — without loss and
+SingleCellExperiment, Conos, pagoda2) and between languages (Python, R, C++, and the browser via
+WebAssembly) — without loss and
 without forcing everything into one rigid container. This page explains the ideas behind it.
 
 ## 1. A dataset is axes + fields
@@ -138,12 +139,13 @@ Glue sits on hot paths — large sparse matrices, remote stores. So:
 > mean/variance streams in bounded memory and matches a dense computation; the C++ reduction is
 > ~7.6× faster at 16 threads, with the thread count controllable from the call.
 
-## 6. One core, three languages
+## 6. One core, four surfaces
 
-The numerics live once, in the header-only C++ core `libstar`. R binds it via cpp11; Python binds it
-via pybind11 (and falls back to a pure-Python reference when the extension isn't built). The same
-`.lstar.zarr` store is read byte-faithfully from all three. This keeps the model honest (a single
-source of truth) and lets each ecosystem use its native objects.
+The numerics live once, in the header-only C++ core `libstar`. R binds it via cpp11; Python via pybind11
+(with a pure-Python reference fallback when the extension isn't built); and it compiles to **WebAssembly**
+(embind) for the browser — the same core does the reading and the compute there too, not a separate JS
+reimplementation. The same `.lstar.zarr` store is read (and written) byte-faithfully from all four. This
+keeps the model honest (a single source of truth) and lets each ecosystem use its native objects.
 
 ---
 

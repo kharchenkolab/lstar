@@ -30,19 +30,24 @@ dependency, and no async-in-WASM bridge (Asyncify/SharedArrayBuffer) is needed.
   **gene-column** (`cscColumn`), a CSR **cell-row** (`csrRow`), or a coalesced **cell selection**
   (`csrRows`). When the store offers `getRange` and the array is uncompressed, these issue one
   **byte-range** read of the exact slice (a gene = a few KB, not the whole chunk); otherwise they fall
-  back to a whole-array read + slice via libstar. Works on chunked + gzip stores.
+  back to a whole-array read + slice via libstar. A **compressed** array is byte-range-readable too: the
+  reader decodes only the chunk(s) covering the slice (not the whole array), and a **sharded** array
+  resolves the chunk through the shard index — so gzip/zstd + sharding keep the sub-chunk fast path. Works
+  on both v2 and v3 stores.
 - **`core/` view** (Phase C): a framework-agnostic `LstarView` — `embedding`, `metadata` (categorical
   codes+categories / numeric), `geneExpression` (on-the-fly log1p of one gene's column), `colStats`
   (per-gene mean/var via WASM), `subsampleDE` (ranked genes A-vs-B), and a typed-array `Crossfilter`.
 - **`core/` writer** (`writer.ts`): write a full L★ store from JS, or `addToStore` derived fields onto an
   existing (e.g. Python-written) one — **every encoding** both directions: CSC/dense, UTF-8, categorical
-  (induces a factor axis), nullable mask, partial coverage, and the aux passthrough. Arrays are chunked
-  (along axis 0) and optionally **gzip-compressed via the WASM zlib kernel** (`gzipCompress`); the
-  compressor is dependency-injected so the uncompressed path needs no WASM. Compression is also settable
-  **per field** (`FieldSpec.write`) — e.g. keep a gene-major copy raw single-chunk (for the byte-range
-  fast path) while gzip-compressing a cell-major copy of the same counts (for sequential bulk reads). A
-  consolidated `.zmetadata` is emitted and **refreshed by `addToStore`** (not dropped), so the one-request
-  open survives extends. The bytes round-trip to the Python/R/C++ readers (`conformance/js.sh`: JS-write → Python/C++-read).
+  (induces a factor axis), nullable mask, partial coverage, and the aux passthrough. Writes **Zarr v3 by
+  default** (or v2), chunked, optionally **sharded**, and **gzip- or zstd-compressed** via a WASM writer
+  module (`lstar_writer` — the same libstar codec + shard assembly the reader decodes with; encode is
+  dependency-injected so the uncompressed path needs no WASM). Layout is settable **per field**
+  (`FieldSpec.write`, xarray-`encoding` style) — e.g. keep a gene-major copy raw single-chunk (for the
+  exact-byte fast path) while zstd-chunking+sharding a cell-major copy of the same counts (for chunk-
+  granular subset reads); the `viewer@0.1` prep uses exactly this. Consolidated metadata (v3 inline /
+  v2 `.zmetadata`) is emitted and **refreshed by `addToStore`** (not dropped), so the one-request open
+  survives extends. The bytes round-trip to the Python/R/C++ readers (`conformance/js.sh`: JS-write → Python/C++-read).
 
 ## API
 

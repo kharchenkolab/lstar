@@ -62,7 +62,7 @@ ds.add_field("umap", np.random.randn(100, 2), role="embedding", span=["cells", "
 ds.add_field("leiden", np.array([f"c{i % 5}" for i in range(100)]),
              role="label", span=["cells"])
 
-lstar.write(ds, "sample.lstar.zarr")          # -> a Zarr v2 group with consolidated metadata
+lstar.write(ds, "sample.lstar.zarr")          # -> a Zarr v3 group (v3 default; format="v2" for legacy)
 ds2 = lstar.read("sample.lstar.zarr")
 
 # validate() returns [] when the store is well-formed: spans reference real axes, shapes match, etc.
@@ -373,13 +373,14 @@ Build: `-Icore/include -std=c++17 -fopenmp` (add `-DLSTAR_HAVE_ZLIB -lz` for gzi
 
 ## 12. Browser WASM
 
-**What this shows.** The data layer for a web viewer: TypeScript reads the L★ store over HTTP or local
-disk via zarrita.js — fetching only the chunks a view needs — and the libstar **WASM** kernels do the
-compute, so the browser shows the same numbers as R/Python. This is the [`js/`](../js) package.
+**What this shows.** The data layer for a web viewer: TypeScript reads the L★ store (v2 or v3) over HTTP
+or local disk via the **libstar WASM reader** — the same core R/Python/C++ use, fetching only the chunks
+a view needs — and the libstar **WASM** kernels do the compute, so the browser shows the same numbers as
+R/Python. This is the [`js/`](../js) package.
 
 ```ts
 import { openLstar, LstarView, scalarToRGBA } from "lstar-js";
-import { NodeFSStore } from "lstar-js/node-store";          // browser: new zarrita FetchStore(url)
+import { NodeFSStore } from "lstar-js/node-store";          // browser: HttpStore(url) for byte-range HTTP
 
 const ds = await openLstar(new NodeFSStore("sample.lstar.zarr"));
 ds.kind; ds.axisNames(); ds.fieldNames();                   // the manifest (one consolidated read)

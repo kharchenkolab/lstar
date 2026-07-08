@@ -120,8 +120,13 @@ list (from the parity audit) so a real gap is never confused with an intentional
   reduces in JS (`compute.deAvsB`); the kernel is available for callers who want cross-surface-identical ranking.
 - **`uncertainty`** round-trips through Python and the C++ core, but is not threaded through the R bridge
   (rare, AnnData-specific).
-- **Compression codec.** gzip is the portable codec (all surfaces read it); C++/R also read zlib; JS reads
-  gzip only. Python can write any numcodecs codec, but a non-gzip store is not portable — prefer gzip.
+- **Compression codec (now cross-surface — was a JS/portability gap).** gzip and **zstd** are both
+  portable: all four surfaces READ both (C++/R via libzstd, the JS/WASM reader via a decode-only zstd
+  build), and Python/CLI/R/JS all WRITE both — so a compressed store, including zarr-python's zstd-default
+  v3 output, reads everywhere. Compressed arrays are byte-range-readable at CHUNK granularity (the reader
+  decodes only the covering chunk), so compression no longer forecloses the sub-chunk fast path. Residual
+  build nuance: C++/R zstd needs libzstd at build (a pkg-config probe; a build without it is gzip-only and a
+  per-field zstd request degrades to gzip). C++/R also read zlib.
 
 **Metadata that is non-normative** (excluded from the "byte-identical store" contract): a viewer field's
 `provenance` stamp carries surface-specific detail (`method`/`curve`/`grid`), so `cmd_equiv` compares the

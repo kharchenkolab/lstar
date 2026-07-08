@@ -3,8 +3,9 @@
 An L★ dataset is serialized as a [Zarr](https://zarr.dev) group tree, named `*.lstar.zarr` by
 convention. This page is the practical reading of Appendix A of the proposal
 ([`../misc/Lstar_proposal.md`](../misc/Lstar_proposal.md)); consult that for the normative schema. The
-guiding rule: **all L★ metadata lives under an `"lstar"` key** in each group's `.zattrs`, so the store
-is *also* a plain Zarr group that scanpy/Vitessce/zarrita can open and read the common parts of.
+guiding rule: **all L★ metadata lives under an `"lstar"` key** in each node's attributes (the v3
+`zarr.json` `attributes`, or the v2 `.zattrs`), so the store is *also* a plain Zarr group that any
+standard Zarr reader (scanpy, Vitessce, a generic v2/v3 client) can open and read the common parts of.
 
 > **Format stability.** The on-disk format is at `spec_version` **0.1** and **may change in
 > backward-incompatible ways before 1.0**. Every store records its `spec_version` and readers check it,
@@ -23,28 +24,32 @@ is *also* a plain Zarr group that scanpy/Vitessce/zarrita can open and read the 
 ## The tree
 
 ```text
-store.lstar.zarr/
-├── .zgroup                     {"zarr_format": 2}
-├── .zattrs                     {"lstar": <root metadata>}            # see below
-├── .zmetadata                  consolidated metadata (one read; required for HTTP access)
+store.lstar.zarr/               Zarr v3 by default (per-node zarr.json); v2 layout noted below
+├── zarr.json                   {node_type:"group", attributes:{lstar:<root metadata>},
+│                                consolidated_metadata:{…}}   # inline: one read, required for HTTP access
 ├── axes/
-│   ├── .zgroup
+│   ├── zarr.json
 │   └── <axis>/
-│       ├── .zattrs             {"lstar": {kind:"axis", origin, role, induced_by, provenance}}
+│       ├── zarr.json           attributes.lstar = {kind:"axis", origin, role, induced_by, provenance}
 │       ├── labels/             the element labels (utf8: a uint8 byte array …)
 │       └── labels_offsets/     … + an int64 offsets array, length n+1
 ├── fields/
-│   ├── .zgroup
+│   ├── zarr.json
 │   └── <field>/
-│       ├── .zattrs             {"lstar": {kind:"field", role, span, state, encoding, shape, …}}
-│       └── <value arrays>      depend on the encoding (below)
+│       ├── zarr.json           attributes.lstar = {kind:"field", role, span, state, encoding, shape, …}
+│       └── <value arrays>      depend on the encoding (below); chunk keys are c/<i>
 ├── passthrough/                lossless passthrough of a format's untyped long-tail
-│   ├── .zgroup
+│   ├── zarr.json
 │   └── <namespace>/            e.g. "anndata.uns"
-│       ├── .zattrs             {"lstar": {kind:"passthrough", tree:"<JSON string>", arrays:[{id, kind}]}}
-│       └── <id>               the array leaves the tree references (dense, or utf8 bytes+offsets)
+│       ├── zarr.json           attributes.lstar = {kind:"passthrough", tree:"<JSON string>", arrays:[{id, kind}]}
+│       └── <id>                the array leaves the tree references (dense, or utf8 bytes+offsets)
 └── models/                     fitted transforms (apply contract + weights)   [spec; not yet emitted]
 ```
+
+Legacy **Zarr v2** (`format="v2"` / `--zarr-format v2`) writes the *same* tree with v2's metadata files
+instead: each node's `lstar` metadata lives in `.zattrs` (a group also has `.zgroup`, an array `.zarray`),
+consolidated metadata is a separate root `.zmetadata` document, and chunk keys are `<i>` (dotted for N-D).
+The L★ content is identical across formats — only the container differs — and all four surfaces read both.
 
 `axes` and `fields` in the root metadata give the read order; `span` references axes *by name*, so a
 `cells × cells` relation and a `cells × genes` measure are unambiguous even when the two counts are
@@ -128,21 +133,34 @@ only. Round-trips across the Python, C++, and R readers/writers.
   exceeds 2³¹. Readers normalize to int64 for computation (`as_i64` in the C++ core).
 - `labels`/`utf8` data: `|u1`; offsets: `<i8`. Little-endian, C-order.
 
-## Chunking & compression
+## Chunking, compression & sharding
 
 - Arrays may be **single-chunk** (the portable default) or **chunked** along the first axis (set
   `chunk_elems` on write). Chunking is what lets a lazy reader fetch only the blocks a query touches —
   e.g. one gene's CSC column.
-- Chunks may be **uncompressed** (default) or **gzip/zlib** compressed (`compressor=` on write). The
-  C++ core reads any chunk grid (C-order, fill-padded edge chunks; a missing chunk reads as
-  `fill_value` 0) and decodes gzip/zlib when built with zlib; `blosc` and Zarr v3 sharding are planned.
+- Chunks may be **uncompressed** or compressed with **gzip** or **zstd** (`compressor=` on write; zstd is
+  a Zarr v3 codec and zarr-python 3's own default). All four surfaces **read** both codecs — C++/R via
+  libzstd (the build degrades to gzip-only if it's absent), the JS/WASM reader via a decode-only zstd
+  build — and Python/CLI/R/JS all **write** both. The C++ core reads any chunk grid (C-order, fill-padded
+  edge chunks; a missing chunk reads as `fill_value` 0). (`blosc` is read by zarr-python but no lstar
+  writer emits it.)
+- A **compressed** array stays byte-range-readable: the reader decodes only the chunk(s) covering the
+  requested range, not the whole array — so compression and the sub-chunk fast path (one gene / one cell)
+  coexist. Smaller chunks trade more over-read per read against more objects/index entries.
+- **v3 sharding** (`sharding_indexed`; `shard_elems` on write) packs many inner chunks into fewer shard
+  *objects* — fewer files to host — while each inner chunk stays byte-range-readable via the shard index.
+  Written by Python/CLI/R/JS, read by all surfaces.
+- **Per-field write layout.** Chunking, compression, and sharding can be set **per field** (xarray-
+  `encoding` style — a `write` override on a field), so hot and bulk arrays in one store get different
+  layouts. The `viewer@0.1` prep uses this (see the viewer section).
 
 ## Consolidated metadata
 
-`.zmetadata` collects every `.zgroup`/`.zattrs`/`.zarray` into one JSON document
-(`{"zarr_consolidated_format": 1, "metadata": {…}}`), so a reader makes **one request** instead of
-many small ones — required for access over HTTP. Both the Python and C++ writers emit it; readers
-prefer it (`zarr.open_consolidated`, zarrita's consolidated path) and fall back to walking the tree.
+So a reader makes **one request** instead of many small ones (required for access over HTTP), the store
+carries consolidated metadata. In **v3** it is inline under the root `zarr.json`'s `consolidated_metadata`
+key (every node's metadata, keyed by path); in **v2** it is a separate root `.zmetadata` document
+(`{"zarr_consolidated_format": 1, "metadata": {…}}`). Every surface's writer emits it; readers prefer it
+(`zarr.open_consolidated`, or the libstar/WASM reader's consolidated open) and fall back to walking the tree.
 
 ## The viewer profile (`viewer@0.1`)
 
@@ -188,6 +206,15 @@ groups in `<g>` (an induced factor axis `groups_<g>` or the grouping's own facto
 cluster's full gene profile (contiguous). Markers are **gene-major** (`ng×K`): a row is one gene's
 per-cluster values — the path the viewer takes when coloring an embedding by a marker. The two
 orientations are deliberately different and are part of the contract.
+
+**On-disk compression (default per-field layout).** A `viewer@0.1` store is compressed by default, each
+array's codec/chunking/sharding chosen for its access pattern (via the per-field write layout): the
+gene-major count basis stays **raw, single-chunk** so gene-coloring reads exact bytes with no decode;
+`counts_cellmajor` is **zstd, chunked + sharded** so a cell-subset read touches ~one chunk (per-chunk
+decompress); the dense `stats_*` / `markers_*` / `od_score` (read whole) are **zstd, single-chunk** for
+the best ratio at no read penalty. `compress_primary` also compresses the gene-major counts (smaller
+store, a small decode on gene-coloring); `compress=false` writes it all uncompressed. This is a *default*,
+not part of the contract — the field names/encodings/orientations above are the contract; codecs are free.
 
 **Marker definition (`viewer.markers/1-vs-rest`, a fast surrogate — not a calibrated test).** Over
 `log1p(counts)`, with group size `n_g` and rest size `n − n_g`:
@@ -256,7 +283,7 @@ resave" or stream-in-place workflow).
    in the zip layer costs CPU for essentially no size gain.
 2. **Byte-range readability.** Only a STORED entry is readable by byte range *inside* the archive. A
    hosted single file is read by issuing an HTTP `Range` into the zip for one chunk (lstar's JS
-   `ZipStore` / `httpZipSource`, or zarrita's `ZipFileStore`); a DEFLATE-compressed entry would force
+   `ZipStore` / `httpZipSource`); a DEFLATE-compressed entry would force
    fetching and inflating the whole entry, silently defeating range access. lstar therefore **forces
    STORED on every `.zip` write** (regardless of a chunk `compressor=`) and **rejects a DEFLATE-packed
    `.lstar.zarr.zip` on read** with an actionable message (repack it STORED). Large stores (>4 GB or
@@ -275,8 +302,9 @@ single URL a range-served store).
 
 ## Cross-implementation guarantee
 
-The same store reads byte-faithfully from **Python, R, C++, and the browser (WASM/zarrita)**. A store
-written by any one reads in the others with identical field values (counts sums, graph nnz,
-embeddings); chunked + gzip stores round-trip across all of them, as does the single-file
-`.lstar.zarr.zip` packaging. This is enforced by the conformance suite
+The same store reads byte-faithfully from **Python, R, C++, and the browser** (the last via the libstar
+core compiled to WebAssembly — the same reader, not a separate JS one). A store written by any one reads
+in the others with identical field values (counts sums, graph nnz, embeddings); v2 and v3 stores, chunked
++ gzip/zstd, and sharded, all round-trip across every surface, as does the single-file `.lstar.zarr.zip`
+packaging. This is enforced by the conformance suite
 ([`../conformance/`](../conformance) — e.g. `zip.sh` / `zip_r.sh` / `zip_js.sh`).

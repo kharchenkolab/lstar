@@ -41,12 +41,16 @@ does. A case can therefore have three kinds of gap: the **profile** doesn't hand
 
 One C++ core underlies Python, R, and (via WebAssembly) the browser; R adds the format profiles. The
 portable Zarr store is the interchange — every language reads and writes the *same* store, verified by
-the cross-language conformance suite ([`conformance/`](conformance/)).
+the cross-language conformance suite ([`conformance/`](conformance/)). Stores are **Zarr v3 by default**
+(a per-node `zarr.json` + inline consolidated metadata), with legacy **v2** (`.zarray`/`.zgroup` +
+a consolidated `.zmetadata`) available on request; all four surfaces read and write both formats.
 
 | capability | Python | C++ (`libstar`) | R | JS / WASM |
 |---|:---:|:---:|:---:|:---:|
-| Read a store | ✓ | ✓ | ✓ | ✓ (zarrita) |
+| Read a store | ✓ | ✓ | ✓ | ✓ |
 | Write a store | ✓ | ✓ | ✓ | ✓ |
+| Zarr format **v2 + v3** (v3 default) | ✓ | ✓ | ✓ | ✓ |
+| **v3 sharding** (`sharding_indexed`; byte-range-readable) | ✓ | ✓ | ✓ | ✓ |
 | `validate()` (model/consistency checks) | ✓ | — | via Py/C++ | — |
 | Encodings: dense / CSR / CSC / COO | ✓ | ✓ | ✓ | ✓ (read; write dense/CSC/CSR) |
 | UTF-8 + categorical (codes/levels/ordered/`-1` missing) | ✓ | ✓ | ✓ | ✓ |
@@ -54,7 +58,9 @@ the cross-language conformance suite ([`conformance/`](conformance/)).
 | Factor-axis **induction** (`induced_by` round-trip) | ✓ | ✓ | ✓ | ✓ |
 | **Partial coverage** (a field on a subset of a span axis, via an `index`) | ✓ | ✓ | ✓ | ✓ |
 | **Arity-3 fields** (CCC `sender×receiver×lr_pair`, eQTL `celltype×gene×variant`) | ✓ | ✓ | ✓ | — |
-| chunked + gzip | ✓ | ✓ | ✓ | ✓ (read; write via WASM zlib) |
+| Chunking + compression (**gzip / zstd**) | ✓ | ✓ (zstd needs libzstd) | ✓ (zstd needs libzstd) | ✓ |
+| Per-field write layout (per-array codec / chunk / shard) | ✓ | ✓ | ✓ | ✓ |
+| Byte-range read of a **compressed** array (chunk-granular; no whole-array decode) | ✓ | ✓ | ✓ | ✓ |
 | Lazy / partial / over-network reads | ✓ | ✓ | ✓ | ✓ |
 | Bounded-memory **streaming write** | ✓ | ✓ | ✓ | — |
 | Disk-backed targets (don't materialize) | backed AnnData | — | BPCells / HDF5Array | — |
@@ -66,10 +72,16 @@ the cross-language conformance suite ([`conformance/`](conformance/)).
 | **Format profiles** | AnnData, MuData | — | Seurat, SCE, Conos, pagoda2 | — |
 
 Notes: the C++ core is the model + Zarr IO + kernels (no `validate`/profiles — those live in the
-language packages). JS/WASM is the **viewer** data layer: read **and write** the store — every encoding
-both directions (CSC/dense/categorical+factor/mask/partial/aux), chunked + **gzip-compressed via the WASM
-zlib kernel** — and run the view kernels in-browser; it has no format profiles or DE bundles. The writer
-also `addToStore`s derived fields onto an existing (e.g. Python-written) store. Cross-language round-trips
+language packages). The JS/WASM surface **is the libstar C++ core compiled to WebAssembly** (the same
+reader R/Python/C++ use — no separate JS Zarr reimplementation), so it reads v2 **and** v3 through one
+recipe. It's the **viewer** data layer: read **and write** the store — every encoding both directions
+(CSC/dense/categorical+factor/mask/partial/aux), **v2 or v3, chunked, sharded, gzip- or zstd-compressed**
+(encode via a WASM writer module built from the same core) — and run the view kernels in-browser; it has
+no format profiles or DE bundles. The writer also `addToStore`s derived fields onto an existing (e.g.
+Python-written) store. A **compressed** array stays byte-range-readable: the reader decodes only the
+covering chunk(s), so compression and sub-chunk reads coexist (the viewer's `viewer@0.1` prep uses this —
+its stores are compressed per field by default: gene-major counts raw for instant gene-coloring,
+`counts_cellmajor` zstd chunked+sharded, other navigators zstd single-chunk). Cross-language round-trips
 covered by `conformance/{categorical,induce,nullable,partial,arity3,aux,provenance,collection,chunked,
 read_block,stream_reduce,fused_view,js}.sh`. These test each binding as a **producer**, not just a
 consumer: every rich encoding is *authored from scratch* in Python, R, and (for the core encodings) JS,

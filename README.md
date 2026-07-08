@@ -21,8 +21,9 @@ pagoda/conos — fixes a few named slots; routing a dataset through L★ convert
 preserving the *meaning* of each piece and **reporting** anything a target can't hold instead of
 dropping it silently.
 
-lstar is available in **Python, R, and C++** (sharing one fast C++ core), reads and writes a portable
-[Zarr](https://zarr.dev)-based format, and is built to scale. Everything heavy can be **streamed in
+lstar is available in **Python, R, C++, and the browser (JS/WebAssembly)** (all sharing one fast C++
+core), reads and writes a portable [Zarr](https://zarr.dev)-based format (v3 by default, v2 on request),
+and is built to scale. Everything heavy can be **streamed in
 bounded memory** — convert a multi-gigabyte dataset, write a store, or compute per-gene statistics
 without ever loading the whole matrix, so work that needs a big machine today runs on a laptop (see
 [Large data: lazy reads and streaming](#large-data-lazy-reads-and-streaming)). You can also open a
@@ -191,8 +192,8 @@ the browser). Measurements and the full picture are in [`misc/plan1.md`](misc/pl
 |---|---|
 | **Python** (`python/`) | the `lstar` package on zarr-python, with an optional compiled C++ accelerator |
 | **R** (`R/`) | the `lstar` package; the format profiles (Seurat, SCE, Conos) live here |
-| **C++** (`core/`) | `libstar`, the header-only core: the model, chunked+gzip Zarr IO, and the fast kernels |
-| **Browser/Node** (`js/`) | a TypeScript reader (zarrita) + the kernels compiled to WebAssembly, for viewers |
+| **C++** (`core/`) | `libstar`, the header-only core: the model, Zarr IO (v2/v3, chunked, gzip/zstd, sharding), and the fast kernels |
+| **Browser/Node** (`js/`) | a TypeScript data layer over `libstar` compiled to WebAssembly (the same reader R/Python/C++ use) — reads v2/v3, and writes stores (chunked, sharded, gzip/zstd) for viewers |
 
 ```
 docs/         principles, the model & format specs, conversions, worked examples

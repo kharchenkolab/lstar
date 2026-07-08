@@ -62,6 +62,12 @@ Two things make it more than a one-liner:
   analysis libraries are optional; absent → the check degrades to open + structural invariants. What lands
   where (and why it is deterministic) is the explicit contract in [`mapping.md`](mapping.md).
 
+When the target is an L★ store, the write layout is tunable: `--zarr-format {v3,v2}` (v3 default),
+`--compression {none,gzip,zstd}` (+ `--compression-level`), `--chunk-elems`, and `--shard-elems` (v3
+sharding — many chunks into fewer, still byte-range-readable objects). `--viewer` additionally precomputes
+the `viewer@0.1` navigators and writes them with the viewer's per-field compression layout (`--compress-primary`
+also compresses the gene-major counts); see [`format.md`](format.md).
+
 Format detection: `.h5ad`→AnnData, `.h5mu`→MuData, `.rds`→Seurat/SCE (sniffed), `.lstar.zarr`/`.zarr`→
 store. Override with `--from`/`--to`. Seurat/SCE legs need R with the `lstar` package on the path (set
 `LSTAR_RLIB`/`LSTAR_RSCRIPT` if it isn't on the default library path).
