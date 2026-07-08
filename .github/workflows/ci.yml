@@ -213,7 +213,7 @@ jobs:
         run: bash conformance/viewer_corpus.sh
       - name: extend_for_viewer(primary=) cross-surface parity (Py==JS reorder keyed on a given primary)
         run: bash conformance/viewer_primary.sh
-      - name: viewer-prep per-field compression layout (Py + JS: gene-major raw, cell-major zstd+sharded, dense zstd single-chunk)
+      - name: viewer-prep per-field compression layout (Py + JS; gene-major raw, cell-major zstd+sharded, dense single-chunk)
         run: bash conformance/viewer_compression.sh
       - name: single-file .lstar.zarr.zip parity (JS ZipStore seek-into-zip + writer <-> Python)
         run: bash conformance/zip_js.sh
