@@ -1,0 +1,13 @@
+{
+  "attributes": {
+    "lstar": {
+      "kind": "axis",
+      "origin": "derived",
+      "role": "factor",
+      "induced_by": "celltype",
+      "provenance": {}
+    }
+  },
+  "zarr_format": 3,
+  "node_type": "group"
+}

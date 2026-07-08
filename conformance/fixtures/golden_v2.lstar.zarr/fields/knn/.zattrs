@@ -1,0 +1,22 @@
+{
+  "lstar": {
+    "kind": "field",
+    "role": "graph",
+    "span": [
+      "cells",
+      "cells"
+    ],
+    "state": null,
+    "encoding": "csr",
+    "coverage": "full",
+    "directed": true,
+    "weighted": true,
+    "subtype": null,
+    "uncertainty": null,
+    "provenance": {},
+    "shape": [
+      12,
+      12
+    ]
+  }
+}

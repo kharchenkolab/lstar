@@ -1,0 +1,13 @@
+{
+  "attributes": {
+    "lstar": {
+      "kind": "axis",
+      "origin": "observed",
+      "role": "feature",
+      "induced_by": null,
+      "provenance": {}
+    }
+  },
+  "zarr_format": 3,
+  "node_type": "group"
+}

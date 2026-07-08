@@ -1,0 +1,22 @@
+{
+  "lstar": {
+    "kind": "field",
+    "role": "measure",
+    "span": [
+      "cells",
+      "genes"
+    ],
+    "state": "lognorm",
+    "encoding": "csr",
+    "coverage": "full",
+    "directed": null,
+    "weighted": null,
+    "subtype": null,
+    "uncertainty": null,
+    "provenance": {},
+    "shape": [
+      12,
+      8
+    ]
+  }
+}

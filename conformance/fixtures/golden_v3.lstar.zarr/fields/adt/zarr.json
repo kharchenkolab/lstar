@@ -1,0 +1,25 @@
+{
+  "attributes": {
+    "lstar": {
+      "kind": "field",
+      "role": "measure",
+      "span": [
+        "cells"
+      ],
+      "state": null,
+      "encoding": "dense",
+      "coverage": "partial",
+      "directed": null,
+      "weighted": null,
+      "subtype": null,
+      "uncertainty": null,
+      "provenance": {},
+      "shape": [
+        6
+      ],
+      "index_axis": "cells"
+    }
+  },
+  "zarr_format": 3,
+  "node_type": "group"
+}

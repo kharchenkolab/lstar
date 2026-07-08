@@ -65,6 +65,25 @@ PY
 ZERR="$(python3 -m lstar convert "$H5AD" "$TMP/bad.lstar.zarr" --zarr-format v2 --compression zstd 2>&1 || true)"
 echo "$ZERR" | grep -q "requires --zarr-format v3" \
   && echo "  [py] CLI: --compression zstd with v2 rejected" || { echo "  FAIL: zstd/v2 not rejected"; exit 1; }
+
+# L0c: store -> store FORMAT conversion via the CLI — upgrade a v2 store to v3, downgrade v3 back to v2,
+# value-preserving (the "migrate my existing stores" workflow).
+CV2="$TMP/cv2.lstar.zarr"; CV3="$TMP/cv3.lstar.zarr"; CV2B="$TMP/cv2b.lstar.zarr"
+python3 -m lstar convert "$H5AD" "$CV2" --zarr-format v2 -q >/dev/null   # a v2 store
+python3 -m lstar convert "$CV2" "$CV3" --zarr-format v3 -q >/dev/null    # upgrade v2 -> v3
+python3 -m lstar convert "$CV3" "$CV2B" --zarr-format v2 -q >/dev/null   # downgrade v3 -> v2
+python3 - "$CV2" "$CV3" "$CV2B" <<'PY'
+import sys, os, warnings; warnings.filterwarnings("ignore")
+import lstar, scipy.sparse as sp
+v2, v3, v2b = sys.argv[1:4]
+assert os.path.exists(v2 + "/.zgroup") and not os.path.exists(v2 + "/zarr.json"), "source not v2"
+assert os.path.exists(v3 + "/zarr.json") and not os.path.exists(v3 + "/.zmetadata"), "upgrade not v3"
+assert os.path.exists(v2b + "/.zgroup") and not os.path.exists(v2b + "/zarr.json"), "downgrade not v2"
+X = lambda p: sp.csr_matrix(lstar.read(p).field("X").values)
+a, b, c = X(v2), X(v3), X(v2b)
+assert a.shape == b.shape == c.shape and (a != b).nnz == 0 and (a != c).nnz == 0, "values changed across format conversion"
+print("  [py] CLI store->store: v2->v3 upgrade + v3->v2 downgrade — format correct, values preserved")
+PY
 # `lstar viewer` extends in place and must KEEP the store's format (was: silently rewrote v3 as v2). Build
 # a tiny RAW-counts v3 store (the h5ad X above is float -> lognorm, which viewer prep needs raw for).
 VR="$TMP/vraw.lstar.zarr"

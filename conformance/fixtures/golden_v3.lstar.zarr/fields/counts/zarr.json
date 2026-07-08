@@ -1,0 +1,26 @@
+{
+  "attributes": {
+    "lstar": {
+      "kind": "field",
+      "role": "measure",
+      "span": [
+        "cells",
+        "genes"
+      ],
+      "state": "raw",
+      "encoding": "csc",
+      "coverage": "full",
+      "directed": null,
+      "weighted": null,
+      "subtype": null,
+      "uncertainty": null,
+      "provenance": {},
+      "shape": [
+        12,
+        8
+      ]
+    }
+  },
+  "zarr_format": 3,
+  "node_type": "group"
+}

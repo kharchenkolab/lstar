@@ -64,6 +64,11 @@ int main(int argc, char** argv) {
         write(A, b, 0, gz, zarr::ZarrFormat::v3);
         Dataset B = read(b);
         cmp(A, B);
+    } else if (mode == "writev2") {                      // read a (any fmt) -> write b as v2 -> compare (downgrade)
+        Dataset A = read(a);
+        write(A, b, 0, gz, zarr::ZarrFormat::v2);
+        Dataset B = read(b);
+        cmp(A, B);
     } else if (mode == "shard") {                        // read a -> write b as chunked+SHARDED v3 -> compare
         Dataset A = read(a);
         write(A, b, /*chunk_elems*/1000, gz, zarr::ZarrFormat::v3, /*shard_elems*/4000);

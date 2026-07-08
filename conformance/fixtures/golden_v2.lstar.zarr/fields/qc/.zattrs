@@ -1,0 +1,21 @@
+{
+  "lstar": {
+    "kind": "field",
+    "role": "measure",
+    "span": [
+      "cells"
+    ],
+    "state": null,
+    "encoding": "dense",
+    "coverage": "full",
+    "directed": null,
+    "weighted": null,
+    "subtype": null,
+    "uncertainty": null,
+    "provenance": {},
+    "shape": [
+      12
+    ],
+    "nullable": true
+  }
+}

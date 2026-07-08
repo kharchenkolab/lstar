@@ -64,6 +64,15 @@ jobs:
       - name: Zarr v3 sharding (lstar writes sharded v3; C++/zarr-python read == unsharded)
         if: matrix.tag == 'latest'
         run: bash conformance/v3_shard.sh
+      - name: backwards compatibility (committed golden v2+v3 stores read to frozen values; Py+C++ legs)
+        if: matrix.tag == 'latest'
+        run: bash conformance/backcompat.sh
+      - name: format round-trips both directions (v2->v3->v2 and v3->v2->v3 preserve values; C++ + Python)
+        if: matrix.tag == 'latest'
+        run: bash conformance/roundtrip_format.sh
+      - name: asymmetric round-trip (surface x format x compression chain, value-identical; Py+C++ legs)
+        if: matrix.tag == 'latest'
+        run: bash conformance/asymmetric_roundtrip.sh
       - name: single-file .lstar.zarr.zip parity (Python + C++ + CLI + STORED/ZIP64 guardrails)
         run: bash conformance/zip.sh
 
@@ -129,6 +138,8 @@ jobs:
         run: bash conformance/r_fidelity.sh
       - name: Zarr v3 on the R surface (R reads both v2+v3; writes v3; zarr-python confirms)
         run: bash conformance/v3_r.sh
+      - name: backwards compatibility (committed golden v2+v3 stores read to frozen values; Py+R legs)
+        run: bash conformance/backcompat.sh
       - name: Zstd read parity on the R surface (R reads zarr-python's default zstd v3 store; needs libzstd)
         run: bash conformance/zstd_r.sh
       - name: Sharded v3 writes on the R surface (R lstar_write(shard_elems=) == unsharded; sharding_indexed)
@@ -211,6 +222,10 @@ jobs:
         run: bash conformance/v3_shard.sh
       - name: Zstd read on the WASM reader (decode-only build reads zarr-python's default zstd v3 store)
         run: bash conformance/zstd_js.sh
+      - name: backwards compatibility (committed golden v2+v3 stores read to frozen values; Py+JS legs)
+        run: bash conformance/backcompat.sh
+      - name: asymmetric round-trip (surface x format x compression chain; Py+JS legs read the chain end)
+        run: bash conformance/asymmetric_roundtrip.sh
       - name: viewer@0.1 grouping-policy linter (Python + JS lists match the canonical)
         run: python conformance/policy_linter.py
       - name: JS viewer@0.1 parity (lstar's own extend-viewer.ts == Python prep; CSC + CSR counts)

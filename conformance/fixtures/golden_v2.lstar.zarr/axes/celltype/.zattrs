@@ -1,0 +1,9 @@
+{
+  "lstar": {
+    "kind": "axis",
+    "origin": "derived",
+    "role": "factor",
+    "induced_by": "celltype",
+    "provenance": {}
+  }
+}

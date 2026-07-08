@@ -1,0 +1,92 @@
+{
+  "adt": {
+    "index": [
+      0,
+      2,
+      4,
+      6,
+      8,
+      10
+    ],
+    "sum": 6.6826
+  },
+  "aux": {
+    "n_pca": 3,
+    "names": [
+      "a",
+      "b",
+      "c"
+    ]
+  },
+  "celltype": {
+    "categories": [
+      "T",
+      "B",
+      "NK"
+    ],
+    "codes": [
+      0,
+      1,
+      2,
+      -1,
+      0,
+      1,
+      2,
+      0,
+      1,
+      2,
+      0,
+      1
+    ],
+    "ordered": true
+  },
+  "counts": {
+    "nnz": 44,
+    "shape": [
+      12,
+      8
+    ],
+    "sum": 112.0
+  },
+  "knn": {
+    "directed": true,
+    "nnz": 43,
+    "weighted": true
+  },
+  "leiden": [
+    "cl0",
+    "cl1",
+    "cl2",
+    "cl0",
+    "cl1",
+    "cl2",
+    "cl0",
+    "cl1",
+    "cl2",
+    "cl0",
+    "cl1",
+    "cl2"
+  ],
+  "lognorm": {
+    "nnz": 44,
+    "shape": [
+      12,
+      8
+    ],
+    "sum": 112.0
+  },
+  "pca": {
+    "shape": [
+      12,
+      3
+    ],
+    "sum": -2.2625
+  },
+  "qc": {
+    "missing_positions": [
+      2,
+      7
+    ],
+    "present_sum": 66.4518
+  }
+}

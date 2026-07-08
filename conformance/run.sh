@@ -152,6 +152,18 @@ echo "== Zarr v3 sharding (lstar writes sharded v3; C++/zarr-python/WASM read ==
 bash conformance/v3_shard.sh >/tmp/lstar_v3sh.log 2>&1 \
   && pass "v3 sharded write + read conformant across C++/zarr-python/WASM" || { echo "  FAIL v3_shard"; tail -20 /tmp/lstar_v3sh.log; exit 1; }
 
+echo "== backwards compatibility (committed golden v2+v3 stores read to frozen values on every surface) =="
+bash conformance/backcompat.sh >/tmp/lstar_backcompat.log 2>&1 \
+  && pass "golden v2+v3 stores read to frozen values (Py/C++/R/JS + no-consolidated fallback)" || { echo "  FAIL backcompat"; tail -20 /tmp/lstar_backcompat.log; exit 1; }
+
+echo "== format round-trips both directions (v2->v3->v2 and v3->v2->v3 preserve values; C++ + Python) =="
+bash conformance/roundtrip_format.sh >/tmp/lstar_rtfmt.log 2>&1 \
+  && pass "v2<->v3 round-trips preserve values (incl. the v3->v2 downgrade)" || { echo "  FAIL roundtrip_format"; tail -20 /tmp/lstar_rtfmt.log; exit 1; }
+
+echo "== asymmetric round-trip (one artifact across surfaces x formats x compression, value-identical) =="
+bash conformance/asymmetric_roundtrip.sh >/tmp/lstar_asym.log 2>&1 \
+  && pass "Py(v2+gzip)->R(v3)->C++(v3+gzip+shard)->Py(v3+zstd+shard)->{C++,JS} read == original" || { echo "  FAIL asymmetric_roundtrip"; tail -20 /tmp/lstar_asym.log; exit 1; }
+
 echo "== Zstd on the WASM reader (decode-only build reads zarr-python's default zstd v3 store) =="
 bash conformance/zstd_js.sh >/tmp/lstar_zstdjs.log 2>&1 \
   && pass "zstd read on the WASM reader" || { echo "  FAIL zstd_js"; tail -20 /tmp/lstar_zstdjs.log; exit 1; }

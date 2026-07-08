@@ -1,0 +1,29 @@
+{
+  "lstar": {
+    "spec_version": "0.1",
+    "kind": "sample",
+    "profiles": [
+      "backcompat@0.1"
+    ],
+    "dropped": [],
+    "axes": [
+      "cells",
+      "genes",
+      "pca",
+      "celltype"
+    ],
+    "fields": [
+      "counts",
+      "lognorm",
+      "pca",
+      "leiden",
+      "celltype",
+      "qc",
+      "adt",
+      "knn"
+    ],
+    "passthrough": [
+      "anndata.uns"
+    ]
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "attributes": {
+    "lstar": {
+      "kind": "passthrough",
+      "tree": "{\"$obj\": {\"params\": {\"$obj\": {\"n_pca\": 3, \"method\": \"leiden\"}}, \"scores\": {\"$array\": \"a0\"}, \"names\": {\"$list\": [\"a\", \"b\", \"c\"]}}}",
+      "arrays": [
+        {
+          "id": "a0",
+          "kind": "dense"
+        }
+      ]
+    }
+  },
+  "zarr_format": 3,
+  "node_type": "group"
+}

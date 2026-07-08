@@ -1,0 +1,22 @@
+{
+  "lstar": {
+    "kind": "field",
+    "role": "embedding",
+    "span": [
+      "cells",
+      "pca"
+    ],
+    "state": null,
+    "encoding": "dense",
+    "coverage": "full",
+    "directed": null,
+    "weighted": null,
+    "subtype": null,
+    "uncertainty": null,
+    "provenance": {},
+    "shape": [
+      12,
+      3
+    ]
+  }
+}

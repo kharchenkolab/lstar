@@ -1,0 +1,9 @@
+{
+  "lstar": {
+    "kind": "axis",
+    "origin": "observed",
+    "role": "observation",
+    "induced_by": null,
+    "provenance": {}
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "lstar": {
+    "kind": "field",
+    "role": "label",
+    "span": [
+      "cells"
+    ],
+    "state": null,
+    "encoding": "categorical",
+    "coverage": "full",
+    "directed": null,
+    "weighted": null,
+    "subtype": null,
+    "uncertainty": null,
+    "provenance": {},
+    "ordered": true,
+    "shape": [
+      12
+    ]
+  }
+}
