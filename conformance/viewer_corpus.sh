@@ -31,6 +31,17 @@ for name in $("$PY" "$COR" datasets); do
   ran=$((ran + 1))
   echo "  == $name (basis=${basis:-raw}) =="
   "$PY" "$CHK" prep-lstar "$base" "$TMP/$name.py.zarr" "$basis" >/dev/null || { fail=1; continue; }
+  if [ "$ran" = 1 ]; then    # once: the per-field viewer compression default fires on this (real/faithful) data
+    "$PY" - "$TMP/$name.py.zarr" <<'PY' || { echo "  FAIL: viewer compression layout on corpus data"; fail=1; }
+import sys, os, json
+z = json.load(open(os.path.join(sys.argv[1], "fields/counts_cellmajor/data/zarr.json")))["codecs"][0]
+sharded = z["name"] == "sharding_indexed"
+inner = z["configuration"]["codecs"] if sharded else json.load(open(os.path.join(sys.argv[1], "fields/counts_cellmajor/data/zarr.json")))["codecs"]
+assert any(c["name"] == "zstd" for c in inner), ("counts_cellmajor not zstd", [c["name"] for c in inner])
+print("  [py] corpus viewer store: counts_cellmajor is zstd%s (per-field compression default fires on real data)"
+      % (" + sharded" if sharded else " (single-chunk at this scale)"))
+PY
+  fi
 
   if [ "$HAVE_R" = 1 ]; then
     if Rscript "$ROOT/conformance/viewer_extend_r.R" "$base" "$TMP/$name.r.zarr" "$basis" >/tmp/lstar_corpus_r.log 2>&1; then
