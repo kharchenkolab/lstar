@@ -1,3 +1,32 @@
+# lstar 0.2.0
+
+This release brings the Zarr **v3** on-disk format to every surface (C++/Python/R/JS) and makes
+compressed, range-readable viewer stores the default.
+
+## Default on-disk format is now Zarr v3
+
+* `lstar_write()` now defaults to `format = "v3"` (was `"v2"`): stores are written with a per-node
+  `zarr.json` + inline consolidated metadata. The legacy Zarr v2 layout (`.zarray`/`.zgroup`/`.zattrs`
+  + a consolidated `.zmetadata`) remains available via `format = "v2"`, and `lstar_read()` reads both
+  formats transparently — so the change is invisible to readers; only newly *written* stores change
+  layout. All four surfaces share the default.
+
+## Zstd compression and sharded writes
+
+* Stores can be written and read with **zstd** — Zarr v3's standard codec — in addition to gzip, across
+  all four surfaces. `lstar_write()` gained a `shard_elems` argument for **sharded** v3 writes, which
+  pack many inner chunks into fewer store objects while staying range-readable, so a many-chunk array
+  can be hosted without a file-per-chunk explosion.
+
+## Compressed, range-readable viewer stores by default
+
+* `extend_for_viewer()` now compresses the viewer store **per field** by default (zstd): the gene-major
+  count basis stays a single raw chunk for exact-byte gene-color reads, the cell-major counts are zstd
+  chunked + sharded, and every other array is zstd single-chunk. The reader resolves compressed arrays
+  at **chunk granularity**, so a hosted viewer fetches only the chunks it displays instead of whole
+  arrays. Pass `compress = FALSE` for the previous all-raw layout, or `compress_primary = TRUE` to trade
+  gene-color latency for a smaller store.
+
 # lstar 0.1.7
 
 ## `extend_for_viewer()` auto-selects the count basis (no longer errors on normalized-only inputs)
@@ -16,14 +45,6 @@
 The R package version jumps 0.1.0 -> 0.1.6 to align with the companion Python package (`lstar-sc` on
 PyPI) and the shared on-disk format; the entries below cover everything the R package gained since the
 0.1.0 CRAN release.
-
-## Default on-disk format is now Zarr v3
-
-* `lstar_write()` now defaults to `format = "v3"` (was `"v2"`): stores are written with a per-node
-  `zarr.json` + inline consolidated metadata. The legacy Zarr v2 layout (`.zarray`/`.zgroup`/`.zattrs`
-  + a consolidated `.zmetadata`) remains available via `format = "v2"`. `lstar_read()` reads both
-  formats transparently, so this is invisible to readers; only newly *written* stores change layout.
-  All four surfaces (C++/Python/R/JS) match this default.
 
 ## Seurat → viewer prep (the previously-untested seam)
 
