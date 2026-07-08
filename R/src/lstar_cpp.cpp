@@ -436,6 +436,14 @@ void lstar_cpp_write(list ds, std::string path, int chunk_elems = 0,
         break;
       }
     }
+    {                                  // optional per-field write override (xarray-`encoding`-style) that the
+      strings ns = f.names();          // viewer prep sets: {compressor:list(id,level), chunk_elems, shard_elems}
+      for (R_xlen_t j = 0; j < ns.size(); ++j) if (std::string(ns[j]) == "write") {
+        SEXP wv = f["write"];
+        if (TYPEOF(wv) == VECSXP) { auto w = r_to_json(wv); if (w.is_object()) fl.write_opts = w; }
+        break;
+      }
+    }
     // preserved value dtype recorded on read (T2.2): keeps f4/f8/i4/i8 stable across Py->R->Py instead of
     // widening every non-raw measure to f8. Absent (a field built fresh in R) -> the prior raw/f8 default.
     std::string rec_dtype;

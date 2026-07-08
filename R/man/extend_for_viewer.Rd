@@ -12,7 +12,9 @@ extend_for_viewer(
   basis = NULL,
   order = "hybrid",
   markers = TRUE,
-  primary = NULL
+  primary = NULL,
+  compress = TRUE,
+  compress_primary = FALSE
 )
 }
 \arguments{
@@ -41,6 +43,13 @@ keys the \code{counts_cellmajor} locality reorder AND is summarized first -- the
 waits on. Unlike ordering the groupings by hand, \code{primary} composes with auto-detect: \code{primary="cell_type"}
 with \code{grouping=NULL} preps \emph{every} detected grouping but keys the reorder on \code{cell_type} (the auto-detect
 policy prefers clusterings, but the viewer may open on a cell-type annotation). \code{NULL} = current behavior.}
+
+\item{compress}{if \code{TRUE} (default), tag each field with the viewer compression layout so
+\code{\link[=lstar_write]{lstar_write()}} emits a compressed store: \code{counts_cellmajor} zstd chunked + sharded, other
+navigators zstd single-chunk, gene-major counts raw (see \code{compress_primary}). \code{FALSE} writes uncompressed.}
+
+\item{compress_primary}{if \code{TRUE}, also compress the gene-major counts basis (zstd, chunked): a smaller
+store at the cost of a decode on gene-coloring. Default \code{FALSE} keeps it raw for exact-byte reads.}
 }
 \value{
 \code{ds} with the navigator fields added and \verb{viewer@0.1} in \code{ds$profiles}.

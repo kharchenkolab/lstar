@@ -193,6 +193,7 @@ lstar_write <- function(ds, path, chunk_elems = NULL, compression = c("none", "g
     if (!is.null(f$directed)) out$directed <- as.logical(f$directed)[1]  # graph relation flags round-trip (T1.4)
     if (!is.null(f$weighted)) out$weighted <- as.logical(f$weighted)[1]
     if (!is.null(f$data_dtype)) out$data_dtype <- as.character(f$data_dtype)[1]  # preserve value dtype (T2.2)
+    if (!is.null(f$write)) out$write <- f$write   # per-field write layout (viewer compression) -> cpp11 -> core
     out
   })
   names(fields) <- names(ds$fields)

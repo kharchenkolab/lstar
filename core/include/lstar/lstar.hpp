@@ -129,6 +129,9 @@ struct Field {
     std::string subtype;              // "" == none
     std::vector<std::string> span;
     json provenance = json::object();
+    json write_opts = json(nullptr);    // optional per-field write override (xarray-`encoding`-style):
+                                        // {compressor:{id,level}|null, chunk_elems, shard_elems}. null == the
+                                        // write()-level default. The viewer prep sets it for the compressed layout.
     json uncertainty = json(nullptr);   // optional per-value uncertainty metadata (round-trips verbatim)
     bool directed = false, has_directed = false;
     bool weighted = false, has_weighted = false;
@@ -414,7 +417,12 @@ inline void write_array(const fs::path& dir, const NdArray& a,
     spec.dimension_separator = '.';
     if (!compressor.is_null()) {
         const std::string id = compressor.value("id", std::string());
-        if (id != "gzip" && id != "zlib") throw std::runtime_error("unsupported compressor id for write: " + id);
+        bool ok = (id == "gzip" || id == "zlib");
+#ifdef LIBZARR_HAS_ZSTD
+        ok = ok || (id == "zstd");                        // zstd encode needs libzstd (LIBZARR_HAS_ZSTD)
+#endif
+        if (!ok) throw std::runtime_error("unsupported compressor id for write: " + id +
+            (id == "zstd" ? " (build libstar with libzstd / -DLIBZARR_HAS_ZSTD)" : ""));
         spec.codecs.push_back(zarr::CodecSpec{id, {{"level", compressor.value("level", 5)}}});
     }
     zarr::Array za = zarr::Array::create(store, "", spec);
@@ -815,6 +823,26 @@ inline Dataset read(const fs::path& root) {
     return ds;
 }
 
+// Resolve a field's write layout: its per-field `write_opts` override (else the call-level default). A
+// per-field zstd tag degrades to gzip on v2 (which has no zstd) or when this build lacks zstd; sharding is
+// v3-only. Mirrors the Python writer's per-field resolution so the viewer layout is identical across surfaces.
+inline void resolve_field_write(const Field& f, zarr::ZarrFormat fmt,
+                                int64_t g_chunk, const json& g_comp, int64_t g_shard,
+                                int64_t& chunk, json& comp, int64_t& shard) {
+    chunk = g_chunk; comp = g_comp; shard = g_shard;
+    if (!f.write_opts.is_object()) return;
+    const json& w = f.write_opts;
+    if (w.contains("compressor")) comp = w["compressor"];
+    if (w.contains("chunk_elems") && !w["chunk_elems"].is_null()) chunk = w["chunk_elems"].get<int64_t>();
+    if (w.contains("shard_elems") && !w["shard_elems"].is_null()) shard = w["shard_elems"].get<int64_t>();
+    bool zstd_ok = (fmt == zarr::ZarrFormat::v3);
+#ifndef LIBZARR_HAS_ZSTD
+    zstd_ok = false;                                  // gzip-only build: a zstd tag degrades to gzip
+#endif
+    if (comp.is_object() && comp.value("id", std::string()) == "zstd" && !zstd_ok) comp["id"] = "gzip";
+    if (fmt != zarr::ZarrFormat::v3) shard = 0;        // sharding is v3-only
+}
+
 inline void write(const Dataset& ds, const fs::path& root,
                   int64_t chunk_elems = 0, const json& compressor = json(nullptr),
                   zarr::ZarrFormat fmt = zarr::ZarrFormat::v3, int64_t shard_elems = 0) {
@@ -885,20 +913,22 @@ inline void write(const Dataset& ds, const fs::path& root,
         if (!(f.encoding == "csr" || f.encoding == "csc" || f.encoding == "utf8" || f.encoding == "categorical"))
             fl["shape"] = f.dense.shape;   // dense: shape in the manifest too (parity; a reader shouldn't need values/.zarray)
         write_group(g, json{{"lstar", fl}}, fmt);
+        int64_t fchunk, fshard; json fcomp;               // per-field write layout (else the call-level default)
+        resolve_field_write(f, fmt, chunk_elems, compressor, shard_elems, fchunk, fcomp, fshard);
         if (f.encoding == "csr" || f.encoding == "csc") {
-            write_array(g / "data", f.data, chunk_elems, compressor, fmt, shard_elems);
-            write_array(g / "indices", f.indices, chunk_elems, compressor, fmt, shard_elems);
-            write_array(g / "indptr", f.indptr, chunk_elems, compressor, fmt, shard_elems);
+            write_array(g / "data", f.data, fchunk, fcomp, fmt, fshard);
+            write_array(g / "indices", f.indices, fchunk, fcomp, fmt, fshard);
+            write_array(g / "indptr", f.indptr, fchunk, fcomp, fmt, fshard);
         } else if (f.encoding == "utf8") {
-            write_strings(g, "values", f.strings, chunk_elems, compressor, fmt, shard_elems);
+            write_strings(g, "values", f.strings, fchunk, fcomp, fmt, fshard);
         } else if (f.encoding == "categorical") {
-            write_array(g / "codes", f.codes, chunk_elems, compressor, fmt, shard_elems);
-            write_strings(g, "categories", f.categories, chunk_elems, compressor, fmt, shard_elems);  // inline (P1)
+            write_array(g / "codes", f.codes, fchunk, fcomp, fmt, fshard);
+            write_strings(g, "categories", f.categories, fchunk, fcomp, fmt, fshard);  // inline (P1)
         } else {
-            write_array(g / "values", f.dense, chunk_elems, compressor, fmt, shard_elems);
+            write_array(g / "values", f.dense, fchunk, fcomp, fmt, fshard);
         }
-        if (f.has_mask) write_array(g / "mask", f.mask, chunk_elems, compressor, fmt, shard_elems);
-        if (f.has_index) write_array(g / "index", f.index, chunk_elems, compressor, fmt, shard_elems);
+        if (f.has_mask) write_array(g / "mask", f.mask, fchunk, fcomp, fmt, fshard);
+        if (f.has_index) write_array(g / "index", f.index, fchunk, fcomp, fmt, fshard);
     }
 
     if (!ds.aux.empty()) {                                            // verbatim passthrough subtree

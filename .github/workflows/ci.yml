@@ -77,6 +77,10 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install numpy scipy "zarr>=3.1" anndata scanpy mudata
+      # libzstd lets the R package (via its Makevars pkg-config probe) WRITE zstd -- so the viewer-prep
+      # compression layout emits zstd on R too (matching Python/JS), and the zstd R-read leg runs (not skips).
+      - name: system deps (zstd)
+        run: sudo apt-get update && sudo apt-get install -y libzstd-dev
       - uses: r-lib/actions/setup-r@v2
         with:
           # Public Posit Package Manager: precompiled Linux binaries (with all system/transitive
@@ -177,6 +181,8 @@ jobs:
         run: bash conformance/viewer_primary.sh
       - name: Seurat -> extend_for_viewer (boolean QC not a grouping; active-idents not duplicated; opens on a clustering)
         run: bash conformance/viewer_seurat.sh
+      - name: viewer-prep per-field compression layout (Py + R; gene-major raw, cell-major zstd+sharded, dense single-chunk)
+        run: bash conformance/viewer_compression.sh
 
   js-wasm:
     runs-on: ubuntu-latest

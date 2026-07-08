@@ -12,6 +12,26 @@
 .VIEWER_LOGNORM_NAMES <- c("X", "data", "logcounts")   # lognorm measure-name fallback
 .VIEWER_PREFERRED_EMBEDDINGS <- c("umap")
 .VIEWER_HILBERT_GRID <- 1024L
+# Per-field viewer compression layout (pagoda3-measured; single-sourced with viewer_policy.json).
+.VIEWER_CODEC <- "zstd"; .VIEWER_LEVEL <- 3L
+.VIEWER_CHUNK_ELEMS <- 16384L; .VIEWER_SHARD_ELEMS <- 131072L
+
+# The per-field `write` list to tag on a field for the viewer layout, or NULL (-> untagged, uses the
+# lstar_write default = raw single-chunk). Mirrors Python `_viewer_field_layout` / JS `viewerFieldLayout`:
+# gene-major raw-counts basis stays untagged (raw) unless compress_primary; counts_cellmajor -> zstd
+# chunked+sharded; every other field -> zstd single-chunk. (A zstd tag degrades to gzip on a v2 / no-zstd
+# build in the C++ writer.)
+.viewer_field_layout <- function(name, basis_name, compress, compress_primary) {
+  if (!compress) return(NULL)
+  zstd <- list(id = .VIEWER_CODEC, level = .VIEWER_LEVEL)
+  if (identical(name, basis_name)) {
+    if (compress_primary) return(list(compressor = zstd, chunk_elems = .VIEWER_CHUNK_ELEMS))
+    return(NULL)                                          # raw single-chunk (untagged -> default)
+  }
+  if (identical(name, "counts_cellmajor"))
+    return(list(compressor = zstd, chunk_elems = .VIEWER_CHUNK_ELEMS, shard_elems = .VIEWER_SHARD_ELEMS))
+  list(compressor = zstd)                                 # zstd single-chunk
+}
 
 # Preference rank of an embedding name (mirrors .viewer_grouping_rank): first preferred term that is a
 # substring of the lowercased name; non-matches rank last.
@@ -96,11 +116,17 @@
 #'   Hilbert curve over the embedding) and adds `counts_cellmajor_order`; `"none"` keeps rows in cell
 #'   order and omits the permutation.
 #' @param markers if `TRUE` (default), also compute the 1-vs-rest `markers_<g>_{lfc,padj}` tables.
+#' @param compress if `TRUE` (default), tag each field with the viewer compression layout so
+#'   [lstar_write()] emits a compressed store: `counts_cellmajor` zstd chunked + sharded, other navigators
+#'   zstd single-chunk, gene-major counts raw (see `compress_primary`). `FALSE` writes an uncompressed store.
+#' @param compress_primary if `TRUE`, also compress the gene-major counts basis (zstd, chunked): a smaller
+#'   store at the cost of a decode on gene-coloring. Default `FALSE` keeps it raw for exact-byte reads.
 #' @return `ds` with the navigator fields added and `viewer@0.1` in `ds$profiles`.
 #' @seealso [viewer_extend()], [lstar_write_viewer()]
 #' @export
 extend_for_viewer <- function(ds, grouping = NULL, also = character(0), counts = NULL, basis = NULL,
-                              order = "hybrid", markers = TRUE, primary = NULL) {
+                              order = "hybrid", markers = TRUE, primary = NULL,
+                              compress = TRUE, compress_primary = FALSE) {
   sel <- .viewer_counts_basis(ds, counts, basis)   # pick basis by state, not the literal name "counts"
   cf <- ds$fields[[sel$name]]; use_lognorm <- sel$log1p
   if (!sel$log1p && is.null(counts) && (is.null(basis) || identical(basis, "auto")))
@@ -185,6 +211,15 @@ extend_for_viewer <- function(ds, grouping = NULL, also = character(0), counts =
                                           encoding = "csr", provenance = cache)
 
   if (!("viewer@0.1" %in% ds$profiles)) ds$profiles <- c(ds$profiles, "viewer@0.1")
+
+  # Tag each field's per-field write layout (unless it already carries one): counts_cellmajor zstd+chunked+
+  # sharded, other navigators zstd single-chunk, gene-major counts raw (untagged) unless compress_primary.
+  if (compress) for (nm in names(ds$fields)) {
+    if (is.null(ds$fields[[nm]]$write)) {
+      lay <- .viewer_field_layout(nm, sel$name, compress, compress_primary)
+      if (!is.null(lay)) ds$fields[[nm]]$write <- lay
+    }
+  }
   if (!methods::is(ds, "lstar_dataset")) class(ds) <- "lstar_dataset"
   ds
 }

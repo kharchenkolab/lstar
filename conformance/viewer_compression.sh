@@ -60,6 +60,39 @@ assert not gm["zstd"] and not cm["zstd"], ("none must be all-raw", gm, cm)
 print("    [py] none (compress=False): all fields raw")
 PY
 
+# R leg: extend_for_viewer + lstar_write produces the same per-field layout. R writes zstd when its build
+# has libzstd, else degrades to gzip — so the assertion accepts either (both are "compressed").
+RLIB="${LSTAR_RLIB:-$ROOT/.Rlib}"
+if command -v Rscript >/dev/null 2>&1 && Rscript -e '.libPaths(c("'"$RLIB"'",.libPaths())); quit(status=!requireNamespace("lstar",quietly=TRUE))' >/dev/null 2>&1; then
+  echo "  -- R: extend_for_viewer + lstar_write per-field layout --"
+  Rscript -e '.libPaths(c("'"$RLIB"'", .libPaths())); suppressMessages({library(lstar); library(Matrix)})
+    set.seed(1); n <- 4000L; g <- 100L
+    X <- as(Matrix::rsparsematrix(n, g, 0.06), "CsparseMatrix"); X@x <- round(abs(X@x) * 9) + 1
+    stopifnot(length(X@x) > 16384)                       # so counts_cellmajor data is multi-chunk -> sharded
+    ds <- structure(list(kind = "sample", spec_version = "0.1", profiles = character(0), dropped = character(0),
+      axes = list(cells = list(labels = paste0("c", 1:n), origin = "observed", role = "observation"),
+                  genes = list(labels = paste0("g", 1:g), origin = "observed", role = "feature")),
+      fields = list(counts = list(role = "measure", span = c("cells", "genes"), encoding = "csc", state = "raw", values = X),
+                    leiden = list(role = "label", span = "cells", values = paste0("cl", (0:(n-1)) %% 5)))),
+      class = "lstar_dataset")
+    ds <- extend_for_viewer(ds, grouping = "leiden")
+    out <- tempfile(fileext = ".lstar.zarr"); lstar_write(ds, out)
+    lay <- function(field, arr = "data") {
+      z <- jsonlite::fromJSON(file.path(out, "fields", field, arr, "zarr.json"), simplifyVector = FALSE)
+      c0 <- z$codecs[[1]]; sh <- identical(c0$name, "sharding_indexed")
+      inner <- if (sh) vapply(c0$configuration$codecs, function(x) x$name, "") else vapply(z$codecs, function(x) x$name, "")
+      list(sharded = sh, comp = any(inner %in% c("zstd", "gzip")), zstd = "zstd" %in% inner)
+    }
+    gm <- lay("counts"); cm <- lay("counts_cellmajor"); od <- lay("od_score", "values")
+    stopifnot(!gm$comp, cm$comp, cm$sharded, od$comp, !od$sharded)
+    cat(sprintf("    [R ] gene-major raw | counts_cellmajor compressed(%s)+sharded | od_score compressed single-chunk\n",
+                if (cm$zstd) "zstd" else "gzip"))' >/tmp/vcomp_r.log 2>&1 \
+    && grep -vE "^Attaching|masked|following object|Warning message|deprecat" /tmp/vcomp_r.log \
+    || { echo "  FAIL: R viewer_compression"; tail -8 /tmp/vcomp_r.log; exit 1; }
+else
+  echo "  [skip] Rscript/lstar absent — R viewer-compression leg skipped"
+fi
+
 # JS leg: extendForViewer with the injected WASM writer codec produces the same per-field layout.
 EMSDK="${EMSDK:-$HOME/emsdk}"
 NODE="$(ls -d "$EMSDK"/node/*/bin/node 2>/dev/null | head -1)"; NODE="${NODE:-$(command -v node || true)}"
