@@ -13,10 +13,12 @@ compressed, range-readable viewer stores the default.
 
 ## Zstd compression and sharded writes
 
-* Stores can be written and read with **zstd** — Zarr v3's standard codec — in addition to gzip, across
-  all four surfaces. `lstar_write()` gained a `shard_elems` argument for **sharded** v3 writes, which
-  pack many inner chunks into fewer store objects while staying range-readable, so a many-chunk array
-  can be hosted without a file-per-chunk explosion.
+* `lstar_read()` now reads **zstd**-compressed stores — Zarr v3's standard codec — when the package is
+  built with libzstd (autodetected via a `Makevars` probe; it falls back to gzip-only otherwise).
+  `lstar_write()` gained a `shard_elems` argument for **sharded** v3 writes, which pack many inner chunks
+  into fewer store objects while staying byte-range-readable, so a many-chunk array can be hosted without
+  a file-per-chunk explosion. `lstar_write(compression=)` still selects `none`/`gzip`/`zlib`; the
+  compressed viewer store (below) is where R emits zstd, per field.
 
 ## Compressed, range-readable viewer stores by default
 
