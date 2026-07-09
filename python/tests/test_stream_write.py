@@ -67,6 +67,34 @@ def test_streaming_lstar_to_lstar():
     print("streaming L*->L* (lazy read -> streamed recompress) == original")
 
 
+def test_streaming_lazy_cross_format():
+    # Bounded-memory conversion ACROSS Zarr formats: read a store lazily (LazyCSX streaming source) and
+    # stream-write it to the OTHER on-disk format. Guards the asymmetric lazy path (v2->v3 and v3->v2);
+    # the symmetric case above only exercises same-format. The lazy source must genuinely stream (not
+    # silently materialize), the output must be a genuine v2/v3 store, and values must survive.
+    from lstar.lazy import is_stream_source
+    d = tempfile.mkdtemp()
+    X = sp.csc_matrix(sp.random(90, 45, density=0.2, format="csc", random_state=5)); X.data = X.data * 5 + 1
+    base = lstar.Dataset(kind="sample")
+    base.add_axis("cells", [f"c{i}" for i in range(90)])
+    base.add_axis("genes", [f"g{i}" for i in range(45)])
+    base.add_field("counts", X, role="measure", span=["cells", "genes"], state="raw")
+    src = {f: os.path.join(d, f"src_{f}.lstar.zarr") for f in ("v2", "v3")}
+    for f in ("v2", "v3"):
+        lstar.write(base, src[f], chunk_elems=300, format=f)   # chunked so streaming spans >1 block
+
+    marker = {"v2": ".zmetadata", "v3": "zarr.json"}            # a format-genuine top-level file
+    for src_fmt, out_fmt in (("v2", "v3"), ("v3", "v2")):
+        lazy = lstar.read(src[src_fmt], lazy=True)
+        assert is_stream_source(lazy.field("counts").values)   # a streaming proxy, not a materialized matrix
+        out = os.path.join(d, f"out_{src_fmt}_{out_fmt}.lstar.zarr")
+        lstar.write(lazy, out, stream=True, format=out_fmt)     # bounded-memory write to the other format
+        assert os.path.exists(os.path.join(out, marker[out_fmt])), f"{out_fmt} store not genuine"
+        assert not lstar.validate(lstar.read(out))
+        assert _sparse_eq(X, lstar.read(out).field("counts").values), f"{src_fmt}->{out_fmt}"
+    print("streaming lazy cross-format (v2->v3 and v3->v2) == original")
+
+
 def test_streamed_h5ad_write_equals_eager():
     # The reverse direction: write an L* dataset to an .h5ad with bounded memory (small parts via
     # anndata, big sparse measures streamed block-by-block via h5py). Must equal the eager write,
@@ -128,5 +156,6 @@ def test_legacy_h5ad_sparse_recognized():
 if __name__ == "__main__":
     test_streaming_h5ad_equals_eager()
     test_streaming_lstar_to_lstar()
+    test_streaming_lazy_cross_format()
     test_streamed_h5ad_write_equals_eager()
     test_legacy_h5ad_sparse_recognized()
