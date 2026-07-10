@@ -20,6 +20,15 @@ EMSDK="$EMSDK" bash "$ROOT/js/build.sh" >/tmp/lstar_wasm_build.log 2>&1 \
   || { echo "  FAIL: wasm build"; tail -15 /tmp/lstar_wasm_build.log; exit 1; }
 echo "  [wasm] built kernels"
 
+# 1b) the resizable-heap UTF8 decode guard must be present in EVERY built module. build.sh patches the
+# emscripten glue so an embind std::string return (e.g. Reader.groupAttrs at store OPEN) copies off the
+# growable heap before TextDecoder — without it, browsers backing the heap with a resizable ArrayBuffer
+# throw "must not be resizable" and the viewer crashes on open. A toolchain bump could silently drop the
+# patch, and no headless test exercises the browser-only crash, so this structural check on the built
+# artifacts is the durable catch.
+echo "  -- textdecoder guard --"; "$NODE" "$ROOT/js/test/textdecoder_resizable.test.mjs" \
+  || { echo "  FAIL: resizable-heap UTF8 decode guard missing/altered in built glue"; exit 1; }
+
 # 2) generate the test store (Python L* writer)
 PYTHONPATH="$ROOT/python/src" python3 "$ROOT/js/test/make_store.py" >/tmp/lstar_js_store.log 2>&1 \
   || { echo "  FAIL: test store generation"; tail -15 /tmp/lstar_js_store.log; exit 1; }
