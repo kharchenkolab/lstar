@@ -23,7 +23,8 @@
     "test:consolidated": "node --experimental-strip-types test/consolidated.test.ts",
     "test:sparse": "node --experimental-strip-types test/sparse.test.ts",
     "test:compression": "node --experimental-strip-types test/compression.test.ts",
-    "test:batched": "node --experimental-strip-types test/batched.test.ts"
+    "test:batched": "node --experimental-strip-types test/batched.test.ts",
+    "test:textdecoder": "node test/textdecoder_resizable.test.mjs"
   },
   "keywords": ["lstar", "single-cell", "zarr", "zarr-v3", "webassembly", "wasm", "viewer", "csc", "emscripten"],
   "license": "MIT",

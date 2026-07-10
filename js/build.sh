@@ -74,3 +74,18 @@ echo "built $JS/dist/lstar_io.mjs (+ lstar_io.wasm)"
   -sEXPORT_NAME=createLstarWriter \
   -o "$JS/dist/lstar_writer.mjs"
 echo "built $JS/dist/lstar_writer.mjs (+ lstar_writer.wasm)"
+
+# --- resizable-heap UTF8 decode guard -----------------------------------------------------------------
+# Emscripten's UTF8ArrayToString decodes the heap IN PLACE: `UTF8Decoder.decode(heapOrArray.subarray(idx,endPtr))`.
+# With -sALLOW_MEMORY_GROWTH the heap is a *growable* buffer, and browsers that back it with a RESIZABLE
+# ArrayBuffer throw `TextDecoder ... must not be resizable` on that decode — which fires for every embind
+# std::string return (e.g. Reader.groupAttrs at store OPEN), crashing the viewer. (emsdk 5.x removed the
+# `-sTEXTDECODER=0` manual-loop opt-out — "must be 1 or 2" — so the flag route is gone.) Copy off the
+# growable/shared heap before decoding. Fail LOUD if the expected glue shape is absent, so a toolchain bump
+# can't silently drop the guard and reintroduce the crash.
+for m in "$JS/dist/lstar_kernels.mjs" "$JS/dist/lstar_io.mjs" "$JS/dist/lstar_writer.mjs"; do
+  grep -qF 'UTF8Decoder.decode(heapOrArray.subarray(idx,endPtr))' "$m" \
+    || { echo "ERROR: $m — Emscripten UTF8ArrayToString glue not found (toolchain changed?); resizable-heap guard NOT applied" >&2; exit 1; }
+  perl -0pi -e 's/UTF8Decoder\.decode\(heapOrArray\.subarray\(idx,endPtr\)\)/UTF8Decoder.decode((heapOrArray.buffer.resizable||typeof SharedArrayBuffer!="undefined"&&heapOrArray.buffer instanceof SharedArrayBuffer)?heapOrArray.slice(idx,endPtr):heapOrArray.subarray(idx,endPtr))/g' "$m"
+  echo "patched $m (resizable/shared-heap UTF8 decode guard)"
+done
