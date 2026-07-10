@@ -1,3 +1,15 @@
+# lstar 0.2.1
+
+## Fix: viewer crash on open in browsers with a resizable WASM heap (JS/WASM only)
+
+* The WebAssembly reader is built with growable memory (`ALLOW_MEMORY_GROWTH`), so its heap is a
+  *resizable* `ArrayBuffer`. Emscripten decodes embind `std::string` returns — including the store
+  manifest read at open — in place over that heap, and browsers that back a growable heap with a
+  resizable `ArrayBuffer` reject it (`TextDecoder … must not be resizable`), crashing the viewer on
+  every store open. The build now copies such bytes off the heap before decoding, in all three WASM
+  modules, and a CI check (`textdecoder_resizable`) asserts the guard is present in the built glue so a
+  toolchain change can't silently drop it. R and Python are unaffected — this is a JS/WASM-only fix.
+
 # lstar 0.2.0
 
 This release brings the Zarr **v3** on-disk format to every surface (C++/Python/R/JS) and makes
