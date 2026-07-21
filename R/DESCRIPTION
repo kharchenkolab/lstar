@@ -1,7 +1,7 @@
 Package: lstar
 Title: Uniform Data Model and 'Zarr' Interchange for Single-Cell Omics
 Version: 0.2.1
-Date: 2026-07-10
+Date: 2026-07-21
 Authors@R:
     person("Peter", "Kharchenko", role = c("aut", "cre"),
            email = "pk.restricted@gmail.com")
@@ -21,7 +21,6 @@ Suggests: SeuratObject, Seurat, SingleCellExperiment, SummarizedExperiment,
     S4Vectors, GenomicRanges, igraph, conos, pagoda2, HDF5Array,
     testthat (>= 3.0.0), knitr, rmarkdown
 VignetteBuilder: knitr
-Additional_repositories: https://bnprks.r-universe.dev
 SystemRequirements: C++17, zlib, GNU make, libzstd (optional, for reading Zstd-compressed Zarr v3 stores)
 Roxygen: list(markdown = TRUE)
 Config/testthat/edition: 3

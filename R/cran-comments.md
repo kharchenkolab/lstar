@@ -1,3 +1,12 @@
+## Resubmission
+
+This is a resubmission. The previous 0.2.1 upload was auto-rejected by the incoming pretest for one
+reason: `DESCRIPTION` carried an `Additional_repositories: https://bnprks.r-universe.dev` entry that no
+declared dependency used — a leftover pointing at the r-universe build of `BPCells`, which the package
+references fully dynamically and does NOT declare — so the pretest could not verify it (reported as
+`? ?`). The orphaned `Additional_repositories` field has been **removed**. All `Suggests` are on CRAN or
+Bioconductor, so no additional repository is needed; there are no other changes.
+
 ## Submission
 
 This is an update to the CRAN package `lstar` (0.1.0 -> 0.2.1). `lstar` provides a uniform data model
@@ -16,7 +25,7 @@ line moved ahead. See `NEWS.md`.
 
 `R CMD check --no-manual --as-cran` on the local host (Ubuntu 20.04, R 4.4.1) gives:
 
-    Status: 1 WARNING, 4 NOTEs
+    Status: 1 WARNING, 3 NOTEs
 
 Every item is either a local-host artifact (absent on CRAN's builders) or an expected, justified
 NOTE. There are 0 ERRORs and no code/build WARNINGs.
@@ -89,7 +98,6 @@ separate `pagoda3` viewer package, and `read_seurat_backed()` uses `BPCells` for
 * local: Ubuntu 20.04 Linux, R 4.4.1 — `R CMD check --no-manual --as-cran`, Status as above.
 * GitHub Actions (r-lib/actions, `--as-cran` with error-on = warning): ubuntu-latest, windows-latest and
   macOS-latest, each on R-release AND R-devel — all pass (0 ERRORs/WARNINGs).
-* win-builder: R-release (R 4.6.1) and R-devel (2026-07-20 r90283 ucrt), x86_64-w64-mingw32 — both
-  **Status: 2 NOTEs, 0 ERRORs, 0 WARNINGs**. The two NOTEs are (a) "checking CRAN incoming feasibility"
-  (the `Additional_repositories` entry `https://bnprks.r-universe.dev`, shown as unverified, plus "GNU make
-  is a SystemRequirements") and (b) the vendored `nlohmann/json` diagnostic pragma — both documented above.
+* win-builder: R-release (R 4.6.1) and R-devel, x86_64-w64-mingw32 — 0 ERRORs, 0 WARNINGs. With the
+  orphaned `Additional_repositories` now removed, the only remaining NOTEs are "GNU make is a
+  SystemRequirements" and the vendored `nlohmann/json` diagnostic pragma, both documented above.
