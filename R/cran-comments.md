@@ -87,8 +87,9 @@ separate `pagoda3` viewer package, and `read_seurat_backed()` uses `BPCells` for
 ## Test environments
 
 * local: Ubuntu 20.04 Linux, R 4.4.1 — `R CMD check --no-manual --as-cran`, Status as above.
-* GitHub Actions (r-lib/actions, `--as-cran` with error-on = warning): ubuntu-latest R-release and
-  R-devel, macOS-latest R-release, windows-latest R-release — all pass (0 ERRORs/WARNINGs; the vendored
-  `nlohmann/json` pragma NOTE only).
-
-A win-builder run (R-release and R-devel) is the recommended final check immediately before upload.
+* GitHub Actions (r-lib/actions, `--as-cran` with error-on = warning): ubuntu-latest, windows-latest and
+  macOS-latest, each on R-release AND R-devel — all pass (0 ERRORs/WARNINGs).
+* win-builder: R-release (R 4.6.1) and R-devel (2026-07-20 r90283 ucrt), x86_64-w64-mingw32 — both
+  **Status: 2 NOTEs, 0 ERRORs, 0 WARNINGs**. The two NOTEs are (a) "checking CRAN incoming feasibility"
+  (the `Additional_repositories` entry `https://bnprks.r-universe.dev`, shown as unverified, plus "GNU make
+  is a SystemRequirements") and (b) the vendored `nlohmann/json` diagnostic pragma — both documented above.
