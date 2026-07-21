@@ -21,6 +21,8 @@ jobs:
         config:
           - {os: macos-latest,   r: 'release'}
           - {os: windows-latest, r: 'release'}
+          - {os: windows-latest, r: 'devel'}      # win-builder replacement (win-builder times out on our vendored C++ compile; GHA has a ~6h limit)
+          - {os: macos-latest,   r: 'devel'}
           - {os: ubuntu-latest,  r: 'devel', http-user-agent: 'release'}
           - {os: ubuntu-latest,  r: 'release'}
     env:

@@ -1,19 +1,22 @@
 ## Submission
 
-This is an update to the CRAN package `lstar` (0.1.0 -> 0.1.6). `lstar` provides a uniform data model
+This is an update to the CRAN package `lstar` (0.1.0 -> 0.2.1). `lstar` provides a uniform data model
 (L\*) and a 'Zarr' interchange format for single-cell / spatial omics, with a header-only C++ core
 (vendored under `inst/include/lstar`) and bidirectional converters for 'Seurat', 'SingleCellExperiment',
-'Conos' and 'pagoda2' objects (the same on-disk store is also readable from Python and C++).
+'Conos' and 'pagoda2' objects (the same on-disk store is also readable from Python and C++). Since the
+0.1.0 CRAN release the on-disk store defaults to the 'Zarr' v3 layout (v2 remains available; both are read
+transparently), with optional 'Zstd' compression and sharded writes; `lstar_read()`/`lstar_write()` and the
+converters keep their signatures. See `NEWS.md` for the full history.
 
-The version is 0.1.6 (not 0.1.0). The R package version is aligned with the companion Python package
-(`lstar-sc` on PyPI, 0.1.6) and the shared on-disk format; the R DESCRIPTION had lagged at 0.1.0
-while the shared release line moved to 0.1.6. See `NEWS.md`.
+The version is 0.2.1 (not 0.1.0). The R package version tracks the companion Python package (`lstar-sc` on
+PyPI, 0.2.1) and the shared on-disk format; the R DESCRIPTION had lagged at 0.1.0 while the shared release
+line moved ahead. See `NEWS.md`.
 
 ## R CMD check results
 
 `R CMD check --no-manual --as-cran` on the local host (Ubuntu 20.04, R 4.4.1) gives:
 
-    Status: 1 WARNING, 3 NOTEs
+    Status: 1 WARNING, 4 NOTEs
 
 Every item is either a local-host artifact (absent on CRAN's builders) or an expected, justified
 NOTE. There are 0 ERRORs and no code/build WARNINGs.
@@ -22,7 +25,7 @@ NOTE. There are 0 ERRORs and no code/build WARNINGs.
 
 * The local check reports "New maintainer / Old maintainer" only because an older 0.1.0 copy is
   installed in the local check library; this is an update of the existing CRAN package (0.1.0 ->
-  0.1.6) and the maintainer is unchanged: Peter Kharchenko <pk.restricted@gmail.com>. This artifact
+  0.2.1) and the maintainer is unchanged: Peter Kharchenko <pk.restricted@gmail.com>. This artifact
   does not arise on CRAN's builders, which compare against the published version.
 
 All Suggests are on CRAN or Bioconductor. Two optional integrations target packages that are not on
@@ -50,6 +53,15 @@ without risking the build of the vendored JSON dependency on those toolchains. I
 matching `pop` immediately after the include. There are no other diagnostic-suppression pragmas in
 the package (the remaining `#pragma` directives are `#pragma once` and OpenMP `#pragma omp`).
 
+### NOTE: GNU make is a SystemRequirements
+
+`src/Makevars` uses a GNU make conditional (`ifeq` + `$(shell pkg-config --exists libzstd)`) to detect
+`libzstd` at build time: when present, the vendored core is compiled with 'Zstd' decompression enabled (so
+it reads 'Zarr' v3 stores written with the Zstd codec); when absent it degrades to gzip-only with a clear
+run-time message. `GNU make` is therefore declared in `SystemRequirements`, raising this expected NOTE.
+GNU make is the default on all CRAN build platforms, and nothing depends on a specific make beyond that
+single conditional.
+
 ### NOTE / WARNING: local-tool artifacts (absent on CRAN's builders)
 
 * NOTE "checking for future file timestamps ... unable to verify current time" — a clock/network
@@ -74,6 +86,9 @@ separate `pagoda3` viewer package, and `read_seurat_backed()` uses `BPCells` for
 
 ## Test environments
 
-* local: Ubuntu 20.04 Linux, R 4.4.1
-* win-builder: Windows, R-release (R 4.6.1) and R-devel — Status: 1 NOTE (the vendored `nlohmann/json`
-  diagnostic pragma documented above); "checking CRAN incoming feasibility ... OK".
+* local: Ubuntu 20.04 Linux, R 4.4.1 — `R CMD check --no-manual --as-cran`, Status as above.
+* GitHub Actions (r-lib/actions, `--as-cran` with error-on = warning): ubuntu-latest R-release and
+  R-devel, macOS-latest R-release, windows-latest R-release — all pass (0 ERRORs/WARNINGs; the vendored
+  `nlohmann/json` pragma NOTE only).
+
+A win-builder run (R-release and R-devel) is the recommended final check immediately before upload.
