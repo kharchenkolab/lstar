@@ -51,9 +51,6 @@ jobs:
           r-version: ${{ matrix.config.r }}
           http-user-agent: ${{ matrix.config.http-user-agent }}
           use-public-rspm: true
-          # BPCells (an optional Suggests) is on r-universe, not CRAN. pak reads options(repos), not the
-          # DESCRIPTION's Additional_repositories, so add it here too or dependency resolution fails.
-          extra-repositories: https://bnprks.r-universe.dev
 
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
