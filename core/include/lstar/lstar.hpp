@@ -22,11 +22,12 @@
 #include <string>
 #include <vector>
 
-// nlohmann/json can trip a libc++ (Xcode 26.5+) deprecation of char_traits<unsigned char> via its
-// binary output adapters. It is a WARNING only — no shipped build uses -Werror — so we deliberately do
-// NOT suppress it in the sources: CRAN's incoming pretest auto-rejects compiler-diagnostic suppression
-// (v0.1.0 shipped clean without any; adding one in 0.2.1 got the submission auto-rejected). If a local
-// toolchain treats it as an error, pass -Wno-deprecated-declarations via your own ~/.R/Makevars, not here.
+// lstar uses nlohmann/json only for string parse()/dump(), never its iostream operators. JSON_NO_IO drops
+// the header's <iosfwd> + iostream adapters, which instantiate std::basic_ostream/basic_string<unsigned
+// char> and thus std::char_traits<unsigned char> — deprecated by libc++ on Xcode 26.5+, a compile WARNING
+// that fails an --as-cran check on macOS. This removes the instantiation at the source, so no in-code
+// diagnostic-suppression pragma is needed (CRAN's incoming pretest auto-rejects those; do NOT add one).
+#define JSON_NO_IO
 #include "nlohmann/json.hpp"
 
 // libzarr: the header-only Zarr v2+v3 core that backs lstar's array I/O (read_array/read_array_range
