@@ -84,7 +84,7 @@ separate `pagoda3` viewer package, and `read_seurat_backed()` uses `BPCells` for
 
 * local: Ubuntu 20.04 Linux, R 4.4.1 — `R CMD check --no-manual --as-cran`, Status as above.
 * GitHub Actions (r-lib/actions, `--as-cran` with error-on = warning): ubuntu-latest, windows-latest and
-  macOS-latest, each on R-release AND R-devel — all pass (0 ERRORs/WARNINGs).
-* win-builder: R-release (R 4.6.1) and R-devel, x86_64-w64-mingw32 — 0 ERRORs, 0 WARNINGs. With the
-  orphaned `Additional_repositories` and the diagnostic-suppression removed, the only remaining NOTE is
-  "GNU make is a SystemRequirements", documented above.
+  macOS-latest (Xcode 26.5), each on R-release AND R-devel — all six pass with 0 ERRORs and 0 WARNINGs.
+  This is the primary cross-platform evidence for this submission.
+* win-builder (R-release + R-devel) was used during preparation; the only items it surfaced were the
+  incoming-pretest issues since removed (the orphaned `Additional_repositories` and the diagnostic pragma).
