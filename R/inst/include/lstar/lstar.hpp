@@ -22,15 +22,12 @@
 #include <string>
 #include <vector>
 
-// nlohmann/json instantiates std::char_traits<unsigned char> (via its
-// std::basic_string<unsigned char> output adapters). libc++ on Xcode 26.5+
-// deprecates char_traits<T> for non-standard T, which -Werror-style CI turns
-// into a build failure. Silence it just for this third-party header; our own
-// code names no such instantiation. (GCC-form pragma is honored by Clang too.)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+// nlohmann/json can trip a libc++ (Xcode 26.5+) deprecation of char_traits<unsigned char> via its
+// binary output adapters. It is a WARNING only — no shipped build uses -Werror — so we deliberately do
+// NOT suppress it in the sources: CRAN's incoming pretest auto-rejects compiler-diagnostic suppression
+// (v0.1.0 shipped clean without any; adding one in 0.2.1 got the submission auto-rejected). If a local
+// toolchain treats it as an error, pass -Wno-deprecated-declarations via your own ~/.R/Makevars, not here.
 #include "nlohmann/json.hpp"
-#pragma GCC diagnostic pop
 
 // libzarr: the header-only Zarr v2+v3 core that backs lstar's array I/O (read_array/read_array_range
 // today; the writer + consolidated orchestration next). Shares this file's vendored nlohmann/json.

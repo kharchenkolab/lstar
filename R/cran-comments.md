@@ -1,11 +1,17 @@
 ## Resubmission
 
-This is a resubmission. The previous 0.2.1 upload was auto-rejected by the incoming pretest for one
-reason: `DESCRIPTION` carried an `Additional_repositories: https://bnprks.r-universe.dev` entry that no
-declared dependency used — a leftover pointing at the r-universe build of `BPCells`, which the package
-references fully dynamically and does NOT declare — so the pretest could not verify it (reported as
-`? ?`). The orphaned `Additional_repositories` field has been **removed**. All `Suggests` are on CRAN or
-Bioconductor, so no additional repository is needed; there are no other changes.
+This is a resubmission. Two incoming-pretest issues have been fixed:
+
+* Removed an orphaned `Additional_repositories: https://bnprks.r-universe.dev` entry from `DESCRIPTION` —
+  no declared dependency used it (`BPCells` is referenced fully dynamically, not a `Suggests`), so the
+  pretest could not verify it (reported as `? ?`). All `Suggests` are on CRAN or Bioconductor.
+* Removed a `#pragma GCC diagnostic ignored "-Wdeprecated-declarations"` that had wrapped the vendored
+  `nlohmann/json.hpp` include. It silenced a libc++ (Xcode 26.5+) deprecation of
+  `char_traits<unsigned char>` — a warning that arises only under a `-Werror`-style local toolchain and on
+  no CRAN builder. The package compiles cleanly without it (as 0.1.0, which shipped no such pragma, did).
+  No compiler diagnostics are suppressed in the package sources.
+
+There are no other changes.
 
 ## Submission
 
@@ -25,7 +31,7 @@ line moved ahead. See `NEWS.md`.
 
 `R CMD check --no-manual --as-cran` on the local host (Ubuntu 20.04, R 4.4.1) gives:
 
-    Status: 1 WARNING, 3 NOTEs
+    Status: 1 WARNING, 2 NOTEs
 
 Every item is either a local-host artifact (absent on CRAN's builders) or an expected, justified
 NOTE. There are 0 ERRORs and no code/build WARNINGs.
@@ -42,25 +48,6 @@ a mainstream repository — the interactive viewer (`pagoda3`) and a disk-backed
 (`BPCells`, used only by `read_seurat_backed()`). Neither is declared in DESCRIPTION; both are resolved
 at call time (the package name held in a variable, dispatched via `getExportedValue()`), so the package
 installs, checks and runs without them and each gives a clear install hint when invoked and absent.
-
-### NOTE: checking pragmas in C/C++ headers and code
-
-The vendored core header `inst/include/lstar/lstar.hpp` contains a single, tightly scoped
-diagnostic-suppression block:
-
-    #pragma GCC diagnostic push
-    #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-    #include "nlohmann/json.hpp"
-    #pragma GCC diagnostic pop
-
-It suppresses one warning **only** around the bundled third-party header `nlohmann/json.hpp`, which
-instantiates `std::char_traits<unsigned char>` via its `std::basic_string<unsigned char>` output
-adapters. libc++ on recent toolchains (Xcode 26.5+) deprecates `char_traits<T>` for non-standard
-`T`, which turns into a build failure under `-Werror`-style configurations. The suppression is not
-used to hide warnings in our own code (which names no such instantiation) and cannot be removed
-without risking the build of the vendored JSON dependency on those toolchains. It is restored with a
-matching `pop` immediately after the include. There are no other diagnostic-suppression pragmas in
-the package (the remaining `#pragma` directives are `#pragma once` and OpenMP `#pragma omp`).
 
 ### NOTE: GNU make is a SystemRequirements
 
@@ -99,5 +86,5 @@ separate `pagoda3` viewer package, and `read_seurat_backed()` uses `BPCells` for
 * GitHub Actions (r-lib/actions, `--as-cran` with error-on = warning): ubuntu-latest, windows-latest and
   macOS-latest, each on R-release AND R-devel — all pass (0 ERRORs/WARNINGs).
 * win-builder: R-release (R 4.6.1) and R-devel, x86_64-w64-mingw32 — 0 ERRORs, 0 WARNINGs. With the
-  orphaned `Additional_repositories` now removed, the only remaining NOTEs are "GNU make is a
-  SystemRequirements" and the vendored `nlohmann/json` diagnostic pragma, both documented above.
+  orphaned `Additional_repositories` and the diagnostic-suppression removed, the only remaining NOTE is
+  "GNU make is a SystemRequirements", documented above.
